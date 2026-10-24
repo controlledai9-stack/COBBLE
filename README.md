@@ -1,6 +1,6 @@
 # Cobble
 
-A local-first desktop workspace for a team's plan, saved code changes, and conversations. Version 0.2.0 is a testable development build; the remaining integration and release checks are listed below.
+A local-first desktop workspace for a team's plan, saved code changes, and conversations. The current development source is version 0.2.1, including the Pebble drag and full-app shutdown fixes. The remaining integration and release checks are listed below.
 
 ## Install the app
 
@@ -8,7 +8,11 @@ The Windows x64 download is `release/Cobble-Setup-0.2.0-x64.exe`. It includes El
 
 This is an unsigned development installer. A clean Windows VM installation and real multi-device testing remain release checks; building the installer is not evidence those checks passed.
 
+The older 0.2.0 installer does not contain the current drag/shutdown fixes. Pulling Git source does not update an executable that was built earlier. Rebuild the current source and confirm **Cobble 0.2.1** in the app window title or Profile settings before comparing drag behavior. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
+
 ## Run from source (developers only)
+
+Closing Cobble's main window exits the whole app, including Pebble and the tray icon. Shutdown stops workspace monitoring and local connections, cancels active transcription, and closes the database after cleanup.
 
 Requires Windows and Node.js 24.13+.
 
@@ -96,6 +100,7 @@ npm run typecheck
 npm test
 npm run build
 npm run test:desktop
+npm run test:shutdown
 npm run test:voice
 npm run test:packaged
 ```

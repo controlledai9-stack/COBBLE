@@ -15,7 +15,11 @@ import {
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CobbleService } from "../core/service";
-import { CompanionMachine, dockToEdge } from "./companion";
+import {
+  CompanionDrag,
+  CompanionMachine,
+  clampCompanionBounds,
+} from "./companion";
 import { transcribe } from "./voice";
 import { connectIde } from "./integration";
 import { readFile, writeFile, rm } from "node:fs/promises";
@@ -26,10 +30,18 @@ let main: BrowserWindow;
 let companion: BrowserWindow;
 let tray: Tray;
 let quitting = false;
+let shutdownComplete = false;
+let idleTimer: ReturnType<typeof setInterval> | undefined;
+const voiceShutdown = new AbortController();
+const transcriptions = new Set<Promise<string>>();
 const machine = new CompanionMachine();
-let dragOffset = { x: 0, y: 0 };
+const companionDrag = new CompanionDrag();
+let companionAnchor = { x: 0, y: 0 };
 const devUrl = process.env.COBBLE_RENDERER_URL;
-const smoke = process.env.COBBLE_SMOKE_TEST === "1";
+const companionSmoke = process.env.COBBLE_COMPANION_SMOKE_TEST === "1";
+const shutdownSmoke = process.env.COBBLE_SHUTDOWN_SMOKE_TEST === "1";
+const smoke =
+  process.env.COBBLE_SMOKE_TEST === "1" || companionSmoke || shutdownSmoke;
 if (smoke)
   app.setPath(
     "userData",
@@ -38,6 +50,8 @@ if (smoke)
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
+    if (quitting) return;
+    if (main?.isMinimized()) main.restore();
     main?.show();
     main?.focus();
   });
@@ -60,6 +74,7 @@ else {
       await service.start();
       let lastBootstrap = "";
       const syncPairing = async () => {
+        if (quitting) return;
         const workspace = service.activeTeam()?.workspace ?? "";
         const data = JSON.stringify({
           port: service.bridge.port,
@@ -102,9 +117,36 @@ else {
         skipTaskbar: true,
         alwaysOnTop: true,
         show: false,
-        webPreferences: options,
+        webPreferences: { ...options, backgroundThrottling: false },
       });
       companion.setIgnoreMouseEvents(true, { forward: true });
+      const endCompanionDrag = () => {
+        if (!companionDrag.active) return;
+        companionDrag.stop();
+        machine.dragEnd();
+        const bounds = companion.getBounds();
+        const collapsed = {
+          x: bounds.x + bounds.width - 160,
+          y: bounds.y + bounds.height - 110,
+          width: 160,
+          height: 110,
+        };
+        companionAnchor = clampCompanionBounds(
+          collapsed,
+          screen.getDisplayMatching(collapsed).workArea,
+        );
+        service.store.set("companionPosition", [
+          companionAnchor.x,
+          companionAnchor.y,
+        ]);
+        companion.webContents.send("cobble:pose", machine.mode);
+      };
+      companion.on("blur", endCompanionDrag);
+      companion.on("hide", endCompanionDrag);
+      companion.webContents.on("render-process-gone", () => {
+        companionDrag.stop();
+        machine.dragEnd();
+      });
       const renderer = pathToFileURL(
         join(__dirname, "../renderer/index.html"),
       ).href;
@@ -141,6 +183,7 @@ else {
       ) =>
         ipcMain.handle(`cobble:${name}`, (event, ...args) => {
           allowed(event);
+          if (quitting) throw new Error("Cobble is closing");
           return callback(event, ...args);
         });
       handle("state", () => service.state());
@@ -250,14 +293,21 @@ else {
         });
         if (choice.response === 1) await service.integrateMain(id);
       });
-      handle("transcribe", (_, audio: ArrayBuffer) =>
-        transcribe(
+      handle("transcribe", async (_, audio: ArrayBuffer) => {
+        const job = transcribe(
           audio,
           app.isPackaged
             ? join(process.resourcesPath, "voice")
             : join(app.getAppPath(), "resources", "voice"),
-        ),
-      );
+          voiceShutdown.signal,
+        );
+        transcriptions.add(job);
+        try {
+          return await job;
+        } finally {
+          transcriptions.delete(job);
+        }
+      });
       handle("artwork", async () => {
         const artwork: Record<string, string> = {};
         for (const mode of ["normal", "idle", "dragging"]) {
@@ -295,6 +345,20 @@ else {
       handle(
         "companion",
         (_, command: string, point?: { x: number; y: number }) => {
+          // Renderer hit points are local CSS coordinates, never screen deltas.
+          // Convert page zoom to the DIP coordinates used by Electron windows.
+          const zoom = companion.webContents.getZoomFactor();
+          const [width, height] = companion.getContentSize();
+          const grab =
+            point &&
+            Number.isFinite(point.x) &&
+            Number.isFinite(point.y) &&
+            point.x * zoom >= 0 &&
+            point.x * zoom <= width &&
+            point.y * zoom >= 0 &&
+            point.y * zoom <= height
+              ? { x: point.x * zoom, y: point.y * zoom }
+              : undefined;
           if (command === "show") {
             companion.showInactive();
             machine.interact();
@@ -305,40 +369,55 @@ else {
           else if (command === "pointer-off") {
             if (machine.mode !== "dragging")
               companion.setIgnoreMouseEvents(true, { forward: true });
-          } else if (command === "menu-open" || command === "menu-close") {
-            const b = companion.getBounds();
-            const width = command === "menu-open" ? 280 : 160;
-            const height = command === "menu-open" ? 430 : 110;
-            const area = screen.getDisplayMatching(b).workArea;
+          } else if (command === "menu-open") {
+            endCompanionDrag();
+            const width = 340;
+            const height = 270;
+            const targetX = companionAnchor.x + 160 - width;
+            const targetY = companionAnchor.y + 110 - height;
+            const target = { x: targetX, y: targetY, width, height };
+            const clamped = clampCompanionBounds(
+              target,
+              screen.getDisplayMatching(target).workArea,
+            );
             companion.setBounds({
-              x: Math.max(
-                area.x,
-                Math.min(b.x + b.width - width, area.x + area.width - width),
-              ),
-              y: Math.max(
-                area.y,
-                Math.min(
-                  b.y + b.height - height,
-                  area.y + area.height - height,
-                ),
-              ),
+              x: clamped.x,
+              y: clamped.y,
               width,
               height,
             });
+          } else if (command === "menu-close") {
+            endCompanionDrag();
+            const target = { ...companionAnchor, width: 160, height: 110 };
+            const clamped = clampCompanionBounds(
+              target,
+              screen.getDisplayMatching(target).workArea,
+            );
+            companionAnchor = clamped;
+            companion.setBounds({
+              x: companionAnchor.x,
+              y: companionAnchor.y,
+              width: 160,
+              height: 110,
+            });
           } else if (command === "drag-start") {
-            const cursor = screen.getCursorScreenPoint();
-            const bounds = companion.getBounds();
-            dragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
+            companionDrag.start(
+              screen.getCursorScreenPoint(),
+              companion.getBounds(),
+              grab,
+            );
+            companion.setIgnoreMouseEvents(false);
             machine.dragStart();
           } else if (command === "drag-move" && machine.mode === "dragging") {
-            const cursor = screen.getCursorScreenPoint();
-            companion.setPosition(
-              cursor.x - dragOffset.x,
-              cursor.y - dragOffset.y,
+            const next = companionDrag.move(
+              screen.getCursorScreenPoint(),
+              grab,
             );
+            if (next) companion.setBounds(next);
+          } else if (command === "drag-move") {
+            // Ignore late move messages after a release/cancel/blur.
           } else if (command === "drag-end") {
-            machine.dragEnd();
-            service.store.set("companionPosition", companion.getPosition());
+            endCompanionDrag();
           } else throw new Error("Unknown companion action");
           companion.webContents.send("cobble:pose", machine.mode);
         },
@@ -347,6 +426,7 @@ else {
         service.state().notifications.map((n) => n.id),
       );
       service.on("change", (state: AppState) => {
+        if (quitting) return;
         const fresh = state.notifications.filter((n) => !seenNotices.has(n.id));
         for (const notice of fresh) seenNotices.add(notice.id);
         if (!smoke && Notification.isSupported())
@@ -363,9 +443,9 @@ else {
       });
       service.on("diagnostic", (message) => console.error("[Cobble]", message));
       main.on("close", (event) => {
-        if (!quitting) {
+        if (!shutdownComplete) {
           event.preventDefault();
-          main.hide();
+          app.quit();
         }
       });
       companion.on("close", (event) => {
@@ -375,16 +455,29 @@ else {
         }
       });
       await main.loadURL(devUrl ?? renderer);
+      main.setTitle(`Cobble ${app.getVersion()}`);
       await companion.loadURL(`${devUrl ?? renderer}?view=companion`);
+      const area = screen.getPrimaryDisplay().workArea;
       const stored = service.store.setting<number[] | null>(
         "companionPosition",
         null,
       );
-      const area = screen.getPrimaryDisplay().workArea;
-      companion.setPosition(
-        stored?.[0] ?? area.x + area.width - 300,
-        stored?.[1] ?? area.y + area.height - 380,
+      const hasStoredPosition =
+        Array.isArray(stored) &&
+        stored.length === 2 &&
+        stored.every(Number.isFinite);
+      const restored = {
+        x: hasStoredPosition ? stored![0] : area.x + area.width - 200,
+        y: hasStoredPosition ? stored![1] : area.y + area.height - 180,
+        width: 160,
+        height: 110,
+      };
+      const initialBounds = clampCompanionBounds(
+        restored,
+        screen.getDisplayMatching(restored).workArea,
       );
+      companionAnchor = { x: initialBounds.x, y: initialBounds.y };
+      companion.setBounds(initialBounds);
       if (!smoke) companion.showInactive();
       const pixels = Buffer.alloc(16 * 16 * 4);
       for (let i = 0; i < pixels.length; i += 4) {
@@ -408,28 +501,33 @@ else {
         ]),
       );
       tray.on("double-click", () => main.show());
-      const idle = setInterval(() => {
+      idleTimer = setInterval(() => {
         const previous = machine.mode;
         machine.tick();
         if (previous !== machine.mode && machine.mode === "idle") {
-          const b = companion.getBounds();
-          companion.setBounds({
-            x: b.x + b.width - 160,
-            y: b.y + b.height - 110,
-            width: 160,
-            height: 110,
-          });
-          const bounds = companion.getBounds();
-          const area = screen.getDisplayMatching(bounds).workArea;
-          const next = dockToEdge(bounds, area);
-          companion.setPosition(Math.round(next.x), Math.round(next.y));
           companion.webContents.send("cobble:pose", machine.mode);
         }
       }, 1000);
-      idle.unref();
+      idleTimer.unref();
       if (smoke) {
-        const { runSmoke } = await import("./smoke");
-        await runSmoke(main, companion, service);
+        if (shutdownSmoke) {
+          const { runShutdownSmoke } = await import("./shutdown-smoke");
+          await runShutdownSmoke(
+            main,
+            companion,
+            tray,
+            service,
+            voiceShutdown.signal,
+            transcriptions,
+          );
+          return;
+        } else if (companionSmoke) {
+          const { runCompanionSmoke } = await import("./companion-smoke");
+          await runCompanionSmoke(companion);
+        } else {
+          const { runSmoke } = await import("./smoke");
+          await runSmoke(main, companion, service);
+        }
         app.quit();
       }
     } catch (error) {
@@ -445,16 +543,32 @@ else {
   });
 }
 app.on("before-quit", (event) => {
-  if (!quitting && service) {
-    event.preventDefault();
-    quitting = true;
-    void service.close().finally(async () => {
+  // A rejected second instance never owned this process's services/pairing file.
+  if (!service || shutdownComplete) return;
+  event.preventDefault();
+  if (quitting) return;
+  quitting = true;
+  companionDrag.stop();
+  clearInterval(idleTimer);
+  voiceShutdown.abort();
+  for (const window of [main, companion]) {
+    if (window && !window.isDestroyed()) window.hide();
+  }
+  if (tray && !tray.isDestroyed()) tray.destroy();
+  void (async () => {
+    try {
+      await Promise.allSettled([...transcriptions]);
+      await service.close();
+    } catch (error) {
+      console.error("Cobble shutdown cleanup failed", error);
+    } finally {
       await rm(join(app.getPath("userData"), "ide-pairing.json"), {
         force: true,
       }).catch(() => {});
+      shutdownComplete = true;
       app.quit();
-    });
-  }
+    }
+  })();
 });
 app.on("window-all-closed", () => {
   if (quitting) app.quit();
