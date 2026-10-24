@@ -371,8 +371,8 @@ else {
               companion.setIgnoreMouseEvents(true, { forward: true });
           } else if (command === "menu-open") {
             endCompanionDrag();
-            const width = 280;
-            const height = 430;
+            const width = 340;
+            const height = 270;
             const targetX = companionAnchor.x + 160 - width;
             const targetY = companionAnchor.y + 110 - height;
             const target = { x: targetX, y: targetY, width, height };

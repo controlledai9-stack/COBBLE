@@ -19,31 +19,32 @@ export function PebbleRobot({
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          {/* Pearlescent Ceramic Pebble Gradient */}
-          <linearGradient id="pebCeramic" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#FFFFFF" />
-            <stop offset="42%" stopColor="#F1F5F9" />
-            <stop offset="78%" stopColor="#E2E8F0" />
-            <stop offset="100%" stopColor="#CBD5E1" />
+          {/* Metallic Periwinkle / Purple Armor Gradient */}
+          <linearGradient id="pebArmor" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#9B91F0" />
+            <stop offset="28%" stopColor="#7C71D8" />
+            <stop offset="70%" stopColor="#5B50A0" />
+            <stop offset="100%" stopColor="#3E3675" />
           </linearGradient>
 
-          {/* Deep Obsidian OLED Visor */}
-          <linearGradient id="pebOled" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#0B0F19" />
-            <stop offset="100%" stopColor="#020617" />
+          {/* Deep Visor Obsidian Black Gradient */}
+          <linearGradient id="pebVisor" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#0F1424" />
+            <stop offset="45%" stopColor="#080B14" />
+            <stop offset="100%" stopColor="#020408" />
           </linearGradient>
 
-          {/* Magnetic Hands Gradient */}
-          <linearGradient id="pebHand" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#FFFFFF" />
-            <stop offset="70%" stopColor="#E2E8F0" />
-            <stop offset="100%" stopColor="#94A3B8" />
+          {/* Dark Titanium Joint Rings */}
+          <linearGradient id="pebJoint" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#4A516E" />
+            <stop offset="50%" stopColor="#2D3349" />
+            <stop offset="100%" stopColor="#1B1F2E" />
           </linearGradient>
 
-          {/* Electric Cyan Neon Bloom */}
-          <filter id="pebNeon" x="-40%" y="-40%" width="180%" height="180%">
-            <feGaussianBlur stdDeviation="3.5" result="blur1" />
-            <feGaussianBlur stdDeviation="1.5" result="blur2" />
+          {/* Radiant Amber Glow Filter */}
+          <filter id="pebAmberGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="3.2" result="blur1" />
+            <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="blur2" />
             <feMerge>
               <feMergeNode in="blur1" />
               <feMergeNode in="blur2" />
@@ -51,163 +52,161 @@ export function PebbleRobot({
             </feMerge>
           </filter>
 
-          {/* Hover Levitation Particle Aura */}
-          <radialGradient id="pebAura" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(56, 189, 248, 0.65)" />
-            <stop offset="60%" stopColor="rgba(56, 189, 248, 0.2)" />
-            <stop offset="100%" stopColor="rgba(56, 189, 248, 0)" />
+          {/* Amber Core Radial Light */}
+          <radialGradient id="pebAmberRadial" cx="40%" cy="40%" r="60%">
+            <stop offset="0%" stopColor="#FFFBEB" />
+            <stop offset="35%" stopColor="#FDE047" />
+            <stop offset="70%" stopColor="#F59E0B" />
+            <stop offset="100%" stopColor="#D97706" />
+          </radialGradient>
+
+          {/* Ground Thruster / Hover Plasma Glow */}
+          <radialGradient id="pebThruster" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(245, 158, 11, 0.75)" />
+            <stop offset="50%" stopColor="rgba(245, 158, 11, 0.25)" />
+            <stop offset="100%" stopColor="rgba(245, 158, 11, 0)" />
           </radialGradient>
         </defs>
 
-        {/* 1. LEVITATION HOVER AURA (Pulses under the robot) */}
+        {/* 1. HOVER PLASMA GLOW / GROUND SHADOW */}
         <g className="pebble-aura-group">
-          <ellipse cx="100" cy="204" rx="42" ry="12" fill="url(#pebAura)" />
-          <ellipse
-            cx="100"
-            cy="204"
-            rx="24"
-            ry="6"
-            fill="#38BDF8"
-            opacity="0.5"
-            filter="url(#pebNeon)"
-          />
+          <ellipse cx="100" cy="212" rx="44" ry="10" fill="url(#pebThruster)" />
+          <ellipse cx="100" cy="212" rx="24" ry="5" fill="#F59E0B" opacity="0.6" filter="url(#pebAmberGlow)" />
         </g>
 
-        {/* 2. FLOATING MAGNETIC HANDS (Animate independently beside body) */}
-        <g className="pebble-hands-layer">
-          {/* Left Floating Hand */}
-          <g className="pebble-hand-left">
-            <ellipse
-              cx="34"
-              cy="120"
-              rx="10"
-              ry="16"
-              fill="url(#pebHand)"
-              stroke="#94A3B8"
-              strokeWidth="1.8"
-            />
-            {/* Subtle joint glow dot */}
-            <circle cx="34" cy="116" r="2.2" fill="#38BDF8" opacity="0.8" />
+        {/* 2. LEGS & CORRUGATED JOINTS */}
+        <g className="pebble-legs-layer">
+          {/* Left Leg */}
+          <g className="pebble-leg-left">
+            {/* Corrugated Hip & Knee Rings */}
+            <rect x="74" y="174" width="12" height="5" rx="2" fill="url(#pebJoint)" stroke="#171A27" strokeWidth="0.8" />
+            <rect x="73" y="179" width="14" height="6" rx="2" fill="url(#pebJoint)" stroke="#171A27" strokeWidth="0.8" />
+            {/* Periwinkle Thigh / Shin Armor */}
+            <rect x="72" y="185" width="16" height="14" rx="4" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.2" />
+            {/* Boot */}
+            <ellipse cx="80" cy="202" rx="12" ry="7" fill="#1E2338" stroke="#101320" strokeWidth="1.4" />
+            <ellipse cx="80" cy="202" rx="6" ry="3" fill="#F59E0B" opacity="0.75" filter="url(#pebAmberGlow)" />
           </g>
 
-          {/* Right Floating Hand */}
-          <g className="pebble-hand-right">
-            <ellipse
-              cx="166"
-              cy="120"
-              rx="10"
-              ry="16"
-              fill="url(#pebHand)"
-              stroke="#94A3B8"
-              strokeWidth="1.8"
-            />
-            {/* Subtle joint glow dot */}
-            <circle cx="166" cy="116" r="2.2" fill="#38BDF8" opacity="0.8" />
+          {/* Right Leg */}
+          <g className="pebble-leg-right">
+            {/* Corrugated Hip & Knee Rings */}
+            <rect x="114" y="174" width="12" height="5" rx="2" fill="url(#pebJoint)" stroke="#171A27" strokeWidth="0.8" />
+            <rect x="113" y="179" width="14" height="6" rx="2" fill="url(#pebJoint)" stroke="#171A27" strokeWidth="0.8" />
+            {/* Periwinkle Thigh / Shin Armor */}
+            <rect x="112" y="185" width="16" height="14" rx="4" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.2" />
+            {/* Boot */}
+            <ellipse cx="120" cy="202" rx="12" ry="7" fill="#1E2338" stroke="#101320" strokeWidth="1.4" />
+            <ellipse cx="120" cy="202" rx="6" ry="3" fill="#F59E0B" opacity="0.75" filter="url(#pebAmberGlow)" />
           </g>
         </g>
 
-        {/* 3. MAIN PEBBLE CHASSIS & HEAD (Smooth organic pod) */}
+        {/* 3. MAIN ROBOT POD (HEAD & TORSO) - Anchored at Face Center (100, 97) */}
         <g className="pebble-main-pod">
-          {/* Antenna & 3D Cobblestone Block */}
-          <g className="pebble-antenna-stem">
-            <path
-              d="M 100 48 C 100 32, 106 24, 110 16"
-              stroke="#94A3B8"
-              strokeWidth="3.2"
-              strokeLinecap="round"
-            />
-            <circle
-              cx="110"
-              cy="16"
-              r="4.5"
-              fill="#38BDF8"
-              filter="url(#pebNeon)"
-            />
+          {/* Corrugated Metallic Neck Collar */}
+          <rect x="88" y="132" width="24" height="8" rx="3" fill="url(#pebJoint)" stroke="#1A1E2E" strokeWidth="1" />
+          <line x1="94" y1="132" x2="94" y2="140" stroke="#1A1E2E" strokeWidth="1" />
+          <line x1="100" y1="132" x2="100" y2="140" stroke="#1A1E2E" strokeWidth="1" />
+          <line x1="106" y1="132" x2="106" y2="140" stroke="#1A1E2E" strokeWidth="1" />
 
-            {/* Floating Mini 3D Cobblestone Cube */}
-            <g transform="translate(104, -4) scale(0.85)">
-              <polygon
-                points="12,0 24,6 12,12 0,6"
-                fill="#94A3B8"
-                stroke="#334155"
-                strokeWidth="0.8"
-              />
-              <polygon
-                points="0,6 12,12 12,24 0,18"
-                fill="#475569"
-                stroke="#334155"
-                strokeWidth="0.8"
-              />
-              <polygon
-                points="12,12 24,6 24,18 12,24"
-                fill="#334155"
-                stroke="#1E293B"
-                strokeWidth="0.8"
-              />
-              <rect x="3" y="9" width="3" height="3" fill="#64748B" />
-              <rect x="15" y="14" width="3" height="3" fill="#1E293B" />
-            </g>
+          {/* Torso Armor */}
+          <path
+            d="M 80 138 C 80 138, 70 148, 72 172 C 72 176, 128 176, 128 172 C 130 148, 120 138, 120 138 Z"
+            fill="url(#pebArmor)"
+            stroke="#2D284E"
+            strokeWidth="1.8"
+          />
+
+          {/* Torso Center Seam & Contour */}
+          <line x1="100" y1="138" x2="100" y2="174" stroke="#4A4186" strokeWidth="1.2" strokeDasharray="3 2" />
+
+          {/* Glowing Radiant Amber Chest Reactor Core */}
+          <circle cx="100" cy="156" r="10.5" fill="#171B2D" stroke="#2D284E" strokeWidth="1.6" />
+          <circle cx="100" cy="156" r="7.5" fill="url(#pebAmberRadial)" filter="url(#pebAmberGlow)" />
+          <circle cx="98" cy="154" r="2.2" fill="#FFFFFF" opacity="0.9" />
+
+          {/* Golden Antenna with Luminous Glowing Bulb */}
+          <g className="pebble-antenna-stem">
+            <rect x="96.5" y="38" width="7" height="6" rx="2" fill="url(#pebJoint)" stroke="#1A1E2E" strokeWidth="0.8" />
+            <path d="M 100 38 L 100 24" stroke="#4A516E" strokeWidth="3.2" strokeLinecap="round" />
+            <circle cx="100" cy="16" r="9.5" fill="url(#pebAmberRadial)" filter="url(#pebAmberGlow)" />
+            <circle cx="97.5" cy="13.5" r="3" fill="#FFFFFF" opacity="0.85" />
           </g>
 
-          {/* Smooth Pebble Body Form */}
+          {/* Side Audio Muff Ear-Pods (Periwinkle with Amber Glowing Center) */}
+          <g className="pebble-ear-nodes">
+            {/* Left Ear Muff */}
+            <ellipse cx="43" cy="94" rx="8" ry="18" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.6" />
+            <ellipse cx="43" cy="94" rx="4.5" ry="11" fill="#171A29" />
+            <circle cx="43" cy="94" r="3" fill="#F59E0B" filter="url(#pebAmberGlow)" opacity="0.9" />
+
+            {/* Right Ear Muff */}
+            <ellipse cx="157" cy="94" rx="8" ry="18" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.6" />
+            <ellipse cx="157" cy="94" rx="4.5" ry="11" fill="#171A29" />
+            <circle cx="157" cy="94" r="3" fill="#F59E0B" filter="url(#pebAmberGlow)" opacity="0.9" />
+          </g>
+
+          {/* Rounded Periwinkle Helmet Shell */}
           <path
-            d="M 100 45 C 142 45, 160 70, 160 114 C 160 156, 138 188, 100 188 C 62 188, 40 156, 40 114 C 40 70, 58 45, 100 45 Z"
-            fill="url(#pebCeramic)"
-            stroke="#94A3B8"
+            d="M 100 44 C 148 44, 164 68, 164 96 C 164 126, 146 138, 100 138 C 54 138, 36 126, 36 96 C 36 68, 52 44, 100 44 Z"
+            fill="url(#pebArmor)"
+            stroke="#2D284E"
             strokeWidth="2.4"
           />
 
-          {/* Under-body Shadow Contour for Depth */}
+          {/* Glossy Helmet Specular Light Highlight */}
           <path
-            d="M 64 165 C 78 180, 122 180, 136 165 C 128 178, 72 178, 64 165 Z"
-            fill="#94A3B8"
-            opacity="0.35"
+            d="M 68 56 C 80 50, 120 50, 132 56 C 118 52, 82 52, 68 56 Z"
+            fill="#FFFFFF"
+            opacity="0.5"
           />
 
-          {/* Embedded Curved OLED Visor */}
+          {/* Deep Obsidian Curved OLED Visor Screen */}
           <path
-            d="M 100 64 C 130 64, 144 76, 144 104 C 144 128, 130 142, 100 142 C 70 142, 56 128, 56 104 C 56 76, 70 64, 100 64 Z"
-            fill="url(#pebOled)"
-            stroke="#1E293B"
+            d="M 100 59 C 137 59, 149 73, 149 97 C 149 121, 137 131, 100 131 C 63 131, 51 121, 51 97 C 51 73, 63 59, 100 59 Z"
+            fill="url(#pebVisor)"
+            stroke="#171A29"
             strokeWidth="2"
           />
 
-          {/* Visor Glass Reflection Highlight Curve */}
+          {/* Visor Curved Glass Specular Highlight */}
           <path
-            d="M 72 73 C 86 68, 114 68, 128 73 C 120 78, 80 78, 72 73 Z"
-            fill="white"
-            opacity="0.16"
+            d="M 66 69 C 80 64, 120 64, 134 69 C 122 74, 78 74, 66 69 Z"
+            fill="#FFFFFF"
+            opacity="0.18"
           />
 
-          {/* Lower Torso Core Status Light */}
-          <circle
-            className="pebble-power-core"
-            cx="100"
-            cy="166"
-            r="4"
-            fill="#0284C7"
-            stroke="#38BDF8"
-            strokeWidth="1.4"
-            filter="url(#pebNeon)"
-          />
-
-          {/* 4. FACIAL EXPRESSIONS & LIVING EYES */}
+          {/* 4. FACIAL EXPRESSIONS IN RADIANT AMBER (Centered at 100, 97) */}
           {mode === "normal" && (
-            <g filter="url(#pebNeon)">
-              {/* Alive Blinking & Glancing Eyes */}
+            <g filter="url(#pebAmberGlow)">
+              {/* Alive Cheerful Glowing Amber Curved Eyes (^ ^) */}
               <g className="pebble-eyes-alive">
                 {/* Left Eye */}
-                <rect x="76" y="88" width="13" height="18" rx="6.5" fill="#38BDF8" />
-                <circle cx="80.5" cy="92.5" r="2.4" fill="#FFFFFF" />
+                <path
+                  d="M 76 98 C 81 87, 91 87, 96 98"
+                  stroke="#F59E0B"
+                  strokeWidth="3.8"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+                <circle cx="86" cy="89" r="1.5" fill="#FFFBEB" />
+
                 {/* Right Eye */}
-                <rect x="111" y="88" width="13" height="18" rx="6.5" fill="#38BDF8" />
-                <circle cx="115.5" cy="92.5" r="2.4" fill="#FFFFFF" />
+                <path
+                  d="M 104 98 C 109 87, 119 87, 124 98"
+                  stroke="#F59E0B"
+                  strokeWidth="3.8"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+                <circle cx="114" cy="89" r="1.5" fill="#FFFBEB" />
               </g>
-              {/* Subtle Happy Mouth */}
+
+              {/* Cheerful Golden Smile */}
               <path
-                d="M 96 118 C 98 122, 102 122, 104 118"
-                stroke="#38BDF8"
-                strokeWidth="2.2"
+                d="M 94 112 C 97 117, 103 117, 106 112"
+                stroke="#F59E0B"
+                strokeWidth="2.4"
                 strokeLinecap="round"
                 fill="none"
               />
@@ -215,51 +214,98 @@ export function PebbleRobot({
           )}
 
           {mode === "idle" && (
-            <g filter="url(#pebNeon)" className="pebble-eyes-sleeping">
-              {/* Happy Sleepy Curved Arcs */}
+            <g className="pebble-eyes-sleeping" filter="url(#pebAmberGlow)">
+              {/* Sweet Peaceful Sleeping Eyes */}
               <path
-                d="M 73 98 C 77 88, 89 88, 93 98"
-                stroke="#38BDF8"
-                strokeWidth="3.6"
+                d="M 75 98 C 79 92, 89 92, 93 98"
+                stroke="#F59E0B"
+                strokeWidth="3.4"
                 strokeLinecap="round"
                 fill="none"
               />
               <path
-                d="M 107 98 C 111 88, 123 88, 127 98"
-                stroke="#38BDF8"
-                strokeWidth="3.6"
+                d="M 107 98 C 111 92, 121 92, 125 98"
+                stroke="#F59E0B"
+                strokeWidth="3.4"
                 strokeLinecap="round"
                 fill="none"
               />
-              {/* Content Sleeping Smile */}
+              {/* Content Sleepy Smile */}
               <path
-                d="M 96 118 C 98 121, 102 121, 104 118"
-                stroke="#38BDF8"
+                d="M 96 113 C 98 116, 102 116, 104 113"
+                stroke="#F59E0B"
                 strokeWidth="2"
+                strokeLinecap="round"
+                fill="none"
+              />
+
+              {/* Floating Amber ZZZ Bubbles */}
+              <g className="pebble-zzz" opacity="0.85">
+                <text x="124" y="52" fill="#F59E0B" fontSize="13" fontWeight="bold" fontFamily="sans-serif">z</text>
+                <text x="136" y="38" fill="#FDE047" fontSize="16" fontWeight="bold" fontFamily="sans-serif">Z</text>
+              </g>
+            </g>
+          )}
+
+          {mode === "dragging" && (
+            <g filter="url(#pebAmberGlow)">
+              {/* Dizzy Spiral / Startled Amber Eyes (@ @) */}
+              <g className="pebble-spiral-eyes">
+                {/* Left Spiral */}
+                <path
+                  d="M 86 96 A 4 4 0 0 1 82 100 A 7 7 0 0 1 76 94 A 10 10 0 0 1 86 86 A 12 12 0 0 1 96 97"
+                  stroke="#F59E0B"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+                {/* Right Spiral */}
+                <path
+                  d="M 114 96 A 4 4 0 0 1 110 100 A 7 7 0 0 1 104 94 A 10 10 0 0 1 114 86 A 12 12 0 0 1 124 97"
+                  stroke="#F59E0B"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+              </g>
+
+              {/* Startled Wavy Mouth */}
+              <path
+                d="M 92 113 C 95 110, 97 116, 100 113 C 103 110, 105 116, 108 113"
+                stroke="#F59E0B"
+                strokeWidth="2.2"
                 strokeLinecap="round"
                 fill="none"
               />
             </g>
           )}
 
-          {mode === "dragging" && (
-            <g filter="url(#pebNeon)">
-              {/* Wide Surprised Eyes */}
-              <circle cx="82" cy="97" r="10" fill="#38BDF8" />
-              <circle cx="84.5" cy="94" r="3.2" fill="#FFFFFF" />
-              <circle cx="118" cy="97" r="10" fill="#38BDF8" />
-              <circle cx="120.5" cy="94" r="3.2" fill="#FFFFFF" />
-              {/* Cute Surprised 'o' Mouth */}
-              <ellipse
-                cx="100"
-                cy="119"
-                rx="4"
-                ry="5.5"
-                fill="#38BDF8"
-                opacity="0.9"
-              />
+          {/* 5. ARMS AND HANDS WITH CORRUGATED FLEXIBLE JOINTS */}
+          <g className="pebble-hands-layer">
+            {/* Left Arm & Cheerful Waving Hand */}
+            <g className="pebble-hand-left">
+              {/* Shoulder Corrugated Joint */}
+              <circle cx="68" cy="144" r="5" fill="url(#pebJoint)" stroke="#1A1E2E" strokeWidth="0.8" />
+              {/* Corrugated Elbow Rings */}
+              <rect x="52" y="146" width="8" height="5" rx="1.5" fill="url(#pebJoint)" stroke="#1A1E2E" strokeWidth="0.8" />
+              {/* Periwinkle Forearm */}
+              <rect x="42" y="142" width="12" height="18" rx="4" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.2" transform="rotate(20 48 151)" />
+              {/* Metallic Waving Mitten Hand */}
+              <ellipse cx="44" cy="154" rx="7" ry="9" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.4" />
             </g>
-          )}
+
+            {/* Right Arm & Friendly Hand */}
+            <g className="pebble-hand-right">
+              {/* Shoulder Corrugated Joint */}
+              <circle cx="132" cy="144" r="5" fill="url(#pebJoint)" stroke="#1A1E2E" strokeWidth="0.8" />
+              {/* Corrugated Elbow Rings */}
+              <rect x="140" y="146" width="8" height="5" rx="1.5" fill="url(#pebJoint)" stroke="#1A1E2E" strokeWidth="0.8" />
+              {/* Periwinkle Forearm */}
+              <rect x="146" y="142" width="12" height="18" rx="4" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.2" transform="rotate(-20 152 151)" />
+              {/* Metallic Hand */}
+              <ellipse cx="156" cy="154" rx="7" ry="9" fill="url(#pebArmor)" stroke="#2D284E" strokeWidth="1.4" />
+            </g>
+          </g>
         </g>
       </svg>
     </div>

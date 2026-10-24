@@ -21,6 +21,7 @@ import {
   IconHome,
   IconChats,
   IconTeams,
+  IconInvites,
   IconProfile,
   IconExternal,
   IconArrowRight,
@@ -44,6 +45,7 @@ const navTabs: { tab: Tab; label: string; icon: React.ReactNode }[] = [
   { tab: "Home", label: "Overview", icon: <IconHome /> },
   { tab: "Chats", label: "Discussions", icon: <IconChats /> },
   { tab: "Teams", label: "Workspace & Plan", icon: <IconTeams /> },
+  { tab: "Invites", label: "Join Requests", icon: <IconInvites /> },
   { tab: "Profile", label: "Profile & Settings", icon: <IconProfile /> },
 ];
 const ideConnected = (state: AppState) =>
@@ -197,8 +199,8 @@ function App() {
               }
             />
             {ideConnected(state)
-              ? `IDE linked (${state.ide.editor ?? "Editor"})`
-              : "IDE not linked"}
+              ? `IDE connected (${state.ide.editor ?? "Editor"})`
+              : "IDE not connected"}
           </span>
         </header>
         <div className="page">
@@ -1426,6 +1428,58 @@ function Companion({
           <span>{bubbleText}</span>
         </div>
       )}
+      {menu && (
+        <div
+          className="companion-menu"
+          onMouseEnter={() => void window.cobble.companion("pointer-on")}
+          onMouseLeave={() => void window.cobble.companion("pointer-off")}
+        >
+          <small>
+            {state.paused
+              ? "Watching paused"
+              : ideConnected(state)
+                ? "IDE connected · watching saved files"
+                : "IDE not connected"}
+          </small>
+          <button onClick={() => void window.cobble.open("Home")}>
+            <IconHome />
+            <span>Open Cobble</span>
+          </button>
+          <button
+            disabled={!state.activeTeamId}
+            onClick={() => void window.cobble.open("Chats", true)}
+          >
+            <IconMic />
+            <span>Record voice note</span>
+          </button>
+          <button onClick={() => void window.cobble.open("Teams")}>
+            <IconTeams />
+            <span>Core plan & workspace</span>
+          </button>
+          <select
+            aria-label="Mark my availability"
+            value={state.profile?.availability ?? "available"}
+            onChange={(e) =>
+              void act({ type: "availability", value: e.target.value as any })
+            }
+          >
+            <option value="available">Mark available</option>
+            <option value="focused">Mark focused</option>
+            <option value="away">Mark away</option>
+          </select>
+          <button
+            onClick={() => void act({ type: "pause", paused: !state.paused })}
+          >
+            <IconActivity />
+            <span>{state.paused ? "Resume watching" : "Pause watching"}</span>
+          </button>
+          <button onClick={() => void window.cobble.companion("hide")}>
+            <IconClose />
+            <span>Hide controls</span>
+          </button>
+          {error && <small className="error">{error}</small>}
+        </div>
+      )}
       <button
         className="companion-placeholder"
         aria-label={`Pebble companion avatar, ${mode}`}
@@ -1521,58 +1575,6 @@ function Companion({
       >
         <PebbleRobot mode={mode} />
       </button>
-      {menu && (
-        <div
-          className="companion-menu"
-          onMouseEnter={() => void window.cobble.companion("pointer-on")}
-          onMouseLeave={() => void window.cobble.companion("pointer-off")}
-        >
-          <small>
-            {state.paused
-              ? "Watching paused"
-              : ideConnected(state)
-                ? "IDE linked · watching saved files"
-                : "IDE not linked"}
-          </small>
-          <button onClick={() => void window.cobble.open("Home")}>
-            <IconHome />
-            <span>Open Cobble</span>
-          </button>
-          <button
-            disabled={!state.activeTeamId}
-            onClick={() => void window.cobble.open("Chats", true)}
-          >
-            <IconMic />
-            <span>Record voice note</span>
-          </button>
-          <button onClick={() => void window.cobble.open("Teams")}>
-            <IconTeams />
-            <span>Core plan & workspace</span>
-          </button>
-          <select
-            aria-label="Mark my availability"
-            value={state.profile?.availability ?? "available"}
-            onChange={(e) =>
-              void act({ type: "availability", value: e.target.value as any })
-            }
-          >
-            <option value="available">Mark available</option>
-            <option value="focused">Mark focused</option>
-            <option value="away">Mark away</option>
-          </select>
-          <button
-            onClick={() => void act({ type: "pause", paused: !state.paused })}
-          >
-            <IconActivity />
-            <span>{state.paused ? "Resume watching" : "Pause watching"}</span>
-          </button>
-          <button onClick={() => void window.cobble.companion("hide")}>
-            <IconClose />
-            <span>Hide controls</span>
-          </button>
-          {error && <small className="error">{error}</small>}
-        </div>
-      )}
     </div>
   );
 }
