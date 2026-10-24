@@ -1,0 +1,37 @@
+appId: app.cobble.desktop
+productName: Cobble
+artifactName: Cobble-Setup-${version}-${arch}.${ext}
+asar: true
+npmRebuild: false
+directories:
+  output: release
+  buildResources: packaging
+files:
+  - dist/main/**
+  - dist/renderer/**
+  - assets/companion/**
+  - package.json
+  - "!node_modules/**"
+extraResources:
+  - from: resources/git
+    to: git
+  - from: resources/voice
+    to: voice
+  - from: resources/redist
+    to: redist
+  - from: resources/integrations
+    to: integrations
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  executableName: Cobble
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: false
+  include: packaging/installer.nsh

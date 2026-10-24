@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Cobble extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/extensions/vscode"
+      ],
+      "outFiles": ["${workspaceFolder}/extensions/vscode/dist/**/*.cjs"],
+      "preLaunchTask": "Build Cobble extension"
+    }
+  ]
+}

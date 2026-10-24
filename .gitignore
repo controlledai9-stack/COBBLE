@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.cobble/
+extensions/vscode/dist/
+*.vsix
+*.log
+coverage/
+.env
+resources/
+release/

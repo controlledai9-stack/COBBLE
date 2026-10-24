@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Cobble extension",
+      "type": "npm",
+      "script": "build:extension",
+      "problemMatcher": []
+    }
+  ]
+}
