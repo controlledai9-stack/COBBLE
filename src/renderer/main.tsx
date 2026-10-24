@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { version as appVersion } from "../../package.json";
 import type {
   ExtendedAction as Action,
   AppState,
@@ -608,7 +609,7 @@ function App() {
           )}
           <footer>
             COBBLE <span>Made for the things we build together.</span>
-            <span>Local first · v0.2</span>
+            <span>Local first · v{appVersion}</span>
           </footer>
         </div>
       </main>
@@ -1335,7 +1336,7 @@ function Companion({
   const pointerId = useRef<number | null>(null);
   const origin = useRef({ x: 0, y: 0 });
   const grabAnchor = useRef<{
-    svg: SVGSVGElement;
+    svg: SVGGraphicsElement;
     x: number;
     y: number;
   } | null>(null);
@@ -1358,6 +1359,7 @@ function Companion({
     dragFrame.current = null;
     drag.current = false;
     grabAnchor.current = null;
+    setMode("normal");
     void window.cobble.companion("drag-end");
   };
   const sampleDrag = () => {
@@ -1438,7 +1440,10 @@ function Companion({
           e.currentTarget.setPointerCapture(e.pointerId);
           origin.current = { x: e.screenX, y: e.screenY };
           drag.current = false;
-          const svg = e.currentTarget.querySelector("svg");
+          const svg =
+            e.currentTarget.querySelector<SVGGraphicsElement>(
+              ".pebble-main-pod",
+            ) ?? e.currentTarget.querySelector("svg");
           const matrix = svg?.getScreenCTM();
           if (svg && matrix) {
             const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(
@@ -1467,6 +1472,7 @@ function Companion({
           const dy = e.screenY - origin.current.y;
           if (!drag.current && Math.hypot(dx, dy) > 3) {
             drag.current = true;
+            setMode("dragging");
           }
           if (drag.current) {
             // Native main-process coordinates are stable while the window moves.

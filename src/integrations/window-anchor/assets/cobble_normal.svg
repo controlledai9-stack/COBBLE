@@ -1,77 +1,76 @@
-<svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="200" height="230" viewBox="0 0 200 230" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="pebBody" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="pebCeramic" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="55%" stop-color="#E2E8F0"/>
+      <stop offset="42%" stop-color="#F1F5F9"/>
+      <stop offset="78%" stop-color="#E2E8F0"/>
       <stop offset="100%" stop-color="#CBD5E1"/>
     </linearGradient>
-    <linearGradient id="pebScreen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0F172A"/>
+    <linearGradient id="pebOled" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0B0F19"/>
       <stop offset="100%" stop-color="#020617"/>
     </linearGradient>
-    <filter id="pebGlow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="3" result="blur"/>
+    <linearGradient id="pebHand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="70%" stop-color="#E2E8F0"/>
+      <stop offset="100%" stop-color="#94A3B8"/>
+    </linearGradient>
+    <filter id="pebNeon" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3.5" result="blur1"/>
+      <feGaussianBlur stdDeviation="1.5" result="blur2"/>
       <feMerge>
-        <feMergeNode in="blur"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="blur2"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
+    <radialGradient id="pebAura" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="rgba(56, 189, 248, 0.65)"/>
+      <stop offset="60%" stop-color="rgba(56, 189, 248, 0.2)"/>
+      <stop offset="100%" stop-color="rgba(56, 189, 248, 0)"/>
+    </radialGradient>
   </defs>
 
-  <!-- ANTENNA & MINECRAFT COBBLESTONE CUBE -->
-  <path d="M125 46 C 135 34, 142 22, 145 12" stroke="#94A3B8" stroke-width="3.5" stroke-linecap="round"/>
-  <g transform="translate(138, 2)">
-    <polygon points="12,0 24,6 12,12 0,6" fill="#94A3B8" stroke="#334155" stroke-width="1"/>
-    <polygon points="0,6 12,12 12,25 0,19" fill="#475569" stroke="#334155" stroke-width="1"/>
-    <polygon points="12,12 24,6 24,19 12,25" fill="#334155" stroke="#1E293B" stroke-width="1"/>
+  <!-- LEVITATION HOVER AURA -->
+  <ellipse cx="100" cy="204" rx="42" ry="12" fill="url(#pebAura)"/>
+  <ellipse cx="100" cy="204" rx="24" ry="6" fill="#38BDF8" opacity="0.5" filter="url(#pebNeon)"/>
+
+  <!-- FLOATING MAGNETIC HANDS -->
+  <g transform="rotate(8 34 120)">
+    <ellipse cx="34" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
+    <circle cx="34" cy="116" r="2.2" fill="#38BDF8" opacity="0.8"/>
+  </g>
+  <g transform="rotate(-8 166 120)">
+    <ellipse cx="166" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
+    <circle cx="166" cy="116" r="2.2" fill="#38BDF8" opacity="0.8"/>
+  </g>
+
+  <!-- ANTENNA & 3D COBBLESTONE BLOCK -->
+  <path d="M 100 48 C 100 32, 106 24, 110 16" stroke="#94A3B8" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="110" cy="16" r="4.5" fill="#38BDF8" filter="url(#pebNeon)"/>
+  <g transform="translate(104, -4) scale(0.85)">
+    <polygon points="12,0 24,6 12,12 0,6" fill="#94A3B8" stroke="#334155" stroke-width="0.8"/>
+    <polygon points="0,6 12,12 12,24 0,18" fill="#475569" stroke="#334155" stroke-width="0.8"/>
+    <polygon points="12,12 24,6 24,18 12,24" fill="#334155" stroke="#1E293B" stroke-width="0.8"/>
     <rect x="3" y="9" width="3" height="3" fill="#64748B"/>
     <rect x="15" y="14" width="3" height="3" fill="#1E293B"/>
-    <rect x="18" y="9" width="2" height="2" fill="#64748B"/>
   </g>
 
-  <!-- HEAD -->
-  <rect x="52" y="42" width="108" height="88" rx="44" fill="url(#pebBody)" stroke="#94A3B8" stroke-width="2.5"/>
-  <ellipse cx="50" cy="86" rx="6" ry="16" fill="#CBD5E1" stroke="#64748B" stroke-width="2"/>
-  <ellipse cx="49" cy="86" rx="2" ry="8" fill="#38BDF8"/>
-  <ellipse cx="162" cy="86" rx="6" ry="16" fill="#CBD5E1" stroke="#64748B" stroke-width="2"/>
-  <ellipse cx="163" cy="86" rx="2" ry="8" fill="#38BDF8"/>
-  <rect x="62" y="52" width="88" height="68" rx="30" fill="url(#pebScreen)" stroke="#1E293B" stroke-width="2"/>
-  <path d="M72 60 C 84 56, 128 56, 140 60 C 130 66, 82 66, 72 60 Z" fill="white" opacity="0.12"/>
-  
-  <g filter="url(#pebGlow)">
-    <ellipse cx="88" cy="86" rx="7" ry="9" fill="#38BDF8"/>
-    <circle cx="90" cy="84" r="2.5" fill="#FFFFFF"/>
-    <ellipse cx="124" cy="86" rx="7" ry="9" fill="#38BDF8"/>
-    <circle cx="126" cy="84" r="2.5" fill="#FFFFFF"/>
-    <path d="M 100 99 C 103 103, 109 103, 112 99" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-  </g>
+  <!-- SMOOTH PEBBLE CHASSIS -->
+  <path d="M 100 45 C 142 45, 160 70, 160 114 C 160 156, 138 188, 100 188 C 62 188, 40 156, 40 114 C 40 70, 58 45, 100 45 Z" fill="url(#pebCeramic)" stroke="#94A3B8" stroke-width="2.4"/>
+  <path d="M 64 165 C 78 180, 122 180, 136 165 C 128 178, 72 178, 64 165 Z" fill="#94A3B8" opacity="0.35"/>
 
-  <!-- TORSO -->
-  <g transform="translate(0, 10)">
-    <rect x="98" y="120" width="16" height="8" rx="3" fill="#64748B"/>
-    <path d="M76 128 C 76 128, 80 176, 86 184 C 92 190, 120 190, 126 184 C 132 176, 136 128, 136 128 Z" fill="url(#pebBody)" stroke="#94A3B8" stroke-width="2.5"/>
-    <circle cx="106" cy="152" r="5.5" fill="#0284C7" stroke="#38BDF8" stroke-width="1.5" filter="url(#pebGlow)"/>
-  </g>
+  <!-- EMBEDDED OLED VISOR -->
+  <path d="M 100 64 C 130 64, 144 76, 144 104 C 144 128, 130 142, 100 142 C 70 142, 56 128, 56 104 C 56 76, 70 64, 100 64 Z" fill="url(#pebOled)" stroke="#1E293B" stroke-width="2"/>
+  <path d="M 72 73 C 86 68, 114 68, 128 73 C 120 78, 80 78, 72 73 Z" fill="white" opacity="0.16"/>
+  <circle cx="100" cy="166" r="4" fill="#0284C7" stroke="#38BDF8" stroke-width="1.4" filter="url(#pebNeon)"/>
 
-  <!-- ARMS -->
-  <g transform="translate(0, 10)">
-    <circle cx="68" cy="138" r="5" fill="#64748B"/>
-    <rect x="42" y="140" width="26" height="12" rx="6" transform="rotate(32 42 140)" fill="url(#pebBody)" stroke="#94A3B8" stroke-width="2"/>
-    <circle cx="40" cy="164" r="4.5" fill="#475569"/>
-
-    <circle cx="144" cy="138" r="5" fill="#64748B"/>
-    <rect x="144" y="130" width="28" height="12" rx="6" transform="rotate(-38 144 130)" fill="url(#pebBody)" stroke="#94A3B8" stroke-width="2"/>
-    <circle cx="174" cy="108" r="4.5" fill="#475569"/>
-  </g>
-
-  <!-- LEGS -->
-  <g transform="translate(0, 10)">
-    <circle cx="90" cy="188" r="5" fill="#64748B"/>
-    <rect x="78" y="192" width="14" height="26" rx="6" transform="rotate(10 78 192)" fill="url(#pebBody)" stroke="#94A3B8" stroke-width="2"/>
-    <ellipse cx="80" cy="224" rx="9" ry="5" fill="#334155" stroke="#1E293B" stroke-width="1.5"/>
-
-    <circle cx="122" cy="188" r="5" fill="#64748B"/>
-    <rect x="118" y="192" width="14" height="26" rx="6" transform="rotate(-10 118 192)" fill="url(#pebBody)" stroke="#94A3B8" stroke-width="2"/>
-    <ellipse cx="132" cy="224" rx="9" ry="5" fill="#334155" stroke="#1E293B" stroke-width="1.5"/>
+  <!-- EYES & MOUTH -->
+  <g filter="url(#pebNeon)">
+    <rect x="76" y="88" width="13" height="18" rx="6.5" fill="#38BDF8"/>
+    <circle cx="80.5" cy="92.5" r="2.4" fill="#FFFFFF"/>
+    <rect x="111" y="88" width="13" height="18" rx="6.5" fill="#38BDF8"/>
+    <circle cx="115.5" cy="92.5" r="2.4" fill="#FFFFFF"/>
+    <path d="M 96 118 C 98 122, 102 122, 104 118" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round" fill="none"/>
   </g>
 </svg>

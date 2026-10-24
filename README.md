@@ -1,12 +1,14 @@
 # Cobble
 
-A local-first desktop workspace for a team's plan, saved code changes, and conversations. Version 0.2.0 is a testable development build; the remaining integration and release checks are listed below.
+A local-first desktop workspace for a team's plan, saved code changes, and conversations. The current development source is version 0.2.1, including the Pebble drag and full-app shutdown fixes. The remaining integration and release checks are listed below.
 
 ## Install the app
 
 The Windows x64 download is `release/Cobble-Setup-0.2.0-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products.
 
 This is an unsigned development installer. A clean Windows VM installation and real multi-device testing remain release checks; building the installer is not evidence those checks passed.
+
+The older 0.2.0 installer does not contain the current drag/shutdown fixes. Pulling Git source does not update an executable that was built earlier. Rebuild the current source and confirm **Cobble 0.2.1** in the app window title or Profile settings before comparing drag behavior. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
 
 ## Run from source (developers only)
 

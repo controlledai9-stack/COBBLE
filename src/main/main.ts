@@ -36,6 +36,7 @@ const voiceShutdown = new AbortController();
 const transcriptions = new Set<Promise<string>>();
 const machine = new CompanionMachine();
 const companionDrag = new CompanionDrag();
+let companionAnchor = { x: 0, y: 0 };
 const devUrl = process.env.COBBLE_RENDERER_URL;
 const companionSmoke = process.env.COBBLE_COMPANION_SMOKE_TEST === "1";
 const shutdownSmoke = process.env.COBBLE_SHUTDOWN_SMOKE_TEST === "1";
@@ -123,7 +124,21 @@ else {
         if (!companionDrag.active) return;
         companionDrag.stop();
         machine.dragEnd();
-        service.store.set("companionPosition", companion.getPosition());
+        const bounds = companion.getBounds();
+        const collapsed = {
+          x: bounds.x + bounds.width - 160,
+          y: bounds.y + bounds.height - 110,
+          width: 160,
+          height: 110,
+        };
+        companionAnchor = clampCompanionBounds(
+          collapsed,
+          screen.getDisplayMatching(collapsed).workArea,
+        );
+        service.store.set("companionPosition", [
+          companionAnchor.x,
+          companionAnchor.y,
+        ]);
         companion.webContents.send("cobble:pose", machine.mode);
       };
       companion.on("blur", endCompanionDrag);
@@ -354,26 +369,36 @@ else {
           else if (command === "pointer-off") {
             if (machine.mode !== "dragging")
               companion.setIgnoreMouseEvents(true, { forward: true });
-          } else if (command === "menu-open" || command === "menu-close") {
+          } else if (command === "menu-open") {
             endCompanionDrag();
-            const b = companion.getBounds();
-            const width = command === "menu-open" ? 280 : 160;
-            const height = command === "menu-open" ? 430 : 110;
-            const area = screen.getDisplayMatching(b).workArea;
+            const width = 280;
+            const height = 430;
+            const targetX = companionAnchor.x + 160 - width;
+            const targetY = companionAnchor.y + 110 - height;
+            const target = { x: targetX, y: targetY, width, height };
+            const clamped = clampCompanionBounds(
+              target,
+              screen.getDisplayMatching(target).workArea,
+            );
             companion.setBounds({
-              x: Math.max(
-                area.x,
-                Math.min(b.x + b.width - width, area.x + area.width - width),
-              ),
-              y: Math.max(
-                area.y,
-                Math.min(
-                  b.y + b.height - height,
-                  area.y + area.height - height,
-                ),
-              ),
+              x: clamped.x,
+              y: clamped.y,
               width,
               height,
+            });
+          } else if (command === "menu-close") {
+            endCompanionDrag();
+            const target = { ...companionAnchor, width: 160, height: 110 };
+            const clamped = clampCompanionBounds(
+              target,
+              screen.getDisplayMatching(target).workArea,
+            );
+            companionAnchor = clamped;
+            companion.setBounds({
+              x: companionAnchor.x,
+              y: companionAnchor.y,
+              width: 160,
+              height: 110,
             });
           } else if (command === "drag-start") {
             companionDrag.start(
@@ -430,30 +455,29 @@ else {
         }
       });
       await main.loadURL(devUrl ?? renderer);
+      main.setTitle(`Cobble ${app.getVersion()}`);
       await companion.loadURL(`${devUrl ?? renderer}?view=companion`);
+      const area = screen.getPrimaryDisplay().workArea;
       const stored = service.store.setting<number[] | null>(
         "companionPosition",
         null,
       );
-      const area = screen.getPrimaryDisplay().workArea;
+      const hasStoredPosition =
+        Array.isArray(stored) &&
+        stored.length === 2 &&
+        stored.every(Number.isFinite);
       const restored = {
-        x:
-          stored && Number.isFinite(stored[0])
-            ? stored[0]
-            : area.x + area.width - 300,
-        y:
-          stored && Number.isFinite(stored[1])
-            ? stored[1]
-            : area.y + area.height - 380,
+        x: hasStoredPosition ? stored![0] : area.x + area.width - 200,
+        y: hasStoredPosition ? stored![1] : area.y + area.height - 180,
         width: 160,
         height: 110,
       };
-      companion.setBounds(
-        clampCompanionBounds(
-          restored,
-          screen.getDisplayMatching(restored).workArea,
-        ),
+      const initialBounds = clampCompanionBounds(
+        restored,
+        screen.getDisplayMatching(restored).workArea,
       );
+      companionAnchor = { x: initialBounds.x, y: initialBounds.y };
+      companion.setBounds(initialBounds);
       if (!smoke) companion.showInactive();
       const pixels = Buffer.alloc(16 * 16 * 4);
       for (let i = 0; i < pixels.length; i += 4) {

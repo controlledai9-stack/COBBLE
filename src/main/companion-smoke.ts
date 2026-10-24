@@ -19,6 +19,16 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
   try {
     await settle();
     await command("menu-close");
+    const menuAnchor = companion.getPosition();
+    for (let i = 0; i < 12; i++) {
+      await command("menu-open");
+      await command("menu-close");
+      assert.deepEqual(
+        companion.getPosition(),
+        menuAnchor,
+        "reopening the menu must preserve the teammate's stable anchor",
+      );
+    }
     companion.setBounds({ x: 100, y: 100, width: 160, height: 110 });
     await command("drag-start");
     for (let i = 0; i < 12; i++) {
@@ -90,8 +100,9 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
       js("document.querySelector('.companion-host').className");
     const facePoint = () =>
       js(`(() => {
-      const matrix = document.querySelector('.pebble-avatar').getScreenCTM();
-      const point = new DOMPoint(106,86).matrixTransform(matrix);
+      const element = document.querySelector('.pebble-main-pod') || document.querySelector('.pebble-avatar');
+      const matrix = element.getScreenCTM();
+      const point = new DOMPoint(100,97).matrixTransform(matrix);
       return {x:point.x,y:point.y};
     })()`);
     for (const zoom of [1, 1.25, 1.5]) {
@@ -117,7 +128,7 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
           // Windows converts integer window coordinates through display scale;
           // allow two DIP of raster rounding, never accumulating displacement.
           Math.abs(x + point.x * zoom - cursor.x) <= 2,
-          `${label}: face must not drift sideways at zoom ${zoom}: ${JSON.stringify({ x, y, point, cursor, pose: await pose(), bounds: companion.getBounds(), size: companion.getContentSize(), geometry: await js("({w:innerWidth,h:innerHeight,dpr:devicePixelRatio,rect:document.querySelector('.pebble-avatar').getBoundingClientRect().toJSON()})") })}`,
+          `${label}: face must not drift sideways at zoom ${zoom}: ${JSON.stringify({ x, y, point, cursor, pose: await pose(), bounds: companion.getBounds() })}`,
         );
         assert.ok(
           Math.abs(y + point.y * zoom - cursor.y) <= 2,
