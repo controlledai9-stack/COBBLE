@@ -22,8 +22,8 @@ declare global {
     cobble: DesktopApi;
   }
 }
-const tabs: Tab[] = ["Home", "Chats", "Teams", "Invites", "Profile"];
-const icons = ["⌂", "◫", "⌘", "↗", "◉"];
+const tabs: Tab[] = ["Home", "Chats", "Teams", "Profile"];
+const icons = ["⌂", "◫", "⌘", "◉"];
 const ideConnected = (state: AppState) =>
   ["files", "linked"].includes(state.ide.state);
 const stamp = (time: string) =>
@@ -1245,8 +1245,21 @@ function Companion({
   const [mode, setMode] = useState<CompanionMode>("normal");
   const [menu, setMenu] = useState(false);
   const [art, setArt] = useState<Partial<Record<CompanionMode, string>>>({});
+  const [bubbleText, setBubbleText] = useState<string | null>(null);
+  const lastNoticeId = useRef<string | null>(null);
   const drag = useRef(false);
   const origin = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const latest = state.notifications?.[0];
+    if (latest && latest.id !== lastNoticeId.current) {
+      lastNoticeId.current = latest.id;
+      setBubbleText(latest.title || latest.detail);
+      const timer = setTimeout(() => setBubbleText(null), 4500);
+      return () => clearTimeout(timer);
+    }
+  }, [state.notifications]);
+
   useEffect(() => {
     void window.cobble.artwork().then(setArt);
     return window.cobble.onCompanion((pose) => {
@@ -1263,6 +1276,11 @@ function Companion({
       onMouseEnter={() => void window.cobble.companion("pointer-on")}
       onMouseLeave={() => void window.cobble.companion("pointer-off")}
     >
+      {bubbleText && !menu && (
+        <div className="companion-bubble" role="status">
+          <span>{bubbleText}</span>
+        </div>
+      )}
       <button
         className="companion-placeholder"
         aria-label={`Cobble companion controls, ${mode}`}
@@ -1305,7 +1323,7 @@ function Companion({
         }}
       >
         {art[mode] ? (
-          <img alt="" src={art[mode]} draggable={false} />
+          <img alt="Cobble" src={art[mode]} draggable={false} />
         ) : (
           <span>
             Cobble
@@ -1318,9 +1336,11 @@ function Companion({
             </small>
           </span>
         )}
-        <i
-          className={ideConnected(state) ? "status-dot green" : "status-dot"}
-        />
+        {!art[mode] && (
+          <i
+            className={ideConnected(state) ? "status-dot green" : "status-dot"}
+          />
+        )}
       </button>
       {menu && (
         <div className="companion-menu">
