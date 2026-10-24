@@ -15,7 +15,7 @@ import {
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CobbleService } from "../core/service";
-import { CompanionMachine, dockToEdge } from "./companion";
+import { CompanionMachine } from "./companion";
 import { transcribe } from "./voice";
 import { connectIde } from "./integration";
 import { readFile, writeFile, rm } from "node:fs/promises";

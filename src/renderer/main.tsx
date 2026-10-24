@@ -1310,7 +1310,15 @@ function Companion({
             void window.cobble.companion("interact");
           }
           drag.current = false;
-          void window.cobble.companion("pointer-off");
+          const rect = e.currentTarget.getBoundingClientRect();
+          const isInside =
+            e.clientX >= rect.left &&
+            e.clientX <= rect.right &&
+            e.clientY >= rect.top &&
+            e.clientY <= rect.bottom;
+          if (!isInside) {
+            void window.cobble.companion("pointer-off");
+          }
         }}
         onPointerCancel={(e) => {
           e.currentTarget.releasePointerCapture(e.pointerId);
