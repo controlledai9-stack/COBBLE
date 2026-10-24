@@ -30,11 +30,17 @@ let main: BrowserWindow;
 let companion: BrowserWindow;
 let tray: Tray;
 let quitting = false;
+let shutdownComplete = false;
+let idleTimer: ReturnType<typeof setInterval> | undefined;
+const voiceShutdown = new AbortController();
+const transcriptions = new Set<Promise<string>>();
 const machine = new CompanionMachine();
 const companionDrag = new CompanionDrag();
 const devUrl = process.env.COBBLE_RENDERER_URL;
 const companionSmoke = process.env.COBBLE_COMPANION_SMOKE_TEST === "1";
-const smoke = process.env.COBBLE_SMOKE_TEST === "1" || companionSmoke;
+const shutdownSmoke = process.env.COBBLE_SHUTDOWN_SMOKE_TEST === "1";
+const smoke =
+  process.env.COBBLE_SMOKE_TEST === "1" || companionSmoke || shutdownSmoke;
 if (smoke)
   app.setPath(
     "userData",
@@ -43,6 +49,7 @@ if (smoke)
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
+    if (quitting) return;
     if (main?.isMinimized()) main.restore();
     main?.show();
     main?.focus();
@@ -66,6 +73,7 @@ else {
       await service.start();
       let lastBootstrap = "";
       const syncPairing = async () => {
+        if (quitting) return;
         const workspace = service.activeTeam()?.workspace ?? "";
         const data = JSON.stringify({
           port: service.bridge.port,
@@ -160,6 +168,7 @@ else {
       ) =>
         ipcMain.handle(`cobble:${name}`, (event, ...args) => {
           allowed(event);
+          if (quitting) throw new Error("Cobble is closing");
           return callback(event, ...args);
         });
       handle("state", () => service.state());
@@ -269,14 +278,21 @@ else {
         });
         if (choice.response === 1) await service.integrateMain(id);
       });
-      handle("transcribe", (_, audio: ArrayBuffer) =>
-        transcribe(
+      handle("transcribe", async (_, audio: ArrayBuffer) => {
+        const job = transcribe(
           audio,
           app.isPackaged
             ? join(process.resourcesPath, "voice")
             : join(app.getAppPath(), "resources", "voice"),
-        ),
-      );
+          voiceShutdown.signal,
+        );
+        transcriptions.add(job);
+        try {
+          return await job;
+        } finally {
+          transcriptions.delete(job);
+        }
+      });
       handle("artwork", async () => {
         const artwork: Record<string, string> = {};
         for (const mode of ["normal", "idle", "dragging"]) {
@@ -385,6 +401,7 @@ else {
         service.state().notifications.map((n) => n.id),
       );
       service.on("change", (state: AppState) => {
+        if (quitting) return;
         const fresh = state.notifications.filter((n) => !seenNotices.has(n.id));
         for (const notice of fresh) seenNotices.add(notice.id);
         if (!smoke && Notification.isSupported())
@@ -401,9 +418,9 @@ else {
       });
       service.on("diagnostic", (message) => console.error("[Cobble]", message));
       main.on("close", (event) => {
-        if (!quitting) {
+        if (!shutdownComplete) {
           event.preventDefault();
-          main.hide();
+          app.quit();
         }
       });
       companion.on("close", (event) => {
@@ -460,16 +477,27 @@ else {
         ]),
       );
       tray.on("double-click", () => main.show());
-      const idle = setInterval(() => {
+      idleTimer = setInterval(() => {
         const previous = machine.mode;
         machine.tick();
         if (previous !== machine.mode && machine.mode === "idle") {
           companion.webContents.send("cobble:pose", machine.mode);
         }
       }, 1000);
-      idle.unref();
+      idleTimer.unref();
       if (smoke) {
-        if (companionSmoke) {
+        if (shutdownSmoke) {
+          const { runShutdownSmoke } = await import("./shutdown-smoke");
+          await runShutdownSmoke(
+            main,
+            companion,
+            tray,
+            service,
+            voiceShutdown.signal,
+            transcriptions,
+          );
+          return;
+        } else if (companionSmoke) {
           const { runCompanionSmoke } = await import("./companion-smoke");
           await runCompanionSmoke(companion);
         } else {
@@ -491,16 +519,32 @@ else {
   });
 }
 app.on("before-quit", (event) => {
-  if (!quitting && service) {
-    event.preventDefault();
-    quitting = true;
-    void service.close().finally(async () => {
+  // A rejected second instance never owned this process's services/pairing file.
+  if (!service || shutdownComplete) return;
+  event.preventDefault();
+  if (quitting) return;
+  quitting = true;
+  companionDrag.stop();
+  clearInterval(idleTimer);
+  voiceShutdown.abort();
+  for (const window of [main, companion]) {
+    if (window && !window.isDestroyed()) window.hide();
+  }
+  if (tray && !tray.isDestroyed()) tray.destroy();
+  void (async () => {
+    try {
+      await Promise.allSettled([...transcriptions]);
+      await service.close();
+    } catch (error) {
+      console.error("Cobble shutdown cleanup failed", error);
+    } finally {
       await rm(join(app.getPath("userData"), "ide-pairing.json"), {
         force: true,
       }).catch(() => {});
+      shutdownComplete = true;
       app.quit();
-    });
-  }
+    }
+  })();
 });
 app.on("window-all-closed", () => {
   if (quitting) app.quit();

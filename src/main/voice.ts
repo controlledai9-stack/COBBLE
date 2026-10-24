@@ -7,7 +7,9 @@ const exec = promisify(execFile);
 export async function transcribe(
   audio: ArrayBuffer,
   runtime = resolve("resources/voice"),
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   if (
     !(audio instanceof ArrayBuffer) ||
     audio.byteLength < 44 ||
@@ -46,6 +48,7 @@ export async function transcribe(
         timeout: 120_000,
         windowsHide: true,
         maxBuffer: 1_000_000,
+        signal,
       },
     );
     return (await readFile(`${output}.txt`, "utf8")).trim().slice(0, 8000);

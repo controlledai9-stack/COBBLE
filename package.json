@@ -23,6 +23,7 @@
     "test": "tsx --test test/*.test.ts",
     "test:desktop": "node scripts/smoke.mjs",
     "test:companion": "node scripts/test-companion.mjs",
+    "test:shutdown": "node scripts/test-shutdown.mjs",
     "test:packaged": "node scripts/test-packaged.mjs",
     "test:voice": "tsx scripts/test-voice.ts",
     "verify:runtime": "node scripts/verify-runtime.mjs",

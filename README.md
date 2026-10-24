@@ -10,6 +10,8 @@ This is an unsigned development installer. A clean Windows VM installation and r
 
 ## Run from source (developers only)
 
+Closing Cobble's main window exits the whole app, including Pebble and the tray icon. Shutdown stops workspace monitoring and local connections, cancels active transcription, and closes the database after cleanup.
+
 Requires Windows and Node.js 24.13+.
 
 ```powershell
@@ -96,6 +98,7 @@ npm run typecheck
 npm test
 npm run build
 npm run test:desktop
+npm run test:shutdown
 npm run test:voice
 npm run test:packaged
 ```
