@@ -1361,7 +1361,7 @@ function Companion({
             setMode("dragging");
           }
           if (drag.current) {
-            void window.cobble.companion("drag-move", { x: dx, y: dy });
+            void window.cobble.companion("drag-move");
           }
         }}
         onPointerUp={(e) => {

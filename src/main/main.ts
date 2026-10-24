@@ -28,7 +28,21 @@ let tray: Tray;
 let quitting = false;
 const machine = new CompanionMachine();
 let dragOffset = { x: 0, y: 0 };
-let dragStartPos = [0, 0];
+let companionAnchor = { x: 0, y: 0 };
+
+function clampToScreen(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  const display = screen.getDisplayMatching({ x, y, width, height });
+  const area = display.workArea;
+  return {
+    x: Math.max(area.x, Math.min(x, area.x + Math.max(0, area.width - width))),
+    y: Math.max(area.y, Math.min(y, area.y + Math.max(0, area.height - height))),
+  };
+}
 const devUrl = process.env.COBBLE_RENDERER_URL;
 const smoke = process.env.COBBLE_SMOKE_TEST === "1";
 if (smoke)
@@ -306,48 +320,61 @@ else {
           else if (command === "pointer-off") {
             if (machine.mode !== "dragging")
               companion.setIgnoreMouseEvents(true, { forward: true });
-          } else if (command === "menu-open" || command === "menu-close") {
-            const b = companion.getBounds();
-            const width = command === "menu-open" ? 280 : 160;
-            const height = command === "menu-open" ? 430 : 110;
-            const area = screen.getDisplayMatching(b).workArea;
+          } else if (command === "menu-open") {
+            const width = 280;
+            const height = 430;
+            const targetX = companionAnchor.x + 160 - width;
+            const targetY = companionAnchor.y + 110 - height;
+            const clamped = clampToScreen(targetX, targetY, width, height);
             companion.setBounds({
-              x: Math.max(
-                area.x,
-                Math.min(b.x + b.width - width, area.x + area.width - width),
-              ),
-              y: Math.max(
-                area.y,
-                Math.min(
-                  b.y + b.height - height,
-                  area.y + area.height - height,
-                ),
-              ),
+              x: clamped.x,
+              y: clamped.y,
               width,
               height,
             });
+          } else if (command === "menu-close") {
+            const clamped = clampToScreen(
+              companionAnchor.x,
+              companionAnchor.y,
+              160,
+              110,
+            );
+            companionAnchor = clamped;
+            companion.setBounds({
+              x: companionAnchor.x,
+              y: companionAnchor.y,
+              width: 160,
+              height: 110,
+            });
           } else if (command === "drag-start") {
-            dragStartPos = companion.getPosition();
             const cursor = screen.getCursorScreenPoint();
             const bounds = companion.getBounds();
             dragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
             machine.dragStart();
           } else if (command === "drag-move" && machine.mode === "dragging") {
-            if (point && typeof point.x === "number" && typeof point.y === "number") {
-              companion.setPosition(
-                Math.round(dragStartPos[0] + point.x),
-                Math.round(dragStartPos[1] + point.y),
-              );
-            } else {
-              const cursor = screen.getCursorScreenPoint();
-              companion.setPosition(
-                cursor.x - dragOffset.x,
-                cursor.y - dragOffset.y,
-              );
-            }
+            const cursor = screen.getCursorScreenPoint();
+            const bounds = companion.getBounds();
+            const targetX = cursor.x - dragOffset.x;
+            const targetY = cursor.y - dragOffset.y;
+            const clamped = clampToScreen(
+              targetX,
+              targetY,
+              bounds.width,
+              bounds.height,
+            );
+            companion.setPosition(clamped.x, clamped.y);
           } else if (command === "drag-end") {
+            const bounds = companion.getBounds();
+            const robotX =
+              bounds.width > 160 ? bounds.x + bounds.width - 160 : bounds.x;
+            const robotY =
+              bounds.height > 110 ? bounds.y + bounds.height - 110 : bounds.y;
+            companionAnchor = clampToScreen(robotX, robotY, 160, 110);
+            service.store.set("companionPosition", [
+              companionAnchor.x,
+              companionAnchor.y,
+            ]);
             machine.dragEnd();
-            service.store.set("companionPosition", companion.getPosition());
           } else throw new Error("Unknown companion action");
           companion.webContents.send("cobble:pose", machine.mode);
         },
@@ -385,15 +412,32 @@ else {
       });
       await main.loadURL(devUrl ?? renderer);
       await companion.loadURL(`${devUrl ?? renderer}?view=companion`);
+      const area = screen.getPrimaryDisplay().workArea;
       const stored = service.store.setting<number[] | null>(
         "companionPosition",
         null,
       );
-      const area = screen.getPrimaryDisplay().workArea;
-      companion.setPosition(
-        stored?.[0] ?? area.x + area.width - 300,
-        stored?.[1] ?? area.y + area.height - 380,
-      );
+      let initialX = area.x + area.width - 200;
+      let initialY = area.y + area.height - 180;
+      if (
+        Array.isArray(stored) &&
+        stored.length === 2 &&
+        typeof stored[0] === "number" &&
+        typeof stored[1] === "number" &&
+        Number.isFinite(stored[0]) &&
+        Number.isFinite(stored[1])
+      ) {
+        const clamped = clampToScreen(stored[0], stored[1], 160, 110);
+        initialX = clamped.x;
+        initialY = clamped.y;
+      }
+      companionAnchor = { x: initialX, y: initialY };
+      companion.setBounds({
+        x: companionAnchor.x,
+        y: companionAnchor.y,
+        width: 160,
+        height: 110,
+      });
       if (!smoke) companion.showInactive();
       const pixels = Buffer.alloc(16 * 16 * 4);
       for (let i = 0; i < pixels.length; i += 4) {
