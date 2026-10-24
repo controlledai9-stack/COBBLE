@@ -16,14 +16,35 @@ import {
   AgentConnections,
 } from "./collaboration-panel";
 import { RevertDialog } from "./revert-dialog";
+import {
+  IconHome,
+  IconChats,
+  IconTeams,
+  IconProfile,
+  IconExternal,
+  IconArrowRight,
+  IconPlus,
+  IconMic,
+  IconStop,
+  IconSend,
+  IconActivity,
+  IconAlert,
+  IconClose,
+  IconEmpty,
+} from "./icons";
+import { PebbleRobot } from "./pebble";
 import "./styles.css";
 declare global {
   interface Window {
     cobble: DesktopApi;
   }
 }
-const tabs: Tab[] = ["Home", "Chats", "Teams", "Profile"];
-const icons = ["⌂", "◫", "⌘", "◉"];
+const navTabs: { tab: Tab; label: string; icon: React.ReactNode }[] = [
+  { tab: "Home", label: "Overview", icon: <IconHome /> },
+  { tab: "Chats", label: "Discussions", icon: <IconChats /> },
+  { tab: "Teams", label: "Workspace & Plan", icon: <IconTeams /> },
+  { tab: "Profile", label: "Profile & Settings", icon: <IconProfile /> },
+];
 const ideConnected = (state: AppState) =>
   ["files", "linked"].includes(state.ide.state);
 const stamp = (time: string) =>
@@ -87,15 +108,11 @@ function App() {
           cobble<span>●</span>
         </div>
         <div className="welcome-card">
-          <span className="eyebrow">BETTER TOGETHER</span>
-          <h1>
-            A little clarity.
-            <br />A lot of building.
-          </h1>
+          <span className="eyebrow">LOCAL-FIRST COLLABORATION</span>
+          <h1>Build in sync.</h1>
           <p>
-            Your team's plan, conversations, and saved changes.
-            <br />
-            Together in one quiet corner.
+            Your team's plan, live code changes, and peer-to-peer sync.
+            Kept private on your local network.
           </p>
           <ProfileForm state={state} act={act} busy={busy} />
           {error && (
@@ -104,10 +121,10 @@ function App() {
             </p>
           )}
           <small>
-            Your profile stays on this device. Your name is self-declared.
+            Your profile stays on this device. Zero cloud account required.
           </small>
         </div>
-        <div className="welcome-note">Built locally. Shared intentionally.</div>
+        <div className="welcome-note">Zero cloud dependencies. Completely peer-to-peer.</div>
       </div>
     );
   return (
@@ -116,7 +133,7 @@ function App() {
         <div className="wordmark">
           cobble<span>●</span>
         </div>
-        <div className="project-label">YOUR WORKSPACE</div>
+        <div className="project-label">WORKSPACE</div>
         <select
           aria-label="Active team"
           value={state.activeTeamId ?? ""}
@@ -125,7 +142,7 @@ function App() {
           }
         >
           <option value="" disabled>
-            Choose a team
+            Choose a workspace
           </option>
           {state.teams.map((t) => (
             <option key={t.id} value={t.id}>
@@ -134,7 +151,7 @@ function App() {
           ))}
         </select>
         <nav>
-          {tabs.map((item, i) => (
+          {navTabs.map(({ tab: item, label, icon }) => (
             <button
               className={tab === item ? "nav-button selected" : "nav-button"}
               key={item}
@@ -143,9 +160,9 @@ function App() {
                 setError("");
               }}
             >
-              <span>{icons[i]}</span>
-              {item}
-              {item === "Invites" &&
+              {icon}
+              <span>{label}</span>
+              {item === "Teams" &&
                 state.invites.some((i) => i.state === "pending") && (
                   <b className="dot" />
                 )}
@@ -169,31 +186,51 @@ function App() {
       </aside>
       <main>
         <header className="topbar">
-          <span>{team?.name ?? "Your next project"}</span>
+          <span>{team?.name ?? "No active workspace"}</span>
           <span className="connection">
             <i
               className={
                 ideConnected(state) ? "status-dot green" : "status-dot"
               }
             />
-            {ideConnected(state) ? "IDE connected" : "IDE not connected"}
+            {ideConnected(state)
+              ? `IDE linked (${state.ide.editor ?? "Editor"})`
+              : "IDE not linked"}
           </span>
         </header>
         <div className="page">
           <div className="page-title">
             <div>
               <span className="eyebrow">
-                {tab === "Home" ? "A CLEARER VIEW" : "YOUR SHARED SPACE"}
+                {
+                  {
+                    Home: "WORKSPACE SIGNALS",
+                    Chats: "TEAM COMMUNICATOR",
+                    Teams: "COLLECTIVE DIRECTION",
+                    Invites: "ACCESS REQUESTS",
+                    Profile: "IDENTITY & INTEGRATIONS",
+                  }[tab]
+                }
               </span>
-              <h1>{tab === "Home" ? "Room to build." : tab}</h1>
+              <h1>
+                {
+                  {
+                    Home: "Overview",
+                    Chats: "Discussions",
+                    Teams: "Workspace & Plan",
+                    Invites: "Join Requests",
+                    Profile: "Profile & Settings",
+                  }[tab]
+                }
+              </h1>
               <p>
                 {
                   {
-                    Home: "Keep your bearings while your team moves forward.",
-                    Chats: "A quick word can keep everyone moving.",
-                    Teams: "Start with a shared direction.",
-                    Invites: "Make room for your people.",
-                    Profile: "A little about you and your device.",
+                    Home: "Track live progress, saved file changes, and plan alignment in real time.",
+                    Chats: "Direct and team sync with local offline voice transcription.",
+                    Teams: "Define starting milestones, assign module ownership, and vote on branch proposals.",
+                    Invites: "Manage team join requests and invitations.",
+                    Profile: "Manage local developer identity, speech engine, and agent hooks.",
                   }[tab]
                 }
               </p>
@@ -202,19 +239,20 @@ function App() {
               className="secondary"
               onClick={() => void window.cobble.companion("show")}
             >
-              Companion controls ↗
+              <span>Summon Pebble</span>
+              <IconExternal />
             </button>
           </div>
           {error && (
             <div className="error" role="alert">
-              {error}
-              <button onClick={() => setError("")}>×</button>
+              <span>{error}</span>
+              <button onClick={() => setError("")}><IconClose /></button>
             </div>
           )}
           {notice && (
             <div className="notice" role="status">
-              {notice}
-              <button onClick={() => setNotice("")}>×</button>
+              <span>{notice}</span>
+              <button onClick={() => setNotice("")}><IconClose /></button>
             </div>
           )}
           {tab === "Home" && (
@@ -264,14 +302,14 @@ function App() {
               </div>
               <section className="panel">
                 <div className="section-title">
-                  <h2>While you were building</h2>
+                  <h2>Recent Activity</h2>
                   <div className="inline">
                     <button
                       className="text-button"
                       disabled={busy || !team?.workspace}
                       onClick={() => void act({ type: "observe" })}
                     >
-                      Check saved changes
+                      Scan workspace
                     </button>
                     <button
                       className="text-button"
@@ -284,18 +322,19 @@ function App() {
                         }
                       }}
                     >
-                      Export report ↗
+                      <span>Export summary</span>
+                      <IconExternal />
                     </button>
                   </div>
                 </div>
                 {!state.activities.length ? (
                   <div className="empty">
-                    <span className="empty-mark">↳</span>
-                    <h3>A quiet start.</h3>
+                    <span className="empty-mark"><IconEmpty /></span>
+                    <h3>No recent activity</h3>
                     <p>
                       {team
-                        ? "Saved changes will appear here as you build."
-                        : "Create a team and add your starting plan to begin."}
+                        ? "Saved file modifications and agent updates will stream here in real time."
+                        : "Select or create a workspace to begin tracking."}
                     </p>
                   </div>
                 ) : (
@@ -306,7 +345,7 @@ function App() {
                         key={a.id}
                       >
                         <span className="activity-icon">
-                          {a.classification === "extra" ? "!" : "↳"}
+                          {a.classification === "extra" ? <IconAlert /> : <IconActivity />}
                         </span>
                         <div>
                           <h3>
@@ -324,8 +363,8 @@ function App() {
                             <span>
                               {a.resolution ??
                                 (a.classification === "extra"
-                                  ? "Scope conflict"
-                                  : "Recorded quietly")}
+                                   ? "Scope conflict"
+                                   : "Recorded quietly")}
                             </span>
                             <span>Plan v{a.planVersion}</span>
                           </div>
@@ -403,7 +442,8 @@ function App() {
                     className="text-button"
                     onClick={() => setTab("Teams")}
                   >
-                    View core plan →
+                    <span>View core plan</span>
+                    <IconArrowRight />
                   </button>
                 </section>
                 <section className="panel">
@@ -627,7 +667,14 @@ function ProfileForm({
         </label>
       )}
       <button disabled={busy}>
-        {state.profile ? "Save profile" : "Make yourself at home →"}
+        {state.profile ? (
+          "Save profile"
+        ) : (
+          <>
+            <span>Get started</span>
+            <IconArrowRight />
+          </>
+        )}
       </button>
     </form>
   );
@@ -667,14 +714,17 @@ function Teams({
   return (
     <>
       <div className="inline section-actions">
-        <button onClick={() => setCreate(!create)}>+ Create team</button>
+        <button onClick={() => setCreate(!create)}>
+          <IconPlus />
+          <span>Create workspace</span>
+        </button>
         <button className="secondary" onClick={() => setJoin(!join)}>
-          Join a team
+          Join existing team
         </button>
       </div>
       {create && (
         <section className="panel">
-          <h2>Give your team a starting point.</h2>
+          <h2>Create a shared workspace</h2>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -682,13 +732,13 @@ function Teams({
             }}
           >
             <label>
-              Team or event name
+              Team or workspace name
               <input
                 required
                 maxLength={100}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Weekend builders"
+                placeholder="e.g. Core Engine"
               />
             </label>
             <label>
@@ -730,7 +780,8 @@ function Teams({
               </div>
             </label>
             <button disabled={busy || !name.trim() || !plan.trim()}>
-              Create with starting plan →
+              <span>Create with starting plan</span>
+              <IconArrowRight />
             </button>
           </form>
         </section>
@@ -1098,7 +1149,8 @@ function Chat({
           className={recipient === "team" ? "selected" : ""}
           onClick={() => setRecipient("team")}
         >
-          ⌘ Everyone
+          <IconTeams />
+          <span>Everyone</span>
         </button>
         {state.members
           .filter((m) => m.id !== state.profile?.id)
@@ -1123,15 +1175,16 @@ function Chat({
           </h2>
           <small>
             {recipient === "team"
-              ? "One conversation for the whole team."
-              : "Visible to you, the recipient, and the host."}
+              ? "Team discussion channel"
+              : "Direct peer-to-peer message"}
           </small>
         </div>
         <div className="messages">
           {!messages.length && (
             <div className="empty">
-              <h3>The conversation starts here.</h3>
-              <p>Type a note, or use the mic to make a voice draft.</p>
+              <span className="empty-mark"><IconChats /></span>
+              <h3>No messages yet</h3>
+              <p>Send a message or record a voice draft to begin syncing with teammates.</p>
             </div>
           )}
           {messages.map((m) => (
@@ -1149,9 +1202,9 @@ function Chat({
               <small>
                 {stamp(m.createdAt)} ·{" "}
                 {m.state === "delivered"
-                  ? "Delivered to recipient app(s)"
+                  ? "Delivered"
                   : m.state === "sent"
-                    ? "Accepted by host"
+                    ? "Sent"
                     : m.state === "queued"
                       ? "Queued"
                       : "Saved locally"}
@@ -1187,7 +1240,7 @@ function Chat({
             value={content}
             onChange={(e) => setContent(e.target.value)}
             maxLength={8000}
-            placeholder="A little update goes a long way…"
+            placeholder="Type a team update or question…"
           />
           <div className="inline">
             <button
@@ -1196,11 +1249,19 @@ function Chat({
               disabled={transcribing || !state.activeTeamId}
               onClick={() => void capture()}
             >
-              {recording
-                ? "■ Stop recording"
-                : transcribing
-                  ? "Transcribing locally…"
-                  : "◉ Voice draft"}
+              {recording ? (
+                <>
+                  <IconStop />
+                  <span>Stop recording</span>
+                </>
+              ) : transcribing ? (
+                <span>Transcribing locally…</span>
+              ) : (
+                <>
+                  <IconMic />
+                  <span>Voice draft</span>
+                </>
+              )}
             </button>
             {recording && (
               <button
@@ -1224,10 +1285,11 @@ function Chat({
                 transcribing
               }
             >
-              Send →
+              <span>Send</span>
+              <IconSend />
             </button>
           </div>
-          <small>Voice stays local. Review every draft before sending.</small>
+          <small>Offline voice transcription. Voice data stays on device.</small>
         </form>
       </div>
     </section>
@@ -1279,7 +1341,7 @@ function Companion({
       )}
       <button
         className="companion-placeholder"
-        aria-label={`Cobble companion controls, ${mode}`}
+        aria-label={`Pebble companion avatar, ${mode}`}
         onMouseEnter={() => void window.cobble.companion("pointer-on")}
         onMouseLeave={() => {
           if (!drag.current) void window.cobble.companion("pointer-off");
@@ -1334,25 +1396,7 @@ function Companion({
           }
         }}
       >
-        {art[mode] ? (
-          <img alt="Cobble" src={art[mode]} draggable={false} />
-        ) : (
-          <span>
-            Cobble
-            <small>
-              {mode === "dragging"
-                ? "Hanging pose"
-                : mode === "idle"
-                  ? "Resting at the edge"
-                  : "Companion controls"}
-            </small>
-          </span>
-        )}
-        {!art[mode] && (
-          <i
-            className={ideConnected(state) ? "status-dot green" : "status-dot"}
-          />
-        )}
+        <PebbleRobot mode={mode} />
       </button>
       {menu && (
         <div
@@ -1364,20 +1408,23 @@ function Companion({
             {state.paused
               ? "Watching paused"
               : ideConnected(state)
-                ? "IDE connected · saved files"
-                : "IDE not connected"}
+                ? "IDE linked · watching saved files"
+                : "IDE not linked"}
           </small>
           <button onClick={() => void window.cobble.open("Home")}>
-            Open Cobble
+            <IconHome />
+            <span>Open Cobble</span>
           </button>
           <button
             disabled={!state.activeTeamId}
             onClick={() => void window.cobble.open("Chats", true)}
           >
-            ◉ Voice message
+            <IconMic />
+            <span>Record voice note</span>
           </button>
           <button onClick={() => void window.cobble.open("Teams")}>
-            Core plan & IDE
+            <IconTeams />
+            <span>Core plan & workspace</span>
           </button>
           <select
             aria-label="Mark my availability"
