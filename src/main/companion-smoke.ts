@@ -47,6 +47,29 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
       "late moves after release must be ignored",
     );
 
+    await command("menu-close");
+    companion.setBounds({ x: 100, y: 100, width: 160, height: 110 });
+    const before = companion.getBounds();
+    await command("drag-start");
+    let firstSize: number[] | undefined;
+    for (let i = 0; i < 40; i++) {
+      cursor = { ...cursor, y: cursor.y - 1 };
+      await command("drag-move");
+      const bounds = companion.getBounds();
+      const size = [bounds.width, bounds.height];
+      firstSize ??= size;
+      assert.deepEqual(
+        size,
+        firstSize,
+        "repeated moves must not grow the native Windows window",
+      );
+      assert.ok(
+        Math.abs(bounds.width - before.width) <= 1 &&
+          Math.abs(bounds.height - before.height) <= 1,
+      );
+    }
+    await command("drag-end");
+
     // Exercise the actual React handlers. Offscreen Windows has no physical
     // pointer capture, so only that DOM facility is simulated here.
     await js(`(() => {
@@ -65,6 +88,60 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
     })()`);
     const pose = () =>
       js("document.querySelector('.companion-host').className");
+    const facePoint = () =>
+      js(`(() => {
+      const matrix = document.querySelector('.pebble-avatar').getScreenCTM();
+      const point = new DOMPoint(106,86).matrixTransform(matrix);
+      return {x:point.x,y:point.y};
+    })()`);
+    for (const zoom of [1, 1.25, 1.5]) {
+      companion.webContents.setZoomFactor(zoom);
+      await command("menu-close");
+      companion.setBounds({ x: 100, y: 100, width: 160, height: 110 });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const grabbed = await facePoint();
+      cursor = { x: 100 + grabbed.x * zoom, y: 100 + grabbed.y * zoom };
+      await js(
+        `window.reviewPointer('pointerdown', {clientX:${grabbed.x},clientY:${grabbed.y},screenX:${cursor.x},screenY:${cursor.y}})`,
+      );
+      await settle();
+      cursor = { ...cursor, y: cursor.y - 40 };
+      await js(
+        `window.reviewPointer('pointermove', {screenX:${cursor.x},screenY:${cursor.y}})`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const assertGrab = async (label: string) => {
+        const point = await facePoint();
+        const [x, y] = companion.getPosition();
+        assert.ok(
+          // Windows converts integer window coordinates through display scale;
+          // allow two DIP of raster rounding, never accumulating displacement.
+          Math.abs(x + point.x * zoom - cursor.x) <= 2,
+          `${label}: face must not drift sideways at zoom ${zoom}: ${JSON.stringify({ x, y, point, cursor, pose: await pose(), bounds: companion.getBounds(), size: companion.getContentSize(), geometry: await js("({w:innerWidth,h:innerHeight,dpr:devicePixelRatio,rect:document.querySelector('.pebble-avatar').getBoundingClientRect().toJSON()})") })}`,
+        );
+        assert.ok(
+          Math.abs(y + point.y * zoom - cursor.y) <= 2,
+          `${label}: grabbed face must follow cursor vertically at zoom ${zoom}`,
+        );
+      };
+      await assertGrab("vertical drag and existing hanging transform");
+      // Native sampling continues while held, without relying on a backlog of
+      // window-relative pointermove events. The grabbed graphic point is fixed.
+      cursor = { x: cursor.x + 60, y: cursor.y };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await assertGrab("horizontal drag");
+      await js("window.reviewPointer('pointerup', {buttons:0})");
+      await settle();
+      const released = companion.getPosition();
+      cursor = { x: cursor.x + 100, y: cursor.y + 100 };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepEqual(
+        companion.getPosition(),
+        released,
+        "native sampling must stop on release",
+      );
+    }
+    companion.webContents.setZoomFactor(1);
     for (const ending of [
       "pointercancel",
       "lostpointercapture",
@@ -122,7 +199,7 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
       "the animated robot must not move the desktop window at rest",
     );
     console.log(
-      "COBBLE_COMPANION_OK: stationary cursor, 1:1 native drag, no accumulated drift, release/cancel/lost capture/blur, click menu, animations at rest",
+      "COBBLE_COMPANION_OK: stationary cursor, face follows vertical/horizontal drag at 100/125/150% zoom, pose transforms preserve grab point, release/cancel/lost capture/blur, click menu, animations at rest",
     );
   } finally {
     screen.getCursorScreenPoint = realCursor;

@@ -1334,11 +1334,53 @@ function Companion({
   const drag = useRef(false);
   const pointerId = useRef<number | null>(null);
   const origin = useRef({ x: 0, y: 0 });
-  const finishDrag = () => {
+  const grabAnchor = useRef<{
+    svg: SVGSVGElement;
+    x: number;
+    y: number;
+  } | null>(null);
+  const dragFrame = useRef<number | null>(null);
+  const dragGeneration = useRef(0);
+  const grabOffset = () => {
+    const anchor = grabAnchor.current;
+    const matrix = anchor?.svg.getScreenCTM();
+    if (!anchor || !matrix) return undefined;
+    const point = new DOMPoint(anchor.x, anchor.y).matrixTransform(matrix);
+    return { x: point.x, y: point.y };
+  };
+  const finishDrag = (sampleFinalPosition = false) => {
     if (pointerId.current === null) return;
+    if (sampleFinalPosition && drag.current)
+      void window.cobble.companion("drag-move", grabOffset());
     pointerId.current = null;
+    dragGeneration.current++;
+    if (dragFrame.current !== null) window.clearTimeout(dragFrame.current);
+    dragFrame.current = null;
     drag.current = false;
+    grabAnchor.current = null;
     void window.cobble.companion("drag-end");
+  };
+  const sampleDrag = () => {
+    if (dragFrame.current !== null) return;
+    const generation = dragGeneration.current;
+    dragFrame.current = window.setTimeout(async () => {
+      try {
+        if (
+          generation !== dragGeneration.current ||
+          pointerId.current === null ||
+          !drag.current
+        )
+          return;
+        await window.cobble.companion("drag-move", grabOffset());
+      } catch {
+        if (generation === dragGeneration.current) finishDrag();
+      } finally {
+        if (generation === dragGeneration.current) {
+          dragFrame.current = null;
+          if (pointerId.current !== null && drag.current) sampleDrag();
+        }
+      }
+    }, 16);
   };
 
   useEffect(() => {
@@ -1392,10 +1434,22 @@ function Companion({
         onPointerDown={(e) => {
           if (e.button !== 0 || pointerId.current !== null) return;
           pointerId.current = e.pointerId;
+          dragGeneration.current++;
           e.currentTarget.setPointerCapture(e.pointerId);
           origin.current = { x: e.screenX, y: e.screenY };
           drag.current = false;
-          void window.cobble.companion("drag-start");
+          const svg = e.currentTarget.querySelector("svg");
+          const matrix = svg?.getScreenCTM();
+          if (svg && matrix) {
+            const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(
+              matrix.inverse(),
+            );
+            grabAnchor.current = { svg, x: point.x, y: point.y };
+          }
+          void window.cobble.companion("drag-start", {
+            x: e.clientX,
+            y: e.clientY,
+          });
         }}
         onPointerMove={(e) => {
           if (pointerId.current !== e.pointerId) return;
@@ -1416,13 +1470,15 @@ function Companion({
           }
           if (drag.current) {
             // Native main-process coordinates are stable while the window moves.
-            void window.cobble.companion("drag-move");
+            // Keep the exact grabbed artwork point under the native cursor,
+            // including the existing normal-to-hanging pose transform.
+            sampleDrag();
           }
         }}
         onPointerUp={(e) => {
           if (pointerId.current !== e.pointerId) return;
           const wasDragging = drag.current;
-          finishDrag();
+          finishDrag(true);
           if (e.currentTarget.hasPointerCapture(e.pointerId))
             e.currentTarget.releasePointerCapture(e.pointerId);
           if (!wasDragging) {

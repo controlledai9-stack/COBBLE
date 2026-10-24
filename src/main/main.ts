@@ -15,7 +15,11 @@ import {
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CobbleService } from "../core/service";
-import { CompanionDrag, CompanionMachine } from "./companion";
+import {
+  CompanionDrag,
+  CompanionMachine,
+  clampCompanionBounds,
+} from "./companion";
 import { transcribe } from "./voice";
 import { connectIde } from "./integration";
 import { readFile, writeFile, rm } from "node:fs/promises";
@@ -39,6 +43,7 @@ if (smoke)
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
+    if (main?.isMinimized()) main.restore();
     main?.show();
     main?.focus();
   });
@@ -103,7 +108,7 @@ else {
         skipTaskbar: true,
         alwaysOnTop: true,
         show: false,
-        webPreferences: options,
+        webPreferences: { ...options, backgroundThrottling: false },
       });
       companion.setIgnoreMouseEvents(true, { forward: true });
       const endCompanionDrag = () => {
@@ -306,52 +311,76 @@ else {
         main.webContents.send("cobble:navigate", tab, voice && tab === "Chats");
         machine.interact();
       });
-      handle("companion", (_, command: string) => {
-        if (command === "show") {
-          companion.showInactive();
-          machine.interact();
-        } else if (command === "hide") companion.hide();
-        else if (command === "interact") machine.interact();
-        else if (command === "pointer-on")
-          companion.setIgnoreMouseEvents(false);
-        else if (command === "pointer-off") {
-          if (machine.mode !== "dragging")
-            companion.setIgnoreMouseEvents(true, { forward: true });
-        } else if (command === "menu-open" || command === "menu-close") {
-          endCompanionDrag();
-          const b = companion.getBounds();
-          const width = command === "menu-open" ? 280 : 160;
-          const height = command === "menu-open" ? 430 : 110;
-          const area = screen.getDisplayMatching(b).workArea;
-          companion.setBounds({
-            x: Math.max(
-              area.x,
-              Math.min(b.x + b.width - width, area.x + area.width - width),
-            ),
-            y: Math.max(
-              area.y,
-              Math.min(b.y + b.height - height, area.y + area.height - height),
-            ),
-            width,
-            height,
-          });
-        } else if (command === "drag-start") {
-          companionDrag.start(
-            screen.getCursorScreenPoint(),
-            companion.getBounds(),
-          );
-          companion.setIgnoreMouseEvents(false);
-          machine.dragStart();
-        } else if (command === "drag-move" && machine.mode === "dragging") {
-          const next = companionDrag.move(screen.getCursorScreenPoint());
-          if (next) companion.setPosition(next.x, next.y);
-        } else if (command === "drag-move") {
-          // Ignore late move messages after a release/cancel/blur.
-        } else if (command === "drag-end") {
-          endCompanionDrag();
-        } else throw new Error("Unknown companion action");
-        companion.webContents.send("cobble:pose", machine.mode);
-      });
+      handle(
+        "companion",
+        (_, command: string, point?: { x: number; y: number }) => {
+          // Renderer hit points are local CSS coordinates, never screen deltas.
+          // Convert page zoom to the DIP coordinates used by Electron windows.
+          const zoom = companion.webContents.getZoomFactor();
+          const [width, height] = companion.getContentSize();
+          const grab =
+            point &&
+            Number.isFinite(point.x) &&
+            Number.isFinite(point.y) &&
+            point.x * zoom >= 0 &&
+            point.x * zoom <= width &&
+            point.y * zoom >= 0 &&
+            point.y * zoom <= height
+              ? { x: point.x * zoom, y: point.y * zoom }
+              : undefined;
+          if (command === "show") {
+            companion.showInactive();
+            machine.interact();
+          } else if (command === "hide") companion.hide();
+          else if (command === "interact") machine.interact();
+          else if (command === "pointer-on")
+            companion.setIgnoreMouseEvents(false);
+          else if (command === "pointer-off") {
+            if (machine.mode !== "dragging")
+              companion.setIgnoreMouseEvents(true, { forward: true });
+          } else if (command === "menu-open" || command === "menu-close") {
+            endCompanionDrag();
+            const b = companion.getBounds();
+            const width = command === "menu-open" ? 280 : 160;
+            const height = command === "menu-open" ? 430 : 110;
+            const area = screen.getDisplayMatching(b).workArea;
+            companion.setBounds({
+              x: Math.max(
+                area.x,
+                Math.min(b.x + b.width - width, area.x + area.width - width),
+              ),
+              y: Math.max(
+                area.y,
+                Math.min(
+                  b.y + b.height - height,
+                  area.y + area.height - height,
+                ),
+              ),
+              width,
+              height,
+            });
+          } else if (command === "drag-start") {
+            companionDrag.start(
+              screen.getCursorScreenPoint(),
+              companion.getBounds(),
+              grab,
+            );
+            companion.setIgnoreMouseEvents(false);
+            machine.dragStart();
+          } else if (command === "drag-move" && machine.mode === "dragging") {
+            const next = companionDrag.move(
+              screen.getCursorScreenPoint(),
+              grab,
+            );
+            if (next) companion.setBounds(next);
+          } else if (command === "drag-move") {
+            // Ignore late move messages after a release/cancel/blur.
+          } else if (command === "drag-end") {
+            endCompanionDrag();
+          } else throw new Error("Unknown companion action");
+          companion.webContents.send("cobble:pose", machine.mode);
+        },
+      );
       const seenNotices = new Set(
         service.state().notifications.map((n) => n.id),
       );
@@ -390,9 +419,23 @@ else {
         null,
       );
       const area = screen.getPrimaryDisplay().workArea;
-      companion.setPosition(
-        stored?.[0] ?? area.x + area.width - 300,
-        stored?.[1] ?? area.y + area.height - 380,
+      const restored = {
+        x:
+          stored && Number.isFinite(stored[0])
+            ? stored[0]
+            : area.x + area.width - 300,
+        y:
+          stored && Number.isFinite(stored[1])
+            ? stored[1]
+            : area.y + area.height - 380,
+        width: 160,
+        height: 110,
+      };
+      companion.setBounds(
+        clampCompanionBounds(
+          restored,
+          screen.getDisplayMatching(restored).workArea,
+        ),
       );
       if (!smoke) companion.showInactive();
       const pixels = Buffer.alloc(16 * 16 * 4);
