@@ -1358,6 +1358,7 @@ function Companion({
           const dy = e.screenY - origin.current.y;
           if (!drag.current && Math.hypot(dx, dy) > 3) {
             drag.current = true;
+            setMode("dragging");
           }
           if (drag.current) {
             void window.cobble.companion("drag-move", { x: dx, y: dy });
@@ -1367,6 +1368,7 @@ function Companion({
           e.currentTarget.releasePointerCapture(e.pointerId);
           if (drag.current) {
             void window.cobble.companion("drag-end");
+            setMode("normal");
           } else {
             setMenu(!menu);
             void window.cobble.companion("interact");
@@ -1384,7 +1386,10 @@ function Companion({
         }}
         onPointerCancel={(e) => {
           e.currentTarget.releasePointerCapture(e.pointerId);
-          if (drag.current) void window.cobble.companion("drag-end");
+          if (drag.current) {
+            void window.cobble.companion("drag-end");
+            setMode("normal");
+          }
           drag.current = false;
           void window.cobble.companion("pointer-off");
         }}

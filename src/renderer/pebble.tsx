@@ -9,464 +9,259 @@ export function PebbleRobot({
   className?: string;
 }) {
   return (
-    <svg
-      className={`pebble-avatar pebble-mode-${mode} ${className}`}
-      width="220"
-      height="260"
-      viewBox="0 0 220 260"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <defs>
-        {/* Soft pebble stone gradient */}
-        <linearGradient id="pebBody" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#FFFFFF" />
-          <stop offset="55%" stopColor="#E2E8F0" />
-          <stop offset="100%" stopColor="#CBD5E1" />
-        </linearGradient>
-
-        {/* Deep obsidian glass visor */}
-        <linearGradient id="pebScreen" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#0F172A" />
-          <stop offset="100%" stopColor="#020617" />
-        </linearGradient>
-
-        {/* Electric cyan glow filter for eyes & chest core */}
-        <filter id="pebGlow" x="-30%" y="-30%" width="160%" height="160%">
-          <feGaussianBlur stdDeviation="3" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-
-      {/* ANTENNA STEM & MINECRAFT COBBLESTONE CUBE */}
-      <g className="pebble-antenna">
-        <path
-          d="M125 46 C 135 34, 142 22, 145 12"
-          stroke="#94A3B8"
-          strokeWidth="3.5"
-          strokeLinecap="round"
-        />
-        {/* Isometric 3D Cobblestone Cube */}
-        <g transform="translate(138, 2)">
-          <polygon
-            points="12,0 24,6 12,12 0,6"
-            fill="#94A3B8"
-            stroke="#334155"
-            strokeWidth="1"
-          />
-          <polygon
-            points="0,6 12,12 12,25 0,19"
-            fill="#475569"
-            stroke="#334155"
-            strokeWidth="1"
-          />
-          <polygon
-            points="12,12 24,6 24,19 12,25"
-            fill="#334155"
-            stroke="#1E293B"
-            strokeWidth="1"
-          />
-          <rect x="3" y="9" width="3" height="3" fill="#64748B" />
-          <rect x="15" y="14" width="3" height="3" fill="#1E293B" />
-          <rect x="18" y="9" width="2" height="2" fill="#64748B" />
-        </g>
-      </g>
-
-      {/* HEAD */}
-      <g
-        className={
-          mode === "idle"
-            ? "pebble-head-idle"
-            : mode === "dragging"
-              ? "pebble-head-drag"
-              : "pebble-head"
-        }
+    <div className={`pebble-companion-root mode-${mode} ${className}`}>
+      <svg
+        className="pebble-svg-frame"
+        width="110"
+        height="125"
+        viewBox="0 0 200 230"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
       >
-        {/* Rounded pebble chassis */}
-        <rect
-          x="52"
-          y="42"
-          width="108"
-          height="88"
-          rx="44"
-          fill="url(#pebBody)"
-          stroke="#94A3B8"
-          strokeWidth="2.5"
-        />
-        {/* Side audio sensors */}
-        <ellipse
-          cx="50"
-          cy="86"
-          rx="6"
-          ry="16"
-          fill="#CBD5E1"
-          stroke="#64748B"
-          strokeWidth="2"
-        />
-        <ellipse cx="49" cy="86" rx="2" ry="8" fill="#38BDF8" />
-        <ellipse
-          cx="162"
-          cy="86"
-          rx="6"
-          ry="16"
-          fill="#CBD5E1"
-          stroke="#64748B"
-          strokeWidth="2"
-        />
-        <ellipse cx="163" cy="86" rx="2" ry="8" fill="#38BDF8" />
+        <defs>
+          {/* Pearlescent Ceramic Pebble Gradient */}
+          <linearGradient id="pebCeramic" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#FFFFFF" />
+            <stop offset="42%" stopColor="#F1F5F9" />
+            <stop offset="78%" stopColor="#E2E8F0" />
+            <stop offset="100%" stopColor="#CBD5E1" />
+          </linearGradient>
 
-        {/* Dark curved faceplate */}
-        <rect
-          x="62"
-          y="52"
-          width="88"
-          height="68"
-          rx="30"
-          fill="url(#pebScreen)"
-          stroke="#1E293B"
-          strokeWidth="2"
-        />
-        {/* Glass reflection highlight */}
-        <path
-          d="M72 60 C 84 56, 128 56, 140 60 C 130 66, 82 66, 72 60 Z"
-          fill="white"
-          opacity="0.12"
-        />
+          {/* Deep Obsidian OLED Visor */}
+          <linearGradient id="pebOled" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#0B0F19" />
+            <stop offset="100%" stopColor="#020617" />
+          </linearGradient>
 
-        {/* EXPRESSIONS */}
-        {mode === "normal" && (
-          <g filter="url(#pebGlow)">
-            {/* Blinking eyes */}
-            <g className="pebble-eyes-blink">
-              <ellipse cx="88" cy="86" rx="7" ry="9" fill="#38BDF8" />
-              <circle cx="90" cy="84" r="2.5" fill="#FFFFFF" />
-              <ellipse cx="124" cy="86" rx="7" ry="9" fill="#38BDF8" />
-              <circle cx="126" cy="84" r="2.5" fill="#FFFFFF" />
+          {/* Magnetic Hands Gradient */}
+          <linearGradient id="pebHand" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#FFFFFF" />
+            <stop offset="70%" stopColor="#E2E8F0" />
+            <stop offset="100%" stopColor="#94A3B8" />
+          </linearGradient>
+
+          {/* Electric Cyan Neon Bloom */}
+          <filter id="pebNeon" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="3.5" result="blur1" />
+            <feGaussianBlur stdDeviation="1.5" result="blur2" />
+            <feMerge>
+              <feMergeNode in="blur1" />
+              <feMergeNode in="blur2" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          {/* Hover Levitation Particle Aura */}
+          <radialGradient id="pebAura" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(56, 189, 248, 0.65)" />
+            <stop offset="60%" stopColor="rgba(56, 189, 248, 0.2)" />
+            <stop offset="100%" stopColor="rgba(56, 189, 248, 0)" />
+          </radialGradient>
+        </defs>
+
+        {/* 1. LEVITATION HOVER AURA (Pulses under the robot) */}
+        <g className="pebble-aura-group">
+          <ellipse cx="100" cy="204" rx="42" ry="12" fill="url(#pebAura)" />
+          <ellipse
+            cx="100"
+            cy="204"
+            rx="24"
+            ry="6"
+            fill="#38BDF8"
+            opacity="0.5"
+            filter="url(#pebNeon)"
+          />
+        </g>
+
+        {/* 2. FLOATING MAGNETIC HANDS (Animate independently beside body) */}
+        <g className="pebble-hands-layer">
+          {/* Left Floating Hand */}
+          <g className="pebble-hand-left">
+            <ellipse
+              cx="34"
+              cy="120"
+              rx="10"
+              ry="16"
+              fill="url(#pebHand)"
+              stroke="#94A3B8"
+              strokeWidth="1.8"
+            />
+            {/* Subtle joint glow dot */}
+            <circle cx="34" cy="116" r="2.2" fill="#38BDF8" opacity="0.8" />
+          </g>
+
+          {/* Right Floating Hand */}
+          <g className="pebble-hand-right">
+            <ellipse
+              cx="166"
+              cy="120"
+              rx="10"
+              ry="16"
+              fill="url(#pebHand)"
+              stroke="#94A3B8"
+              strokeWidth="1.8"
+            />
+            {/* Subtle joint glow dot */}
+            <circle cx="166" cy="116" r="2.2" fill="#38BDF8" opacity="0.8" />
+          </g>
+        </g>
+
+        {/* 3. MAIN PEBBLE CHASSIS & HEAD (Smooth organic pod) */}
+        <g className="pebble-main-pod">
+          {/* Antenna & 3D Cobblestone Block */}
+          <g className="pebble-antenna-stem">
+            <path
+              d="M 100 48 C 100 32, 106 24, 110 16"
+              stroke="#94A3B8"
+              strokeWidth="3.2"
+              strokeLinecap="round"
+            />
+            <circle
+              cx="110"
+              cy="16"
+              r="4.5"
+              fill="#38BDF8"
+              filter="url(#pebNeon)"
+            />
+
+            {/* Floating Mini 3D Cobblestone Cube */}
+            <g transform="translate(104, -4) scale(0.85)">
+              <polygon
+                points="12,0 24,6 12,12 0,6"
+                fill="#94A3B8"
+                stroke="#334155"
+                strokeWidth="0.8"
+              />
+              <polygon
+                points="0,6 12,12 12,24 0,18"
+                fill="#475569"
+                stroke="#334155"
+                strokeWidth="0.8"
+              />
+              <polygon
+                points="12,12 24,6 24,18 12,24"
+                fill="#334155"
+                stroke="#1E293B"
+                strokeWidth="0.8"
+              />
+              <rect x="3" y="9" width="3" height="3" fill="#64748B" />
+              <rect x="15" y="14" width="3" height="3" fill="#1E293B" />
             </g>
-            {/* Cute smile */}
-            <path
-              d="M 100 99 C 103 103, 109 103, 112 99"
-              stroke="#38BDF8"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              fill="none"
-            />
           </g>
-        )}
 
-        {mode === "idle" && (
-          <g filter="url(#pebGlow)" className="pebble-eyes-idle">
-            {/* Sleepy happy upward arcs */}
-            <path
-              d="M 80 88 C 84 79, 94 79, 98 88"
-              stroke="#38BDF8"
-              strokeWidth="4"
-              strokeLinecap="round"
-              fill="none"
-            />
-            <path
-              d="M 114 88 C 118 79, 128 79, 132 88"
-              stroke="#38BDF8"
-              strokeWidth="4"
-              strokeLinecap="round"
-              fill="none"
-            />
-            {/* Soft content mouth */}
-            <path
-              d="M 101 100 C 103 103, 109 103, 111 100"
-              stroke="#38BDF8"
-              strokeWidth="2"
-              strokeLinecap="round"
-              fill="none"
-            />
-          </g>
-        )}
-
-        {mode === "dragging" && (
-          <g filter="url(#pebGlow)">
-            {/* Surprised wide eyes */}
-            <circle cx="87" cy="84" r="9.5" fill="#38BDF8" />
-            <circle cx="89" cy="82" r="3.5" fill="#FFFFFF" />
-            <circle cx="125" cy="84" r="9.5" fill="#38BDF8" />
-            <circle cx="127" cy="82" r="3.5" fill="#FFFFFF" />
-            {/* Cute "o" surprised mouth */}
-            <ellipse cx="106" cy="99" rx="4.5" ry="5.5" fill="#38BDF8" opacity="0.9" />
-          </g>
-        )}
-      </g>
-
-      {/* TORSO */}
-      <g transform="translate(0, 10)">
-        <rect x="98" y="120" width="16" height="8" rx="3" fill="#64748B" />
-        <path
-          d="M76 128 C 76 128, 80 176, 86 184 C 92 190, 120 190, 126 184 C 132 176, 136 128, 136 128 Z"
-          fill="url(#pebBody)"
-          stroke="#94A3B8"
-          strokeWidth="2.5"
-        />
-        {/* Cyan power core */}
-        <circle
-          className="pebble-core-light"
-          cx="106"
-          cy="152"
-          r="5.5"
-          fill="#0284C7"
-          stroke="#38BDF8"
-          strokeWidth="1.5"
-          filter="url(#pebGlow)"
-        />
-      </g>
-
-      {/* ARMS */}
-      {mode === "normal" && (
-        <g transform="translate(0, 10)">
-          {/* Left arm */}
-          <circle cx="68" cy="138" r="5" fill="#64748B" />
-          <rect
-            x="42"
-            y="140"
-            width="26"
-            height="12"
-            rx="6"
-            transform="rotate(32 42 140)"
-            fill="url(#pebBody)"
+          {/* Smooth Pebble Body Form */}
+          <path
+            d="M 100 45 C 142 45, 160 70, 160 114 C 160 156, 138 188, 100 188 C 62 188, 40 156, 40 114 C 40 70, 58 45, 100 45 Z"
+            fill="url(#pebCeramic)"
             stroke="#94A3B8"
-            strokeWidth="2"
+            strokeWidth="2.4"
           />
-          <circle cx="40" cy="164" r="4.5" fill="#475569" />
 
-          {/* Right arm waving slightly */}
-          <circle cx="144" cy="138" r="5" fill="#64748B" />
-          <rect
-            x="144"
-            y="130"
-            width="28"
-            height="12"
-            rx="6"
-            transform="rotate(-38 144 130)"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
+          {/* Under-body Shadow Contour for Depth */}
+          <path
+            d="M 64 165 C 78 180, 122 180, 136 165 C 128 178, 72 178, 64 165 Z"
+            fill="#94A3B8"
+            opacity="0.35"
           />
-          <circle cx="174" cy="108" r="4.5" fill="#475569" />
-        </g>
-      )}
 
-      {mode === "idle" && (
-        <g transform="translate(0, 10)">
-          {/* Arms folded calmly in lap */}
-          <circle cx="68" cy="138" r="5" fill="#64748B" />
-          <rect
-            x="52"
-            y="140"
-            width="26"
-            height="12"
-            rx="6"
-            transform="rotate(50 52 140)"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
-          />
-          <circle cx="70" cy="166" r="4.5" fill="#475569" />
-
-          <circle cx="144" cy="138" r="5" fill="#64748B" />
-          <rect
-            x="134"
-            y="140"
-            width="26"
-            height="12"
-            rx="6"
-            transform="rotate(-50 134 140)"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
-          />
-          <circle cx="142" cy="166" r="4.5" fill="#475569" />
-        </g>
-      )}
-
-      {mode === "dragging" && (
-        <g transform="translate(0, 10)">
-          {/* Arms raised in air */}
-          <circle cx="68" cy="134" r="5" fill="#64748B" />
-          <rect
-            x="36"
-            y="126"
-            width="28"
-            height="11"
-            rx="5.5"
-            transform="rotate(-40 36 126)"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
-          />
-          <circle cx="28" cy="104" r="4.5" fill="#475569" />
-
-          <circle cx="144" cy="134" r="5" fill="#64748B" />
-          <rect
-            x="146"
-            y="136"
-            width="28"
-            height="11"
-            rx="5.5"
-            transform="rotate(40 146 136)"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
-          />
-          <circle cx="184" cy="104" r="4.5" fill="#475569" />
-        </g>
-      )}
-
-      {/* LEGS */}
-      {mode === "normal" && (
-        <g transform="translate(0, 10)">
-          <circle cx="90" cy="188" r="5" fill="#64748B" />
-          <rect
-            x="78"
-            y="192"
-            width="14"
-            height="26"
-            rx="6"
-            transform="rotate(10 78 192)"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
-          />
-          <ellipse
-            cx="80"
-            cy="224"
-            rx="9"
-            ry="5"
-            fill="#334155"
+          {/* Embedded Curved OLED Visor */}
+          <path
+            d="M 100 64 C 130 64, 144 76, 144 104 C 144 128, 130 142, 100 142 C 70 142, 56 128, 56 104 C 56 76, 70 64, 100 64 Z"
+            fill="url(#pebOled)"
             stroke="#1E293B"
-            strokeWidth="1.5"
-          />
-
-          <circle cx="122" cy="188" r="5" fill="#64748B" />
-          <rect
-            x="118"
-            y="192"
-            width="14"
-            height="26"
-            rx="6"
-            transform="rotate(-10 118 192)"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
             strokeWidth="2"
           />
-          <ellipse
-            cx="132"
-            cy="224"
-            rx="9"
-            ry="5"
-            fill="#334155"
-            stroke="#1E293B"
-            strokeWidth="1.5"
+
+          {/* Visor Glass Reflection Highlight Curve */}
+          <path
+            d="M 72 73 C 86 68, 114 68, 128 73 C 120 78, 80 78, 72 73 Z"
+            fill="white"
+            opacity="0.16"
           />
+
+          {/* Lower Torso Core Status Light */}
+          <circle
+            className="pebble-power-core"
+            cx="100"
+            cy="166"
+            r="4"
+            fill="#0284C7"
+            stroke="#38BDF8"
+            strokeWidth="1.4"
+            filter="url(#pebNeon)"
+          />
+
+          {/* 4. FACIAL EXPRESSIONS & LIVING EYES */}
+          {mode === "normal" && (
+            <g filter="url(#pebNeon)">
+              {/* Alive Blinking & Glancing Eyes */}
+              <g className="pebble-eyes-alive">
+                {/* Left Eye */}
+                <rect x="76" y="88" width="13" height="18" rx="6.5" fill="#38BDF8" />
+                <circle cx="80.5" cy="92.5" r="2.4" fill="#FFFFFF" />
+                {/* Right Eye */}
+                <rect x="111" y="88" width="13" height="18" rx="6.5" fill="#38BDF8" />
+                <circle cx="115.5" cy="92.5" r="2.4" fill="#FFFFFF" />
+              </g>
+              {/* Subtle Happy Mouth */}
+              <path
+                d="M 96 118 C 98 122, 102 122, 104 118"
+                stroke="#38BDF8"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                fill="none"
+              />
+            </g>
+          )}
+
+          {mode === "idle" && (
+            <g filter="url(#pebNeon)" className="pebble-eyes-sleeping">
+              {/* Happy Sleepy Curved Arcs */}
+              <path
+                d="M 73 98 C 77 88, 89 88, 93 98"
+                stroke="#38BDF8"
+                strokeWidth="3.6"
+                strokeLinecap="round"
+                fill="none"
+              />
+              <path
+                d="M 107 98 C 111 88, 123 88, 127 98"
+                stroke="#38BDF8"
+                strokeWidth="3.6"
+                strokeLinecap="round"
+                fill="none"
+              />
+              {/* Content Sleeping Smile */}
+              <path
+                d="M 96 118 C 98 121, 102 121, 104 118"
+                stroke="#38BDF8"
+                strokeWidth="2"
+                strokeLinecap="round"
+                fill="none"
+              />
+            </g>
+          )}
+
+          {mode === "dragging" && (
+            <g filter="url(#pebNeon)">
+              {/* Wide Surprised Eyes */}
+              <circle cx="82" cy="97" r="10" fill="#38BDF8" />
+              <circle cx="84.5" cy="94" r="3.2" fill="#FFFFFF" />
+              <circle cx="118" cy="97" r="10" fill="#38BDF8" />
+              <circle cx="120.5" cy="94" r="3.2" fill="#FFFFFF" />
+              {/* Cute Surprised 'o' Mouth */}
+              <ellipse
+                cx="100"
+                cy="119"
+                rx="4"
+                ry="5.5"
+                fill="#38BDF8"
+                opacity="0.9"
+              />
+            </g>
+          )}
         </g>
-      )}
-
-      {mode === "idle" && (
-        <g transform="translate(0, 10)">
-          {/* Neatly seated pebble beanbag posture */}
-          <circle cx="86" cy="184" r="5" fill="#64748B" />
-          <rect
-            x="74"
-            y="184"
-            width="22"
-            height="13"
-            rx="6"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
-          />
-          <ellipse
-            cx="70"
-            cy="196"
-            rx="10"
-            ry="6"
-            fill="#334155"
-            stroke="#1E293B"
-            strokeWidth="1.5"
-          />
-
-          <circle cx="126" cy="184" r="5" fill="#64748B" />
-          <rect
-            x="116"
-            y="184"
-            width="22"
-            height="13"
-            rx="6"
-            fill="url(#pebBody)"
-            stroke="#94A3B8"
-            strokeWidth="2"
-          />
-          <ellipse
-            cx="142"
-            cy="196"
-            rx="10"
-            ry="6"
-            fill="#334155"
-            stroke="#1E293B"
-            strokeWidth="1.5"
-          />
-        </g>
-      )}
-
-      {mode === "dragging" && (
-        <g transform="translate(0, 10)">
-          {/* Dangling legs swaying with dragging physics */}
-          <g className="pebble-leg-dangle-left">
-            <circle cx="90" cy="188" r="5" fill="#64748B" />
-            <rect
-              x="82"
-              y="192"
-              width="13"
-              height="28"
-              rx="6"
-              fill="url(#pebBody)"
-              stroke="#94A3B8"
-              strokeWidth="2"
-            />
-            <ellipse
-              cx="86"
-              cy="226"
-              rx="9"
-              ry="5"
-              fill="#334155"
-              stroke="#1E293B"
-              strokeWidth="1.5"
-            />
-          </g>
-
-          <g className="pebble-leg-dangle-right">
-            <circle cx="122" cy="188" r="5" fill="#64748B" />
-            <rect
-              x="117"
-              y="192"
-              width="13"
-              height="28"
-              rx="6"
-              fill="url(#pebBody)"
-              stroke="#94A3B8"
-              strokeWidth="2"
-            />
-            <ellipse
-              cx="125"
-              cy="226"
-              rx="9"
-              ry="5"
-              fill="#334155"
-              stroke="#1E293B"
-              strokeWidth="1.5"
-            />
-          </g>
-        </g>
-      )}
-    </svg>
+      </svg>
+    </div>
   );
 }

@@ -1061,80 +1061,155 @@ footer span:last-child {
 }
 
 /* Vector Pebble Avatar Container */
-.companion-placeholder .pebble-avatar {
-  display: block;
-  width: 76px;
-  height: 90px;
+.companion-placeholder .pebble-companion-root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
-  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.7));
+  user-select: none;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.7));
   transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.25s ease;
-  animation: pebble-breathe 3.6s ease-in-out infinite;
-  transform-origin: center bottom;
 }
 
-.companion-placeholder:hover .pebble-avatar {
+.companion-placeholder:hover .pebble-companion-root {
   transform: scale(1.08) translateY(-2px);
-  filter: drop-shadow(0 8px 22px rgba(56, 189, 248, 0.45));
+  filter: drop-shadow(0 10px 28px rgba(56, 189, 248, 0.45));
 }
 
-.companion-placeholder:active .pebble-avatar {
+.companion-placeholder:active .pebble-companion-root {
   transform: scale(0.96);
 }
 
-.pose-dragging .companion-placeholder .pebble-avatar {
-  cursor: grabbing;
-  transform: scale(1.06) rotate(-3deg);
-  animation: none;
+.companion-placeholder .pebble-svg-frame {
+  display: block;
+  width: 92px;
+  height: 106px;
+  overflow: visible;
 }
 
-/* Micro-animations */
-@keyframes pebble-breathe {
+/* 1. Main Pod Organic Hover Physics */
+.pebble-main-pod {
+  animation: pebble-pod-float 3.4s ease-in-out infinite;
+  transform-origin: 100px 114px;
+}
+
+@keyframes pebble-pod-float {
   0%, 100% {
-    transform: translateY(0);
+    transform: translateY(0px) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-4px) rotate(1.4deg);
+  }
+  75% {
+    transform: translateY(2.5px) rotate(-1.4deg);
+  }
+}
+
+/* 2. Magnetic Levitating Hands */
+.pebble-hand-left {
+  animation: hand-hover-left 3.4s ease-in-out infinite;
+  transform-origin: 34px 120px;
+}
+
+.pebble-hand-right {
+  animation: hand-hover-right 3.4s ease-in-out infinite 0.25s;
+  transform-origin: 166px 120px;
+}
+
+@keyframes hand-hover-left {
+  0%, 100% {
+    transform: translateY(0px) rotate(8deg);
   }
   50% {
-    transform: translateY(-3.5px);
+    transform: translateY(-6px) rotate(18deg);
   }
 }
 
-.pebble-eyes-blink {
-  animation: eye-blink 4.2s ease-in-out infinite;
-  transform-origin: 106px 86px;
-}
-
-@keyframes eye-blink {
-  0%, 93%, 100% {
-    transform: scaleY(1);
+@keyframes hand-hover-right {
+  0%, 100% {
+    transform: translateY(-2px) rotate(-8deg);
   }
-  96% {
-    transform: scaleY(0.08);
+  50% {
+    transform: translateY(5px) rotate(-18deg);
   }
 }
 
-.pebble-antenna {
-  animation: antenna-sway 5.2s ease-in-out infinite;
-  transform-origin: 125px 46px;
+/* 3. Alive Eyes: Natural Blinking & Glancing Cycle */
+.pebble-eyes-alive {
+  animation: pebble-eyes-cycle 5.4s ease-in-out infinite;
+  transform-origin: 100px 97px;
 }
 
-@keyframes antenna-sway {
+@keyframes pebble-eyes-cycle {
+  0%, 65% {
+    transform: scaleY(1) translateX(0);
+  }
+  67% {
+    transform: scaleY(0.08) translateX(0);
+  }
+  69% {
+    transform: scaleY(1) translateX(0);
+  }
+  70.5% {
+    transform: scaleY(0.08) translateX(0);
+  }
+  72% {
+    transform: scaleY(1) translateX(0);
+  }
+  78% {
+    transform: scaleY(1) translateX(-3.5px);
+  }
+  86% {
+    transform: scaleY(1) translateX(3.5px);
+  }
+  92%, 100% {
+    transform: scaleY(1) translateX(0);
+  }
+}
+
+/* 4. Levitation Aura Pulse */
+.pebble-aura-group {
+  animation: pebble-aura-pulse 3.4s ease-in-out infinite;
+  transform-origin: 100px 204px;
+}
+
+@keyframes pebble-aura-pulse {
+  0%, 100% {
+    opacity: 0.65;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.18, 1.25);
+  }
+}
+
+/* 5. Antenna Sway */
+.pebble-antenna-stem {
+  animation: pebble-antenna-sway 4.8s ease-in-out infinite;
+  transform-origin: 100px 48px;
+}
+
+@keyframes pebble-antenna-sway {
   0%, 100% {
     transform: rotate(0deg);
   }
   30% {
-    transform: rotate(2.8deg);
+    transform: rotate(3deg);
   }
   70% {
-    transform: rotate(-2.8deg);
+    transform: rotate(-3deg);
   }
 }
 
-.pebble-core-light {
-  animation: core-pulse 2.8s ease-in-out infinite;
+/* 6. Power Core Glow */
+.pebble-power-core {
+  animation: pebble-core-glow 2.5s ease-in-out infinite;
 }
 
-@keyframes core-pulse {
+@keyframes pebble-core-glow {
   0%, 100% {
-    opacity: 0.75;
+    opacity: 0.7;
   }
   50% {
     opacity: 1;
@@ -1142,31 +1217,56 @@ footer span:last-child {
   }
 }
 
-.pebble-leg-dangle-left {
-  animation: leg-dangle-left 1.4s ease-in-out infinite;
-  transform-origin: 90px 188px;
+/* 7. Interactive Dragging State */
+.mode-dragging .pebble-main-pod {
+  animation: none !important;
+  transform: scale(0.96, 1.05) rotate(-3deg);
 }
 
-.pebble-leg-dangle-right {
-  animation: leg-dangle-right 1.4s ease-in-out infinite 0.15s;
-  transform-origin: 122px 188px;
+.mode-dragging .pebble-hand-left {
+  animation: none !important;
+  transform: translateY(-16px) rotate(26deg);
+  transition: transform 0.15s ease;
 }
 
-@keyframes leg-dangle-left {
+.mode-dragging .pebble-hand-right {
+  animation: none !important;
+  transform: translateY(-16px) rotate(-26deg);
+  transition: transform 0.15s ease;
+}
+
+.mode-dragging .pebble-aura-group {
+  animation: none !important;
+  opacity: 0.35;
+  transform: scale(0.85);
+}
+
+/* 8. Resting Idle State */
+.mode-idle .pebble-main-pod {
+  animation: pebble-idle-breathe 4.6s ease-in-out infinite;
+}
+
+@keyframes pebble-idle-breathe {
   0%, 100% {
-    transform: rotate(5deg);
+    transform: translateY(2px) scale(1);
   }
   50% {
-    transform: rotate(16deg);
+    transform: translateY(-2px) scale(0.985);
   }
 }
 
-@keyframes leg-dangle-right {
+.mode-idle .pebble-aura-group {
+  animation: pebble-idle-aura 4.6s ease-in-out infinite;
+}
+
+@keyframes pebble-idle-aura {
   0%, 100% {
-    transform: rotate(-5deg);
+    opacity: 0.4;
+    transform: scale(0.9);
   }
   50% {
-    transform: rotate(-16deg);
+    opacity: 0.75;
+    transform: scale(1.08);
   }
 }
 
