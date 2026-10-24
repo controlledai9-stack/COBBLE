@@ -1205,31 +1205,42 @@ footer span:last-child {
   border: 1px solid #242432;
   border-radius: 12px;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75);
-  padding: 12px;
+  padding: 10px;
   color: #F8FAFC;
 }
 
 .companion-menu > button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   background: transparent;
   color: #F8FAFC;
   font-size: 12px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 7px;
+  transition: all 0.15s ease;
+}
+
+.companion-menu > button svg {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .companion-menu > button:hover {
   background: #181924;
   color: var(--accent);
+  transform: none;
 }
 
 .companion-menu > small {
   font-size: 10px;
   display: block;
-  padding: 0 8px 8px;
+  padding: 4px 10px 8px;
   color: var(--muted);
+  border-bottom: 1px solid #1E202B;
+  margin-bottom: 6px;
 }
 
 .companion-menu select {
@@ -1237,7 +1248,9 @@ footer span:last-child {
   padding: 7px 10px;
   background: #16161F;
   border: 1px solid #242432;
+  border-radius: 7px;
   color: #F8FAFC;
+  margin: 6px 0;
 }
 
 html:has(.companion-host),

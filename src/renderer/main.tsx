@@ -1440,10 +1440,12 @@ function Companion({
           <button
             onClick={() => void act({ type: "pause", paused: !state.paused })}
           >
-            {state.paused ? "Resume watching" : "Pause watching"}
+            <IconActivity />
+            <span>{state.paused ? "Resume watching" : "Pause watching"}</span>
           </button>
           <button onClick={() => void window.cobble.companion("hide")}>
-            Hide controls
+            <IconClose />
+            <span>Hide controls</span>
           </button>
           {error && <small className="error">{error}</small>}
         </div>
