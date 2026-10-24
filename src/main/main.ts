@@ -15,7 +15,7 @@ import {
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CobbleService } from "../core/service";
-import { CompanionMachine } from "./companion";
+import { CompanionDrag, CompanionMachine } from "./companion";
 import { transcribe } from "./voice";
 import { connectIde } from "./integration";
 import { readFile, writeFile, rm } from "node:fs/promises";
@@ -27,10 +27,10 @@ let companion: BrowserWindow;
 let tray: Tray;
 let quitting = false;
 const machine = new CompanionMachine();
-let dragOffset = { x: 0, y: 0 };
-let dragStartPos = [0, 0];
+const companionDrag = new CompanionDrag();
 const devUrl = process.env.COBBLE_RENDERER_URL;
-const smoke = process.env.COBBLE_SMOKE_TEST === "1";
+const companionSmoke = process.env.COBBLE_COMPANION_SMOKE_TEST === "1";
+const smoke = process.env.COBBLE_SMOKE_TEST === "1" || companionSmoke;
 if (smoke)
   app.setPath(
     "userData",
@@ -106,6 +106,19 @@ else {
         webPreferences: options,
       });
       companion.setIgnoreMouseEvents(true, { forward: true });
+      const endCompanionDrag = () => {
+        if (!companionDrag.active) return;
+        companionDrag.stop();
+        machine.dragEnd();
+        service.store.set("companionPosition", companion.getPosition());
+        companion.webContents.send("cobble:pose", machine.mode);
+      };
+      companion.on("blur", endCompanionDrag);
+      companion.on("hide", endCompanionDrag);
+      companion.webContents.on("render-process-gone", () => {
+        companionDrag.stop();
+        machine.dragEnd();
+      });
       const renderer = pathToFileURL(
         join(__dirname, "../renderer/index.html"),
       ).href;
@@ -293,65 +306,52 @@ else {
         main.webContents.send("cobble:navigate", tab, voice && tab === "Chats");
         machine.interact();
       });
-      handle(
-        "companion",
-        (_, command: string, point?: { x: number; y: number }) => {
-          if (command === "show") {
-            companion.showInactive();
-            machine.interact();
-          } else if (command === "hide") companion.hide();
-          else if (command === "interact") machine.interact();
-          else if (command === "pointer-on")
-            companion.setIgnoreMouseEvents(false);
-          else if (command === "pointer-off") {
-            if (machine.mode !== "dragging")
-              companion.setIgnoreMouseEvents(true, { forward: true });
-          } else if (command === "menu-open" || command === "menu-close") {
-            const b = companion.getBounds();
-            const width = command === "menu-open" ? 280 : 160;
-            const height = command === "menu-open" ? 430 : 110;
-            const area = screen.getDisplayMatching(b).workArea;
-            companion.setBounds({
-              x: Math.max(
-                area.x,
-                Math.min(b.x + b.width - width, area.x + area.width - width),
-              ),
-              y: Math.max(
-                area.y,
-                Math.min(
-                  b.y + b.height - height,
-                  area.y + area.height - height,
-                ),
-              ),
-              width,
-              height,
-            });
-          } else if (command === "drag-start") {
-            dragStartPos = companion.getPosition();
-            const cursor = screen.getCursorScreenPoint();
-            const bounds = companion.getBounds();
-            dragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
-            machine.dragStart();
-          } else if (command === "drag-move" && machine.mode === "dragging") {
-            if (point && typeof point.x === "number" && typeof point.y === "number") {
-              companion.setPosition(
-                Math.round(dragStartPos[0] + point.x),
-                Math.round(dragStartPos[1] + point.y),
-              );
-            } else {
-              const cursor = screen.getCursorScreenPoint();
-              companion.setPosition(
-                cursor.x - dragOffset.x,
-                cursor.y - dragOffset.y,
-              );
-            }
-          } else if (command === "drag-end") {
-            machine.dragEnd();
-            service.store.set("companionPosition", companion.getPosition());
-          } else throw new Error("Unknown companion action");
-          companion.webContents.send("cobble:pose", machine.mode);
-        },
-      );
+      handle("companion", (_, command: string) => {
+        if (command === "show") {
+          companion.showInactive();
+          machine.interact();
+        } else if (command === "hide") companion.hide();
+        else if (command === "interact") machine.interact();
+        else if (command === "pointer-on")
+          companion.setIgnoreMouseEvents(false);
+        else if (command === "pointer-off") {
+          if (machine.mode !== "dragging")
+            companion.setIgnoreMouseEvents(true, { forward: true });
+        } else if (command === "menu-open" || command === "menu-close") {
+          endCompanionDrag();
+          const b = companion.getBounds();
+          const width = command === "menu-open" ? 280 : 160;
+          const height = command === "menu-open" ? 430 : 110;
+          const area = screen.getDisplayMatching(b).workArea;
+          companion.setBounds({
+            x: Math.max(
+              area.x,
+              Math.min(b.x + b.width - width, area.x + area.width - width),
+            ),
+            y: Math.max(
+              area.y,
+              Math.min(b.y + b.height - height, area.y + area.height - height),
+            ),
+            width,
+            height,
+          });
+        } else if (command === "drag-start") {
+          companionDrag.start(
+            screen.getCursorScreenPoint(),
+            companion.getBounds(),
+          );
+          companion.setIgnoreMouseEvents(false);
+          machine.dragStart();
+        } else if (command === "drag-move" && machine.mode === "dragging") {
+          const next = companionDrag.move(screen.getCursorScreenPoint());
+          if (next) companion.setPosition(next.x, next.y);
+        } else if (command === "drag-move") {
+          // Ignore late move messages after a release/cancel/blur.
+        } else if (command === "drag-end") {
+          endCompanionDrag();
+        } else throw new Error("Unknown companion action");
+        companion.webContents.send("cobble:pose", machine.mode);
+      });
       const seenNotices = new Set(
         service.state().notifications.map((n) => n.id),
       );
@@ -426,8 +426,13 @@ else {
       }, 1000);
       idle.unref();
       if (smoke) {
-        const { runSmoke } = await import("./smoke");
-        await runSmoke(main, companion, service);
+        if (companionSmoke) {
+          const { runCompanionSmoke } = await import("./companion-smoke");
+          await runCompanionSmoke(companion);
+        } else {
+          const { runSmoke } = await import("./smoke");
+          await runSmoke(main, companion, service);
+        }
         app.quit();
       }
     } catch (error) {

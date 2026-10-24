@@ -111,8 +111,8 @@ function App() {
           <span className="eyebrow">LOCAL-FIRST COLLABORATION</span>
           <h1>Build in sync.</h1>
           <p>
-            Your team's plan, live code changes, and peer-to-peer sync.
-            Kept private on your local network.
+            Your team's plan, live code changes, and peer-to-peer sync. Kept
+            private on your local network.
           </p>
           <ProfileForm state={state} act={act} busy={busy} />
           {error && (
@@ -124,7 +124,9 @@ function App() {
             Your profile stays on this device. Zero cloud account required.
           </small>
         </div>
-        <div className="welcome-note">Zero cloud dependencies. Completely peer-to-peer.</div>
+        <div className="welcome-note">
+          Zero cloud dependencies. Completely peer-to-peer.
+        </div>
       </div>
     );
   return (
@@ -227,10 +229,13 @@ function App() {
                 {
                   {
                     Home: "Track live progress, saved file changes, and plan alignment in real time.",
-                    Chats: "Direct and team sync with local offline voice transcription.",
-                    Teams: "Define starting milestones, assign module ownership, and vote on branch proposals.",
+                    Chats:
+                      "Direct and team sync with local offline voice transcription.",
+                    Teams:
+                      "Define starting milestones, assign module ownership, and vote on branch proposals.",
                     Invites: "Manage team join requests and invitations.",
-                    Profile: "Manage local developer identity, speech engine, and agent hooks.",
+                    Profile:
+                      "Manage local developer identity, speech engine, and agent hooks.",
                   }[tab]
                 }
               </p>
@@ -246,13 +251,17 @@ function App() {
           {error && (
             <div className="error" role="alert">
               <span>{error}</span>
-              <button onClick={() => setError("")}><IconClose /></button>
+              <button onClick={() => setError("")}>
+                <IconClose />
+              </button>
             </div>
           )}
           {notice && (
             <div className="notice" role="status">
               <span>{notice}</span>
-              <button onClick={() => setNotice("")}><IconClose /></button>
+              <button onClick={() => setNotice("")}>
+                <IconClose />
+              </button>
             </div>
           )}
           {tab === "Home" && (
@@ -329,7 +338,9 @@ function App() {
                 </div>
                 {!state.activities.length ? (
                   <div className="empty">
-                    <span className="empty-mark"><IconEmpty /></span>
+                    <span className="empty-mark">
+                      <IconEmpty />
+                    </span>
                     <h3>No recent activity</h3>
                     <p>
                       {team
@@ -345,7 +356,11 @@ function App() {
                         key={a.id}
                       >
                         <span className="activity-icon">
-                          {a.classification === "extra" ? <IconAlert /> : <IconActivity />}
+                          {a.classification === "extra" ? (
+                            <IconAlert />
+                          ) : (
+                            <IconActivity />
+                          )}
                         </span>
                         <div>
                           <h3>
@@ -363,8 +378,8 @@ function App() {
                             <span>
                               {a.resolution ??
                                 (a.classification === "extra"
-                                   ? "Scope conflict"
-                                   : "Recorded quietly")}
+                                  ? "Scope conflict"
+                                  : "Recorded quietly")}
                             </span>
                             <span>Plan v{a.planVersion}</span>
                           </div>
@@ -1182,9 +1197,14 @@ function Chat({
         <div className="messages">
           {!messages.length && (
             <div className="empty">
-              <span className="empty-mark"><IconChats /></span>
+              <span className="empty-mark">
+                <IconChats />
+              </span>
               <h3>No messages yet</h3>
-              <p>Send a message or record a voice draft to begin syncing with teammates.</p>
+              <p>
+                Send a message or record a voice draft to begin syncing with
+                teammates.
+              </p>
             </div>
           )}
           {messages.map((m) => (
@@ -1289,7 +1309,9 @@ function Chat({
               <IconSend />
             </button>
           </div>
-          <small>Offline voice transcription. Voice data stays on device.</small>
+          <small>
+            Offline voice transcription. Voice data stays on device.
+          </small>
         </form>
       </div>
     </section>
@@ -1310,7 +1332,28 @@ function Companion({
   const [bubbleText, setBubbleText] = useState<string | null>(null);
   const lastNoticeId = useRef<string | null>(null);
   const drag = useRef(false);
+  const pointerId = useRef<number | null>(null);
   const origin = useRef({ x: 0, y: 0 });
+  const finishDrag = () => {
+    if (pointerId.current === null) return;
+    pointerId.current = null;
+    drag.current = false;
+    void window.cobble.companion("drag-end");
+  };
+
+  useEffect(() => {
+    const cancel = () => finishDrag();
+    const visibility = () => {
+      if (document.hidden) cancel();
+    };
+    window.addEventListener("blur", cancel);
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      window.removeEventListener("blur", cancel);
+      document.removeEventListener("visibilitychange", visibility);
+      cancel();
+    };
+  }, []);
 
   useEffect(() => {
     const latest = state.notifications?.[0];
@@ -1347,31 +1390,45 @@ function Companion({
           if (!drag.current) void window.cobble.companion("pointer-off");
         }}
         onPointerDown={(e) => {
+          if (e.button !== 0 || pointerId.current !== null) return;
+          pointerId.current = e.pointerId;
           e.currentTarget.setPointerCapture(e.pointerId);
           origin.current = { x: e.screenX, y: e.screenY };
           drag.current = false;
           void window.cobble.companion("drag-start");
         }}
         onPointerMove={(e) => {
-          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+          if (pointerId.current !== e.pointerId) return;
+          if ((e.buttons & 1) === 0) {
+            finishDrag();
+            if (e.currentTarget.hasPointerCapture(e.pointerId))
+              e.currentTarget.releasePointerCapture(e.pointerId);
+            return;
+          }
+          if (!e.currentTarget.hasPointerCapture(e.pointerId)) {
+            finishDrag();
+            return;
+          }
           const dx = e.screenX - origin.current.x;
           const dy = e.screenY - origin.current.y;
           if (!drag.current && Math.hypot(dx, dy) > 3) {
             drag.current = true;
           }
           if (drag.current) {
-            void window.cobble.companion("drag-move", { x: dx, y: dy });
+            // Native main-process coordinates are stable while the window moves.
+            void window.cobble.companion("drag-move");
           }
         }}
         onPointerUp={(e) => {
-          e.currentTarget.releasePointerCapture(e.pointerId);
-          if (drag.current) {
-            void window.cobble.companion("drag-end");
-          } else {
-            setMenu(!menu);
+          if (pointerId.current !== e.pointerId) return;
+          const wasDragging = drag.current;
+          finishDrag();
+          if (e.currentTarget.hasPointerCapture(e.pointerId))
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          if (!wasDragging) {
+            setMenu((open) => !open);
             void window.cobble.companion("interact");
           }
-          drag.current = false;
           const rect = e.currentTarget.getBoundingClientRect();
           const isInside =
             e.clientX >= rect.left &&
@@ -1383,10 +1440,14 @@ function Companion({
           }
         }}
         onPointerCancel={(e) => {
-          e.currentTarget.releasePointerCapture(e.pointerId);
-          if (drag.current) void window.cobble.companion("drag-end");
-          drag.current = false;
+          if (pointerId.current !== e.pointerId) return;
+          finishDrag();
+          if (e.currentTarget.hasPointerCapture(e.pointerId))
+            e.currentTarget.releasePointerCapture(e.pointerId);
           void window.cobble.companion("pointer-off");
+        }}
+        onLostPointerCapture={(e) => {
+          if (pointerId.current === e.pointerId) finishDrag();
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {

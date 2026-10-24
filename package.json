@@ -22,6 +22,7 @@
     "format": "prettier --write src scripts test extensions/vscode/src",
     "test": "tsx --test test/*.test.ts",
     "test:desktop": "node scripts/smoke.mjs",
+    "test:companion": "node scripts/test-companion.mjs",
     "test:packaged": "node scripts/test-packaged.mjs",
     "test:voice": "tsx scripts/test-voice.ts",
     "verify:runtime": "node scripts/verify-runtime.mjs",
