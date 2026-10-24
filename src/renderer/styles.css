@@ -787,10 +787,14 @@ footer span:last-child {
   background: transparent;
   overflow: hidden !important;
 }
-.companion-placeholder {
+.companion-placeholder,
+.companion-placeholder:focus,
+.companion-placeholder:focus-visible,
+.companion-placeholder:active {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
+  outline: none !important;
   padding: 0 !important;
   margin: 0 !important;
   min-width: 0 !important;

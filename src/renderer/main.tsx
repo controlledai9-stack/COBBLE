@@ -1271,11 +1271,7 @@ function Companion({
     void window.cobble.companion(menu ? "menu-open" : "menu-close");
   }, [menu]);
   return (
-    <div
-      className={`companion-host pose-${mode}`}
-      onMouseEnter={() => void window.cobble.companion("pointer-on")}
-      onMouseLeave={() => void window.cobble.companion("pointer-off")}
-    >
+    <div className={`companion-host pose-${mode}`}>
       {bubbleText && !menu && (
         <div className="companion-bubble" role="status">
           <span>{bubbleText}</span>
@@ -1284,6 +1280,10 @@ function Companion({
       <button
         className="companion-placeholder"
         aria-label={`Cobble companion controls, ${mode}`}
+        onMouseEnter={() => void window.cobble.companion("pointer-on")}
+        onMouseLeave={() => {
+          if (!drag.current) void window.cobble.companion("pointer-off");
+        }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           origin.current = { x: e.screenX, y: e.screenY };
@@ -1310,11 +1310,13 @@ function Companion({
             void window.cobble.companion("interact");
           }
           drag.current = false;
+          void window.cobble.companion("pointer-off");
         }}
         onPointerCancel={(e) => {
           e.currentTarget.releasePointerCapture(e.pointerId);
           if (drag.current) void window.cobble.companion("drag-end");
           drag.current = false;
+          void window.cobble.companion("pointer-off");
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -1345,7 +1347,11 @@ function Companion({
         )}
       </button>
       {menu && (
-        <div className="companion-menu">
+        <div
+          className="companion-menu"
+          onMouseEnter={() => void window.cobble.companion("pointer-on")}
+          onMouseLeave={() => void window.cobble.companion("pointer-off")}
+        >
           <small>
             {state.paused
               ? "Watching paused"
