@@ -1288,31 +1288,33 @@ function Companion({
           e.currentTarget.setPointerCapture(e.pointerId);
           origin.current = { x: e.screenX, y: e.screenY };
           drag.current = false;
+          void window.cobble.companion("drag-start");
         }}
         onPointerMove={(e) => {
           if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-          if (
-            !drag.current &&
-            Math.hypot(
-              e.screenX - origin.current.x,
-              e.screenY - origin.current.y,
-            ) > 5
-          ) {
+          const dx = e.screenX - origin.current.x;
+          const dy = e.screenY - origin.current.y;
+          if (!drag.current && Math.hypot(dx, dy) > 3) {
             drag.current = true;
-            void window.cobble.companion("drag-start");
           }
-          if (drag.current) void window.cobble.companion("drag-move");
+          if (drag.current) {
+            void window.cobble.companion("drag-move", { x: dx, y: dy });
+          }
         }}
         onPointerUp={(e) => {
           e.currentTarget.releasePointerCapture(e.pointerId);
-          if (drag.current) void window.cobble.companion("drag-end");
-          else {
+          if (drag.current) {
+            void window.cobble.companion("drag-end");
+          } else {
             setMenu(!menu);
             void window.cobble.companion("interact");
           }
+          drag.current = false;
         }}
-        onPointerCancel={() => {
+        onPointerCancel={(e) => {
+          e.currentTarget.releasePointerCapture(e.pointerId);
           if (drag.current) void window.cobble.companion("drag-end");
+          drag.current = false;
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {

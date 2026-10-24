@@ -28,6 +28,7 @@ let tray: Tray;
 let quitting = false;
 const machine = new CompanionMachine();
 let dragOffset = { x: 0, y: 0 };
+let dragStartPos = [0, 0];
 const devUrl = process.env.COBBLE_RENDERER_URL;
 const smoke = process.env.COBBLE_SMOKE_TEST === "1";
 if (smoke)
@@ -326,16 +327,24 @@ else {
               height,
             });
           } else if (command === "drag-start") {
+            dragStartPos = companion.getPosition();
             const cursor = screen.getCursorScreenPoint();
             const bounds = companion.getBounds();
             dragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
             machine.dragStart();
           } else if (command === "drag-move" && machine.mode === "dragging") {
-            const cursor = screen.getCursorScreenPoint();
-            companion.setPosition(
-              cursor.x - dragOffset.x,
-              cursor.y - dragOffset.y,
-            );
+            if (point && typeof point.x === "number" && typeof point.y === "number") {
+              companion.setPosition(
+                Math.round(dragStartPos[0] + point.x),
+                Math.round(dragStartPos[1] + point.y),
+              );
+            } else {
+              const cursor = screen.getCursorScreenPoint();
+              companion.setPosition(
+                cursor.x - dragOffset.x,
+                cursor.y - dragOffset.y,
+              );
+            }
           } else if (command === "drag-end") {
             machine.dragEnd();
             service.store.set("companionPosition", companion.getPosition());
@@ -412,17 +421,6 @@ else {
         const previous = machine.mode;
         machine.tick();
         if (previous !== machine.mode && machine.mode === "idle") {
-          const b = companion.getBounds();
-          companion.setBounds({
-            x: b.x + b.width - 160,
-            y: b.y + b.height - 110,
-            width: 160,
-            height: 110,
-          });
-          const bounds = companion.getBounds();
-          const area = screen.getDisplayMatching(bounds).workArea;
-          const next = dockToEdge(bounds, area);
-          companion.setPosition(Math.round(next.x), Math.round(next.y));
           companion.webContents.send("cobble:pose", machine.mode);
         }
       }, 1000);
