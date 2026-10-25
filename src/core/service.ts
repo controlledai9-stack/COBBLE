@@ -213,7 +213,13 @@ export class CobbleService extends EventEmitter {
     );
   }
   async observe(agent: AgentPayload | null = null): Promise<Activity | null> {
-    if (this.observing || !this.observer || this.store.setting("paused", false))
+    if (
+      this.closed ||
+      this.integrating ||
+      this.observing ||
+      !this.observer ||
+      this.store.setting("paused", false)
+    )
       return null;
     this.observing = true;
     try {
@@ -222,7 +228,11 @@ export class CobbleService extends EventEmitter {
       const profile = this.store.profile();
       if (!team || !profile) return null;
       const changes = await observer.changes();
-      if (this.activeTeam()?.id !== team.id || this.observer !== observer)
+      if (
+        this.closed ||
+        this.activeTeam()?.id !== team.id ||
+        this.observer !== observer
+      )
         return null;
       this.store.set(`baseline:${team.id}:${observer.root}`, [
         ...observer.baseline,
@@ -296,12 +306,31 @@ export class CobbleService extends EventEmitter {
     return { validManifest: !!payload, activity: await this.observe(payload) };
   }
   async action(action: ExtendedAction): Promise<AppState> {
+    if (this.closed) throw new Error("Cobble is closing");
     if (
       !action ||
       typeof action !== "object" ||
       typeof action.type !== "string"
     )
       throw new Error("Invalid action");
+    if (
+      this.integrating &&
+      [
+        "createTeam",
+        "selectTeam",
+        "join",
+        "host",
+        "updatePlan",
+        "configureModule",
+        "captureContracts",
+        "amendFromActivity",
+        "revokeMember",
+        "decideJoin",
+      ].includes(action.type)
+    )
+      throw new Error(
+        "Finish the approved main integration before changing the team or its agreements",
+      );
     switch (action.type) {
       case "profile":
         this.store.saveProfile(
@@ -482,6 +511,17 @@ export class CobbleService extends EventEmitter {
             "Choose a work area and connect its local folder first",
           );
         const files = await this.observer.snapshot();
+        const current = this.activeTeam();
+        if (
+          this.closed ||
+          this.integrating ||
+          current?.id !== team.id ||
+          current.version !== team.version ||
+          (current.graph?.version ?? 0) !== graph.version
+        )
+          throw new Error(
+            "The team or its agreements changed while reading contracts. Try again.",
+          );
         const contracts = [...files]
           .filter(([path]) => matchesPath(path, module.pathGlob))
           .flatMap(([path, text]) => extractContracts(path, text, module.id));
@@ -546,10 +586,22 @@ export class CobbleService extends EventEmitter {
           action.sourceRef,
           this.gitBinary,
         );
+        const current = this.activeTeam();
+        if (
+          this.closed ||
+          current?.id !== team.id ||
+          current.version !== team.version ||
+          (current.graph?.version ?? 0) !== (team.graph?.version ?? 0)
+        )
+          throw new Error(
+            "The team or its agreements changed while preparing the proposal. Try again.",
+          );
         await this.network.collaborate("proposal", {
           id: randomUUID(),
           teamId: team.id,
           title: action.title,
+          expectedPlanVersion: team.version,
+          expectedGraphVersion: team.graph?.version ?? 0,
           ...facts,
         });
         break;
@@ -674,6 +726,10 @@ export class CobbleService extends EventEmitter {
     }
   }
   async bindWorkspace(path: string) {
+    if (this.closed || this.integrating)
+      throw new Error(
+        "Finish the approved main integration before changing the project folder",
+      );
     const team = this.activeTeam();
     if (!team) throw new Error("Select a team first");
     const root = await realpath(path);

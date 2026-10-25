@@ -93,6 +93,7 @@ export interface MainProposal {
   targetRef: string;
   baseSha: string;
   planVersion: number;
+  graphVersion?: number;
   electorate: { id: string; name: string }[];
   membershipEpoch: number;
   policy: "unanimous" | "majority";

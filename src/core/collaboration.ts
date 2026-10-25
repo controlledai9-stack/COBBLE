@@ -51,6 +51,7 @@ export class Collaboration {
       .join(",");
     if (
       team.version !== proposal.planVersion ||
+      (team.graph?.version ?? 0) !== (proposal.graphVersion ?? 0) ||
       ids !== expected ||
       this.store.setting(`membershipEpoch:${team.id}`, 0) !==
         proposal.membershipEpoch
@@ -130,6 +131,8 @@ export class Collaboration {
       sourceSha: string;
       targetRef: string;
       baseSha: string;
+      expectedPlanVersion?: number;
+      expectedGraphVersion?: number;
     },
   ): MainProposal {
     actor = this.member(teamId, actor);
@@ -166,6 +169,15 @@ export class Collaboration {
         "Proposals must identify a personal branch commit and the exact main commit",
       );
     const team = this.store.team(teamId);
+    if (
+      (body.expectedPlanVersion !== undefined &&
+        body.expectedPlanVersion !== team.version) ||
+      (body.expectedGraphVersion !== undefined &&
+        body.expectedGraphVersion !== (team.graph?.version ?? 0))
+    )
+      throw new Error(
+        "The plan or work-area agreements changed. Refresh before proposing this change.",
+      );
     const proposal: MainProposal = {
       id: body.id,
       title: body.title,
@@ -177,6 +189,7 @@ export class Collaboration {
       authorId: actor.id,
       authorName: actor.name,
       planVersion: team.version,
+      graphVersion: team.graph?.version ?? 0,
       electorate: this.store
         .members(teamId)
         .map((m) => ({ id: m.id, name: m.name })),

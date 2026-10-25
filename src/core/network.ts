@@ -1,4 +1,5 @@
 import { createServer, request, type Server } from "node:https";
+import type { ClientRequest } from "node:http";
 import type { TLSSocket } from "node:tls";
 import { randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { networkInterfaces } from "node:os";
@@ -29,7 +30,8 @@ export class TeamNetwork {
   };
   private session: Session | null = null;
   private interval?: ReturnType<typeof setInterval>;
-  private busy = false;
+  private busyGeneration?: number;
+  private requests = new Set<ClientRequest>();
   private failures = 0;
   private nextAttempt = 0;
   mainIntegrationActive = false;
@@ -65,6 +67,7 @@ export class TeamNetwork {
     if (team.ownerId !== this.store.profile()?.id)
       throw new Error("Only the owner can host this team");
     this.close();
+    const generation = this.generation;
     const known = new Set(
       this.store.db
         .prepare("SELECT kind,data FROM sync_log WHERE team_id=?")
@@ -84,6 +87,7 @@ export class TeamNetwork {
       (await generate([{ name: "commonName", value: "Cobble local team" }], {
         keySize: 2048,
       }));
+    if (generation !== this.generation) return;
     this.saveSecret(`host-certificate:${team.id}`, {
       cert: certificate.cert,
       private: certificate.private,
@@ -99,7 +103,14 @@ export class TeamNetwork {
         minVersion: "TLSv1.2",
       },
       async (req, res) => {
+        const readBody = async () => {
+          const body = await readJson(req);
+          if (generation !== this.generation || res.destroyed)
+            throw new Error("Team connection closed");
+          return body;
+        };
         try {
+          if (generation !== this.generation) return res.destroy();
           if (req.headers.origin)
             return json(res, 403, {
               error: "Browser requests are not supported",
@@ -119,7 +130,7 @@ export class TeamNetwork {
               });
             if (this.rates.size > 1024) this.rates.clear();
             this.rates.set(ip, rate);
-            const body = await readJson(req);
+            const body = await readBody();
             if (!equalSecret(body.code, teamNow.code))
               return json(res, 403, { error: "Invalid join code" });
             requiredText(body.name, "Name", 80);
@@ -145,7 +156,7 @@ export class TeamNetwork {
             return json(res, 202, { requestId: id, secret });
           }
           if (req.method === "POST" && url.pathname === "/join-status") {
-            const body = await readJson(req);
+            const body = await readBody();
             const invite = this.store
               .invites(team.id)
               .find((i) => i.id === body.requestId);
@@ -225,7 +236,7 @@ export class TeamNetwork {
             req.method === "POST" &&
             ["/work", "/proposal", "/ballot"].includes(url.pathname)
           ) {
-            const body = await readJson(req);
+            const body = await readBody();
             const result =
               url.pathname === "/work"
                 ? this.collaboration.complete(team.id, member, body)
@@ -236,7 +247,7 @@ export class TeamNetwork {
             return json(res, 200, { received: true, result });
           }
           if (req.method === "POST" && url.pathname === "/chat") {
-            const body = await readJson(req);
+            const body = await readBody();
             const message = this.checkedMessage(body, team.id, member.id);
             const exists = this.store.db
               .prepare("SELECT 1 FROM messages WHERE id=?")
@@ -258,7 +269,7 @@ export class TeamNetwork {
             return json(res, 200, { received: true });
           }
           if (req.method === "POST" && url.pathname === "/receipts") {
-            const body = await readJson(req);
+            const body = await readBody();
             if (
               !Array.isArray(body.ids) ||
               body.ids.length > 100 ||
@@ -273,7 +284,7 @@ export class TeamNetwork {
             return json(res, 200, { ok: true });
           }
           if (req.method === "POST" && url.pathname === "/decision") {
-            const body = await readJson(req);
+            const body = await readBody();
             const activity = this.store.activity(body.id);
             if (
               activity.teamId !== team.id ||
@@ -292,7 +303,7 @@ export class TeamNetwork {
             return json(res, 200, { ok: true });
           }
           if (req.method === "POST" && url.pathname === "/activity") {
-            const body = await readJson(req);
+            const body = await readBody();
             if (
               typeof body.id !== "string" ||
               !Array.isArray(body.paths) ||
@@ -364,7 +375,7 @@ export class TeamNetwork {
             return json(res, 200, { received: true });
           }
           if (req.method === "POST" && url.pathname === "/availability") {
-            const body = await readJson(req);
+            const body = await readBody();
             if (!["available", "focused", "away"].includes(body.value))
               throw new Error("Invalid availability");
             this.store.putMember(team.id, {
@@ -376,6 +387,7 @@ export class TeamNetwork {
           }
           json(res, 404, { error: "Unknown route" });
         } catch (error) {
+          if (generation !== this.generation || res.destroyed) return;
           json(res, 400, {
             error: error instanceof Error ? error.message : "Invalid request",
           });
@@ -392,6 +404,7 @@ export class TeamNetwork {
         resolve,
       );
     });
+    if (generation !== this.generation) return;
     const port = (this.server.address() as { port: number }).port;
     this.store.set(`host-port:${team.id}`, port);
     const address =
@@ -611,6 +624,7 @@ export class TeamNetwork {
         "Paste the complete host address, including its certificate fingerprint",
       );
     this.close();
+    const generation = this.generation;
     const result = await this.call(
       url.origin,
       fingerprint,
@@ -618,6 +632,7 @@ export class TeamNetwork {
       "POST",
       { code, name: profile.name, deviceId: profile.id },
     );
+    if (generation !== this.generation) return;
     this.pending = {
       address: url.origin,
       fingerprint,
@@ -721,9 +736,13 @@ export class TeamNetwork {
     }
   }
   private async tick() {
-    if (this.busy || Date.now() < this.nextAttempt) return;
-    this.busy = true;
+    if (
+      this.busyGeneration === this.generation ||
+      Date.now() < this.nextAttempt
+    )
+      return;
     const generation = this.generation;
+    this.busyGeneration = generation;
     try {
       if (this.pending) {
         const p = this.pending;
@@ -793,6 +812,7 @@ export class TeamNetwork {
               s.token,
             );
           } catch (error) {
+            if (generation !== this.generation) return;
             const status = (error as { statusCode?: number }).statusCode;
             if (status === 400 || status === 409) {
               this.store.transaction(() => {
@@ -925,8 +945,8 @@ export class TeamNetwork {
           "Membership ended. Ask the host to approve a new join request.";
       }
     } finally {
-      this.busy = false;
-      this.changed();
+      if (this.busyGeneration === generation) this.busyGeneration = undefined;
+      if (generation === this.generation) this.changed();
     }
   }
   async availability(value: string) {
@@ -947,6 +967,7 @@ export class TeamNetwork {
       ? (this.secret<Session>(`network-session:${teamId}`) ??
         this.secret<Session>("network-session"))
       : this.secret<Session>("network-session");
+    this.close();
     this.session = saved && (!teamId || saved.teamId === teamId) ? saved : null;
     if (this.session) {
       this.state = {
@@ -968,6 +989,7 @@ export class TeamNetwork {
     body?: unknown,
     token?: string,
   ): Promise<any> {
+    const generation = this.generation;
     return new Promise((resolve, reject) => {
       const url = new URL(path, address);
       const bytes = body === undefined ? "" : JSON.stringify(body);
@@ -996,6 +1018,8 @@ export class TeamNetwork {
           });
           res.on("end", () => {
             try {
+              if (generation !== this.generation)
+                throw new Error("Team connection closed");
               const value = JSON.parse(Buffer.concat(chunks).toString());
               if ((res.statusCode ?? 500) >= 400)
                 reject(
@@ -1012,9 +1036,12 @@ export class TeamNetwork {
           res.on("error", reject);
         },
       );
+      this.requests.add(req);
+      req.once("close", () => this.requests.delete(req));
       // Never send authorization or body until the TLS peer has matched the pin.
       req.on("socket", (socket) => {
         (socket as TLSSocket).once("secureConnect", () => {
+          if (req.destroyed || generation !== this.generation) return;
           const cert = (socket as TLSSocket).getPeerCertificate();
           if (
             cert.fingerprint256?.replaceAll(":", "").toLowerCase() !==
@@ -1035,7 +1062,12 @@ export class TeamNetwork {
   close() {
     this.generation++;
     clearInterval(this.interval);
+    this.interval = undefined;
+    for (const req of this.requests)
+      req.destroy(new Error("Team connection closed"));
+    this.requests.clear();
     this.server?.close();
+    this.server?.closeAllConnections();
     this.server = undefined;
     this.session = null;
     this.pending = undefined;

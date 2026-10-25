@@ -233,3 +233,57 @@ test("No blocks approval and plan or membership changes invalidate prior approva
     store.close();
   }
 });
+
+test("work-area, dependency and contract revisions invalidate votes and reject stale proposal context", () => {
+  const { store, team, collab } = fixture();
+  try {
+    const members = store.members(team.id);
+    const body = {
+      id: "agreements",
+      title: "Change",
+      sourceRef: "feature/a",
+      sourceSha: "a".repeat(40),
+      targetRef: "main",
+      baseSha: "b".repeat(40),
+      expectedPlanVersion: team.version,
+      expectedGraphVersion: team.graph!.version,
+    };
+    const proposal = collab.propose(team.id, members[0], body);
+    assert.equal(proposal.graphVersion, 1);
+    for (const member of members)
+      collab.vote(team.id, member, {
+        id: member.id,
+        proposalId: proposal.id,
+        choice: "yes",
+      });
+    assert.equal(collab.proposal(proposal.id).status, "approved");
+    store.putTeam({ ...team, graph: { ...team.graph!, version: 2 } });
+    assert.equal(collab.proposal(proposal.id).status, "stale");
+    assert.throws(
+      () => collab.integrated(proposal.id, "c".repeat(40)),
+      /approve/,
+    );
+    assert.throws(
+      () =>
+        collab.propose(team.id, members[0], { ...body, id: "stale-request" }),
+      /agreements changed/,
+    );
+    const next = collab.propose(team.id, members[0], {
+      ...body,
+      id: "fresh-request",
+      expectedGraphVersion: 2,
+    });
+    assert.equal(next.graphVersion, 2);
+    assert.equal(next.votes.length, 0);
+    assert.equal(next.status, "open");
+    // Older stored proposals lack an agreement revision. They cannot silently
+    // authorize the current graph, but remain readable for review/history.
+    const legacy = { ...next, id: "legacy", graphVersion: undefined };
+    store.db
+      .prepare("INSERT INTO main_proposals VALUES(?,?,?)")
+      .run(legacy.id, team.id, JSON.stringify(legacy));
+    assert.equal(collab.proposal(legacy.id).status, "stale");
+  } finally {
+    store.close();
+  }
+});
