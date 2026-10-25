@@ -8,6 +8,7 @@ import type {
   DesktopApi,
   Tab,
   RevertPreview,
+  DetectedIde,
 } from "../shared/types";
 import { parseCommand } from "../shared/voice";
 import { recordingToWav } from "../shared/audio";
@@ -695,6 +696,133 @@ function ProfileForm({
     </form>
   );
 }
+function IdeConnections({
+  state,
+  notice,
+}: {
+  state: AppState;
+  notice: (text: string) => void;
+}) {
+  const [apps, setApps] = useState<DetectedIde[]>([]);
+  const [error, setError] = useState("");
+  const [scanning, setScanning] = useState(true);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const folder = state.teams.find(
+    (t) => t.id === state.activeTeamId,
+  )?.workspace;
+  useEffect(() => {
+    let active = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const detected = await window.cobble.detectIdes();
+        if (active) {
+          setApps(detected);
+          setError("");
+        }
+      } catch (e) {
+        if (active) setError(message(e));
+      } finally {
+        pending = false;
+        if (active) setScanning(false);
+      }
+    };
+    setScanning(true);
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [folder, revision]);
+  const linked = state.ide.connections ?? [];
+  return (
+    <section className="panel">
+      <div className="section-title">
+        <h2>Detected apps</h2>
+        <button
+          type="button"
+          className="secondary"
+          disabled={scanning || connecting !== null}
+          onClick={() => setRevision((v) => v + 1)}
+        >
+          {scanning ? "Detecting…" : "Refresh apps"}
+        </button>
+      </div>
+      <p className="small">
+        Cobble checks for editors automatically, including ones you open later.
+        Once a project folder is selected, it sets up its included integration
+        in running compatible editors. Multiple editors can stay connected to
+        the same project.
+      </p>
+      {error && <p role="alert">{error}</p>}
+      {!scanning && !apps.length && (
+        <p>
+          No supported apps found. Open your editor, then refresh. You can still
+          select your project folder for saved-file monitoring.
+        </p>
+      )}
+      {apps.map((editor) => (
+        <div className="panel" key={editor.id}>
+          <div className="inline">
+            <strong>{editor.name}</strong>
+            <span className="tag">
+              {editor.running ? "Running" : "Installed"}
+            </span>
+            {editor.integration && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={!folder || connecting !== null}
+                onClick={async () => {
+                  setConnecting(editor.id);
+                  setError("");
+                  try {
+                    const name = await window.cobble.connectIde(editor.id);
+                    notice(
+                      `${name} integration is ready. Connection is confirmed when the selected project is open.`,
+                    );
+                    setRevision((v) => v + 1);
+                  } catch (e) {
+                    setError(message(e));
+                  } finally {
+                    setConnecting(null);
+                  }
+                }}
+              >
+                {connecting === editor.id
+                  ? "Connecting…"
+                  : "Open project / connect"}
+              </button>
+            )}
+          </div>
+          <small className="muted">
+            {editor.integration
+              ? editor.error
+                ? `Setup needs attention: ${editor.error}. Use Open project / connect to retry.`
+                : editor.prepared
+                  ? "Integration ready · waiting for a project heartbeat (or already listed below)."
+                  : folder
+                    ? "Ready to connect. Running editors are set up automatically."
+                    : "Select your project folder to connect."
+              : "App detected · no direct Cobble integration. Project saved-file monitoring remains available."}
+          </small>
+        </div>
+      ))}
+      <p className="small">
+        <strong>Verified project connections: </strong>
+        {linked.length
+          ? linked
+              .map((c) => `${c.editor}${c.focused ? " (focused)" : ""}`)
+              .join(", ")
+          : "Waiting for an editor to confirm the selected project."}
+      </p>
+    </section>
+  );
+}
 function Teams({
   state,
   act,
@@ -738,6 +866,7 @@ function Teams({
           Join existing team
         </button>
       </div>
+      <IdeConnections state={state} notice={notice} />
       {create && (
         <section className="panel">
           <h2>Create a shared workspace</h2>
@@ -771,7 +900,7 @@ function Teams({
               />
             </label>
             <label>
-              IDE workspace
+              Project folder
               <div className="inline">
                 <input
                   readOnly
@@ -791,9 +920,13 @@ function Teams({
                     }
                   }}
                 >
-                  Browse…
+                  Choose project folder…
                 </button>
               </div>
+              <span className="small muted">
+                Select the folder containing your code. Cobble detects editor
+                apps separately.
+              </span>
             </label>
             <button disabled={busy || !name.trim() || !plan.trim()}>
               <span>Create with starting plan</span>
@@ -879,21 +1012,6 @@ function Teams({
                   }
                 >
                   Choose folder
-                </button>
-                <button
-                  className="secondary"
-                  onClick={async () => {
-                    try {
-                      const editor = await window.cobble.connectIde();
-                      notice(
-                        `${editor} integration is ready. Cobble will connect when the selected folder is open.`,
-                      );
-                    } catch (e) {
-                      onError(message(e));
-                    }
-                  }}
-                >
-                  Connect IDE
                 </button>
               </div>
             </label>

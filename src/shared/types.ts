@@ -163,6 +163,21 @@ export interface IdeStatus {
   agentLastSeen?: string;
   processId?: number;
   workspaceName?: string;
+  connections?: IdeConnection[];
+}
+export interface IdeConnection {
+  id: string;
+  editor: string;
+  focused: boolean;
+  lastSeen: string;
+}
+export interface DetectedIde {
+  id: string;
+  name: string;
+  running: boolean;
+  integration: boolean;
+  prepared?: boolean;
+  error?: string;
 }
 export interface JoinRequest {
   id: string;
@@ -285,7 +300,8 @@ export interface DesktopApi {
   report(): Promise<string>;
   artwork(): Promise<Partial<Record<CompanionMode, string>>>;
   copyPairing(): Promise<void>;
-  connectIde(): Promise<string>;
+  detectIdes(): Promise<DetectedIde[]>;
+  connectIde(id?: string): Promise<string>;
   installAgent(agent: "claude" | "cursor", remove?: boolean): Promise<void>;
   previewRevert(activityId: string): Promise<RevertPreview>;
   applyRevert(activityId: string, token: string): Promise<void>;

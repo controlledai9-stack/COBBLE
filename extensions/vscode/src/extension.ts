@@ -2,12 +2,14 @@ import * as vscode from "vscode";
 import { request } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 interface Pairing {
   port: number;
   token: string;
   workspace: string;
 }
 export function activate(context: vscode.ExtensionContext) {
+  const sessionId = randomUUID();
   let pairing: Pairing | null = null;
   const automatic = async () => {
     if (!context.globalState.get("automatic", true) || !process.env.APPDATA)
@@ -54,12 +56,14 @@ export function activate(context: vscode.ExtensionContext) {
     const open = vscode.workspace.workspaceFolders?.some(
       (f) => f.uri.fsPath.toLowerCase() === p.workspace.toLowerCase(),
     );
-    if (!open) {
+    if (!open && type !== "close") {
+      await send("close");
       status.text = "$(warning) Cobble: folder changed";
       return;
     }
     const body = JSON.stringify({
       type,
+      sessionId,
       workspace: p.workspace,
       editor: vscode.env.appName,
       focused: vscode.window.state.focused,
@@ -160,6 +164,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({
     dispose: () => {
       clearInterval(interval);
+      void send("close");
     },
   });
 }

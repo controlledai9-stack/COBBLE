@@ -6,7 +6,7 @@ import {
 } from "node:http";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import type { IdeStatus, Team } from "../shared/types";
+import type { IdeStatus, IdeConnection, Team } from "../shared/types";
 export async function readJson(
   request: IncomingMessage,
   max = 128_000,
@@ -41,6 +41,36 @@ export class IdeBridge {
   current: IdeStatus = { state: "disconnected" };
   private timer?: ReturnType<typeof setInterval>;
   private activeUntil = 0;
+  private connections = new Map<string, IdeConnection>();
+  private updateConnections() {
+    const connections = [...this.connections.values()].sort(
+      (a, b) =>
+        Number(b.focused) - Number(a.focused) ||
+        b.lastSeen.localeCompare(a.lastSeen),
+    );
+    const selected = connections[0];
+    this.current = {
+      ...this.current,
+      connections,
+      state: selected ? (this.current.agent ? "linked" : "files") : "lost",
+      editor: selected?.editor ?? this.current.editor,
+      focused: selected?.focused ?? false,
+      lastSeen: selected?.lastSeen ?? this.current.lastSeen,
+    };
+  }
+  expireConnections(now = Date.now()) {
+    let expired = false;
+    for (const [id, connection] of this.connections) {
+      if (now - Date.parse(connection.lastSeen) > 15_000) {
+        this.connections.delete(id);
+        expired = true;
+      }
+    }
+    if (expired) {
+      this.updateConnections();
+      this.changed();
+    }
+  }
   constructor(
     private team: () => Team | null,
     private changed: () => void,
@@ -108,21 +138,31 @@ export class IdeBridge {
         }
         if (!["heartbeat", "save", "close"].includes(body.type))
           throw new Error("Unsupported IDE event");
-        this.current =
-          body.type === "close"
-            ? { ...this.current, state: "lost" }
-            : {
-                ...this.current,
-                state: this.current.agent ? "linked" : "files",
-                editor:
-                  typeof body.editor === "string"
-                    ? body.editor.slice(0, 80)
-                    : "VS Code",
-                workspace: team.workspace,
-                focused: !!body.focused,
-                lastSeen: new Date().toISOString(),
-              };
-        if (body.type === "close") this.current.state = "lost";
+        if (
+          body.sessionId !== undefined &&
+          (typeof body.sessionId !== "string" ||
+            !body.sessionId ||
+            body.sessionId.length > 200)
+        )
+          throw new Error("Invalid IDE session");
+        const editor =
+          typeof body.editor === "string"
+            ? body.editor.slice(0, 80)
+            : "VS Code";
+        const id = body.sessionId ?? `legacy:${editor}`;
+        if (body.type === "close") this.connections.delete(id);
+        else {
+          if (!this.connections.has(id) && this.connections.size >= 64)
+            throw new Error("Too many IDE sessions");
+          this.connections.set(id, {
+            id,
+            editor,
+            focused: !!body.focused,
+            lastSeen: new Date().toISOString(),
+          });
+        }
+        this.current.workspace = team.workspace;
+        this.updateConnections();
         if (body.type === "save") this.saved();
         this.changed();
         json(response, 200, {
@@ -141,6 +181,7 @@ export class IdeBridge {
     );
     this.port = (this.server.address() as { port: number }).port;
     this.timer = setInterval(() => {
+      this.expireConnections();
       if (
         ["files", "linked"].includes(this.current.state) &&
         Date.now() - Date.parse(this.current.lastSeen!) > 15_000
@@ -152,6 +193,7 @@ export class IdeBridge {
     this.timer.unref();
   }
   reset() {
+    this.connections.clear();
     this.current = { state: "disconnected" };
     this.token = randomBytes(32).toString("hex");
     this.activeUntil = 0;

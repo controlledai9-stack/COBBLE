@@ -9,7 +9,8 @@ const api: DesktopApi = {
   report: () => ipcRenderer.invoke("cobble:report"),
   artwork: () => ipcRenderer.invoke("cobble:artwork"),
   copyPairing: () => ipcRenderer.invoke("cobble:copy-pairing"),
-  connectIde: () => ipcRenderer.invoke("cobble:connect-ide"),
+  detectIdes: () => ipcRenderer.invoke("cobble:detect-ides"),
+  connectIde: (id) => ipcRenderer.invoke("cobble:connect-ide", id),
   installAgent: (agent, remove) =>
     ipcRenderer.invoke("cobble:install-agent", agent, remove),
   previewRevert: (id) => ipcRenderer.invoke("cobble:preview-revert", id),

@@ -36,6 +36,13 @@ export async function runSmoke(
   );
   await wait('!!document.querySelector(".sidebar")');
   await wait('!!document.querySelector("textarea[required]")');
+  await wait('document.body.innerText.includes("Detected apps")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      'Array.from(document.querySelectorAll("button")).some(b => b.innerText.includes("Choose project folder"))',
+    ),
+    true,
+  );
   assert.equal(
     await main.webContents.executeJavaScript(
       'document.querySelector("textarea[required]").checkValidity()',
@@ -89,7 +96,7 @@ export async function runSmoke(
     await main.webContents.executeJavaScript(
       'document.querySelectorAll("nav button").length',
     ),
-    5,
+    4,
   );
   const fill = async (selector: string, value: string) =>
     main.webContents.executeJavaScript(
@@ -226,7 +233,32 @@ export async function runSmoke(
     }),
   });
   assert.equal(paired.status, 200);
-  await wait('document.body.innerText.includes("IDE connected")');
+  await wait('document.body.innerText.includes("IDE linked")');
+  await main.webContents.executeJavaScript(
+    `document.querySelectorAll('nav button')[2].click()`,
+  );
+  const second = await fetch(`http://127.0.0.1:${service.bridge.port}/ide`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${service.bridge.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      type: "heartbeat",
+      workspace,
+      editor: "Second IDE",
+      sessionId: "second-smoke",
+    }),
+  });
+  assert.equal(second.status, 200);
+  await wait(
+    'document.body.innerText.includes("Verified project connections:") && document.body.innerText.includes("Second IDE")',
+  );
+  assert.equal(service.bridge.current.connections?.length, 2);
+  await writeFile(join(root, "smoke-ides.png"), (await main.webContents.capturePage()).toPNG());
+  await main.webContents.executeJavaScript(
+    `document.querySelectorAll('nav button')[0].click()`,
+  );
   await companion.webContents.executeJavaScript(
     `window.cobble.companion('drag-start')`,
   );

@@ -21,7 +21,8 @@ import {
   clampCompanionBounds,
 } from "./companion";
 import { transcribe } from "./voice";
-import { connectIde } from "./integration";
+import { connectIde, prepareIde } from "./integration";
+import { IdeDiscovery, discoverIdes } from "./ide-discovery";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import type { ExtendedAction as Action, Tab, AppState } from "../shared/types";
 import { installAgentHooks } from "../core/agents";
@@ -32,7 +33,10 @@ let tray: Tray;
 let quitting = false;
 let shutdownComplete = false;
 let idleTimer: ReturnType<typeof setInterval> | undefined;
+let ideTimer: ReturnType<typeof setInterval> | undefined;
+let ideDiscovery: IdeDiscovery | undefined;
 const voiceShutdown = new AbortController();
+const ideShutdown = new AbortController();
 const transcriptions = new Set<Promise<string>>();
 const machine = new CompanionMachine();
 const companionDrag = new CompanionDrag();
@@ -202,7 +206,7 @@ else {
       const choose = async () => {
         const result = await dialog.showOpenDialog(main, {
           properties: ["openDirectory"],
-          title: "Choose the IDE workspace to watch",
+          title: "Choose your project folder (source code, not the editor app)",
         });
         const path = result.canceled ? null : result.filePaths[0];
         if (path) chosenFolders.add(path);
@@ -233,19 +237,58 @@ else {
           }),
         );
       });
-      handle("connect-ide", async () => {
-        await syncPairing();
+      const vsix = app.isPackaged
+        ? join(process.resourcesPath, "integrations", "cobble-workspace.vsix")
+        : join(
+            app.getAppPath(),
+            "resources",
+            "integrations",
+            "cobble-workspace.vsix",
+          );
+      ideDiscovery = new IdeDiscovery(
+        () => discoverIdes({ signal: ideShutdown.signal }),
+        async (editor) => {
+          await syncPairing();
+          await prepareIde(editor, vsix, ideShutdown.signal);
+        },
+        () => !smoke && !quitting && !!service.activeTeam()?.workspace,
+      );
+      handle("detect-ides", () => ideDiscovery!.refresh());
+      handle("connect-ide", async (_, id?: string) => {
+        if (id !== undefined && typeof id !== "string")
+          throw new Error("Invalid editor selection");
         const workspace = service.activeTeam()?.workspace ?? "";
-        const vsix = app.isPackaged
-          ? join(process.resourcesPath, "integrations", "cobble-workspace.vsix")
-          : join(
-              app.getAppPath(),
-              "resources",
-              "integrations",
-              "cobble-workspace.vsix",
-            );
-        return connectIde(workspace, vsix);
+        if (!workspace) throw new Error("Choose your project folder first");
+        await ideDiscovery!.refresh();
+        if (quitting || service.activeTeam()?.workspace !== workspace)
+          throw new Error("The project changed. Select your editor again.");
+        const available = ideDiscovery!.list().filter((e) => e.integration);
+        if (!id && available.length === 1) id = available[0].id;
+        const editor = id ? ideDiscovery!.get(id) : undefined;
+        if (!editor)
+          throw new Error("Select an editor from Detected apps first");
+        await syncPairing();
+        const name = await connectIde(
+          editor,
+          workspace,
+          vsix,
+          ideShutdown.signal,
+          available.find((e) => e.id === editor.id)?.prepared,
+        );
+        ideDiscovery!.markPrepared(editor.id);
+        return name;
       });
+      if (!smoke) {
+        void ideDiscovery
+          .refresh()
+          .catch((e) => console.error("IDE discovery failed", e));
+        ideTimer = setInterval(() => {
+          void ideDiscovery
+            ?.refresh()
+            .catch((e) => console.error("IDE discovery failed", e));
+        }, 15_000);
+        ideTimer.unref();
+      }
       handle("report", () => service.report());
       handle("install-agent", async (_, agent: string, remove = false) => {
         if (
@@ -550,7 +593,9 @@ app.on("before-quit", (event) => {
   quitting = true;
   companionDrag.stop();
   clearInterval(idleTimer);
+  clearInterval(ideTimer);
   voiceShutdown.abort();
+  ideShutdown.abort();
   for (const window of [main, companion]) {
     if (window && !window.isDestroyed()) window.hide();
   }
@@ -558,6 +603,7 @@ app.on("before-quit", (event) => {
   void (async () => {
     try {
       await Promise.allSettled([...transcriptions]);
+      await Promise.allSettled([ideDiscovery?.stop()]);
       await service.close();
     } catch (error) {
       console.error("Cobble shutdown cleanup failed", error);
