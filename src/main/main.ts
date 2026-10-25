@@ -49,7 +49,7 @@ const smoke =
 if (smoke)
   app.setPath(
     "userData",
-    join(process.cwd(), ".cobble", `smoke-profile-${process.pid}`),
+    join(process.cwd(), ".cobble", `smoke-profile-${process.pid}-${Date.now()}`),
   );
 if (!app.requestSingleInstanceLock()) app.quit();
 else {

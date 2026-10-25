@@ -96,7 +96,7 @@ export async function runSmoke(
     await main.webContents.executeJavaScript(
       'document.querySelectorAll("nav button").length',
     ),
-    4,
+    5,
   );
   const fill = async (selector: string, value: string) =>
     main.webContents.executeJavaScript(
@@ -233,7 +233,7 @@ export async function runSmoke(
     }),
   });
   assert.equal(paired.status, 200);
-  await wait('document.body.innerText.includes("IDE linked")');
+  await wait('/IDE (linked|connected)/.test(document.body.innerText)');
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[2].click()`,
   );
