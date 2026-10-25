@@ -9,22 +9,26 @@
     Roboto,
     sans-serif;
   color: #F8FAFC;
-  background: #08080A;
+  background: #0A0E1A;
   font-synthesis: none;
   font-size: 14px;
-  --surface: #111116;
-  --surface-hover: #16161F;
-  --surface-elevated: #16161F;
-  --border: #1E202B;
-  --border-subtle: #181924;
-  --border-focus: #38BDF8;
-  --muted: #8E95A5;
+  --bg: #0A0E1A;
+  --surface: #12172B;
+  --surface-hover: #181E38;
+  --surface-elevated: #1D2444;
+  --border: #232C4F;
+  --border-subtle: #19203B;
+  --border-focus: #F59E0B;
+  --muted: #94A3B8;
   --text: #F8FAFC;
   --text-dim: #64748B;
-  --soft: #16161D;
-  --accent: #38BDF8;
-  --accent-hover: #0EA5E9;
-  --mint: #2DD4BF;
+  --soft: #161D36;
+  --accent: #F59E0B;
+  --accent-hover: #D97706;
+  --accent-glow: rgba(245, 158, 11, 0.4);
+  --periwinkle: #7C71D8;
+  --periwinkle-light: #9B91F0;
+  --mint: #10B981;
   --danger: #EF4444;
   --danger-surface: #2A1317;
   --danger-border: #4A1D24;
@@ -54,7 +58,9 @@
 
 body {
   margin: 0;
-  background: #08080A;
+  background-color: #0A0E1A;
+  background-image: radial-gradient(rgba(124, 113, 216, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
   color: var(--text);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
@@ -72,7 +78,7 @@ button {
   border-radius: 8px;
   padding: 9px 15px;
   background: var(--accent);
-  color: #08080A;
+  color: #0A0E1A;
   cursor: pointer;
   font-weight: 600;
   font-size: 13px;
@@ -80,11 +86,13 @@ button {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.22);
   transition: all 0.15s ease;
 }
 
 button:hover {
   filter: brightness(1.08);
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35);
   transform: translateY(-1px);
 }
 
@@ -114,22 +122,23 @@ select {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #0E0E13;
+  background: #0E1326;
   color: var(--text);
   padding: 10px 13px;
   font-size: 13px;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 input:focus,
 textarea:focus,
 select:focus {
   border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 input::placeholder,
 textarea::placeholder {
-  color: #475569;
+  color: #4B5578;
 }
 
 textarea {
@@ -216,15 +225,17 @@ hr {
 }
 
 .secondary {
-  background: #16161F;
-  border: 1px solid #242432;
+  background: #131933;
+  border: 1px solid #28335A;
   color: #F8FAFC;
+  box-shadow: none;
 }
 
 .secondary:hover {
-  background: #1F2230;
-  border-color: var(--accent);
-  color: var(--accent);
+  background: #192040;
+  border-color: var(--periwinkle-light);
+  color: #FFF;
+  box-shadow: 0 2px 12px rgba(124, 113, 216, 0.25);
 }
 
 .text-button {
@@ -256,8 +267,8 @@ hr {
 }
 
 .sidebar {
-  background: #0B0B0F;
-  border-right: 1px solid #181922;
+  background: #0D1122;
+  border-right: 1px solid var(--border-subtle);
   padding: 30px 20px 18px;
   display: flex;
   flex-direction: column;
@@ -294,8 +305,8 @@ hr {
 
 .sidebar select {
   font-size: 12px;
-  background: #14141A;
-  border: 1px solid #242430;
+  background: #12172B;
+  border: 1px solid var(--border);
   color: #F8FAFC;
   border-radius: 7px;
   padding: 9px 10px;
@@ -327,16 +338,17 @@ nav {
 }
 
 .nav-button:hover {
-  background: #16161F;
+  background: #161D36;
   color: #F8FAFC;
   transform: none;
 }
 
 .nav-button.selected {
   color: var(--accent);
-  background: #191B28;
+  background: #1B2342;
   font-weight: 600;
-  border: 1px solid rgba(56, 189, 248, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .dot {
@@ -344,6 +356,7 @@ nav {
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
   margin-left: auto;
 }
 
@@ -354,13 +367,13 @@ nav {
 .quiet-note {
   font-size: 14px;
   line-height: 1.45;
-  color: #475569;
+  color: #4B5578;
   letter-spacing: -0.2px;
   padding: 24px 4px 18px;
 }
 
 .profile-mini {
-  border-top: 1px solid #181924;
+  border-top: 1px solid var(--border-subtle);
   border-radius: 0;
   padding: 14px 0 0;
   width: 100%;
@@ -379,7 +392,7 @@ nav {
 .avatar {
   width: 32px;
   height: 32px;
-  background: #1C2333;
+  background: #1B203D;
   color: var(--accent);
   display: inline-flex;
   align-items: center;
@@ -388,7 +401,7 @@ nav {
   font-size: 13px;
   font-weight: 600;
   flex-shrink: 0;
-  border: 1px solid #28334E;
+  border: 1px solid #2B335E;
 }
 
 .profile-mini small {
@@ -400,19 +413,19 @@ nav {
 .app-shell > main {
   grid-column: 2;
   min-width: 0;
-  background: #08080A;
+  background: #0A0E1A;
 }
 
 .topbar {
   height: 64px;
-  border-bottom: 1px solid #181922;
+  border-bottom: 1px solid var(--border-subtle);
   padding: 0 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 12px;
   color: var(--muted);
-  background: #0B0B0F;
+  background: #0D1122;
 }
 
 .connection {
@@ -420,10 +433,10 @@ nav {
   align-items: center;
   gap: 8px;
   font-size: 11px;
-  background: #14141B;
+  background: #12172B;
   padding: 6px 12px;
   border-radius: 9999px;
-  border: 1px solid #20222D;
+  border: 1px solid var(--border);
 }
 
 .status-dot {
@@ -812,7 +825,7 @@ blockquote {
 .chat-people {
   border-right: 1px solid var(--border);
   padding: 20px 10px;
-  background: #0C0C11;
+  background: #0D1122;
 }
 
 .chat-people > .eyebrow {
@@ -832,18 +845,20 @@ blockquote {
   margin-top: 6px;
   text-align: left;
   border-radius: 7px;
+  transition: all 0.15s ease;
 }
 
 .chat-people button:hover {
-  background: #161622;
+  background: #161D36;
   color: #F8FAFC;
   transform: none;
 }
 
 .chat-people button.selected {
-  background: #191B28;
+  background: #1B2342;
   color: var(--accent);
   font-weight: 600;
+  border: 1px solid rgba(245, 158, 11, 0.28);
 }
 
 .chat-people .avatar {
@@ -877,19 +892,20 @@ blockquote {
 }
 
 .bubble {
-  background: #14141C;
-  border: 1px solid #1E202C;
+  background: #13182E;
+  border: 1px solid #20294C;
   border-radius: 12px 12px 12px 3px;
   padding: 12px 16px;
   max-width: 82%;
   width: fit-content;
   margin: 10px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .bubble.mine {
   margin-left: auto;
-  background: #1A1F2E;
-  border-color: #273348;
+  background: #1C2448;
+  border-color: #2F3C70;
   border-radius: 12px 12px 3px 12px;
 }
 
@@ -909,7 +925,7 @@ blockquote {
 .composer {
   padding: 16px 24px;
   border-top: 1px solid var(--border);
-  background: #0D0D12;
+  background: #0D1122;
 }
 
 .composer textarea {
@@ -953,7 +969,7 @@ footer {
   margin-top: 35px;
   font-size: 10px;
   letter-spacing: 0.8px;
-  color: #475569;
+  color: #4B5578;
 }
 
 footer span {
@@ -967,17 +983,17 @@ footer span:last-child {
 .welcome {
   min-height: 100vh;
   padding: 40px 50px;
-  background: radial-gradient(ellipse at 80% 20%, #101625, transparent 65%), #08080A;
+  background: radial-gradient(ellipse at 80% 20%, #161D3A, transparent 65%), #0A0E1A;
 }
 
 .welcome-card {
   max-width: 440px;
   margin: 60px auto;
-  background: #111116;
-  border: 1px solid #1E202B;
+  background: #12172B;
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 34px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.65), 0 0 24px rgba(124, 113, 216, 0.12);
 }
 
 .welcome-card h1 {
@@ -1000,7 +1016,7 @@ footer span:last-child {
 
 .welcome-note {
   text-align: center;
-  color: #475569;
+  color: #4B5578;
   font-size: 11px;
   padding: 20px;
 }
@@ -1020,15 +1036,16 @@ footer span:last-child {
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  padding: 4px;
+  padding: 6px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: flex-end;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 12px;
   background: transparent;
   overflow: hidden !important;
 }
+
 
 .companion-placeholder,
 .companion-placeholder:focus,
@@ -1073,7 +1090,7 @@ footer span:last-child {
 
 .companion-placeholder:hover .pebble-companion-root {
   transform: scale(1.08) translateY(-2px);
-  filter: drop-shadow(0 10px 28px rgba(56, 189, 248, 0.45));
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.6));
 }
 
 .companion-placeholder:active .pebble-companion-root {
@@ -1082,15 +1099,16 @@ footer span:last-child {
 
 .companion-placeholder .pebble-svg-frame {
   display: block;
-  width: 92px;
-  height: 106px;
+  width: 66px;
+  height: 76px;
   overflow: visible;
 }
 
+
 /* 1. Main Pod Organic Hover Physics */
 .pebble-main-pod {
-  animation: pebble-pod-float 3.4s ease-in-out infinite;
-  transform-origin: 100px 114px;
+  animation: pebble-pod-float 3.6s ease-in-out infinite;
+  transform-origin: 100px 97px;
 }
 
 @keyframes pebble-pod-float {
@@ -1098,39 +1116,48 @@ footer span:last-child {
     transform: translateY(0px) rotate(0deg);
   }
   25% {
-    transform: translateY(-4px) rotate(1.4deg);
+    transform: translateY(-3.5px) rotate(1deg);
   }
   75% {
-    transform: translateY(2.5px) rotate(-1.4deg);
+    transform: translateY(2px) rotate(-1deg);
   }
 }
 
-/* 2. Magnetic Levitating Hands */
+/* 2. Cute Flexible Robot Arms (Wave & Float) */
 .pebble-hand-left {
-  animation: hand-hover-left 3.4s ease-in-out infinite;
-  transform-origin: 34px 120px;
+  animation: hand-wave-left 3.2s ease-in-out infinite;
+  transform-origin: 68px 144px;
 }
 
 .pebble-hand-right {
-  animation: hand-hover-right 3.4s ease-in-out infinite 0.25s;
-  transform-origin: 166px 120px;
+  animation: hand-hover-right 3.2s ease-in-out infinite 0.3s;
+  transform-origin: 132px 144px;
 }
 
-@keyframes hand-hover-left {
+@keyframes hand-wave-left {
   0%, 100% {
-    transform: translateY(0px) rotate(8deg);
+    transform: rotate(0deg);
+  }
+  20% {
+    transform: rotate(14deg);
+  }
+  35% {
+    transform: rotate(-3deg);
   }
   50% {
-    transform: translateY(-6px) rotate(18deg);
+    transform: rotate(12deg);
+  }
+  65% {
+    transform: rotate(0deg);
   }
 }
 
 @keyframes hand-hover-right {
   0%, 100% {
-    transform: translateY(-2px) rotate(-8deg);
+    transform: translateY(0px) rotate(0deg);
   }
   50% {
-    transform: translateY(5px) rotate(-18deg);
+    transform: translateY(2.5px) rotate(-5deg);
   }
 }
 
@@ -1157,67 +1184,113 @@ footer span:last-child {
     transform: scaleY(1) translateX(0);
   }
   78% {
-    transform: scaleY(1) translateX(-3.5px);
+    transform: scaleY(1) translateX(-3px);
   }
   86% {
-    transform: scaleY(1) translateX(3.5px);
+    transform: scaleY(1) translateX(3px);
   }
   92%, 100% {
     transform: scaleY(1) translateX(0);
   }
 }
 
-/* 4. Levitation Aura Pulse */
+/* 4. Glowing Amber Thruster Hover Plasma */
 .pebble-aura-group {
-  animation: pebble-aura-pulse 3.4s ease-in-out infinite;
-  transform-origin: 100px 204px;
+  animation: pebble-aura-pulse 3.6s ease-in-out infinite;
+  transform-origin: 100px 212px;
 }
 
 @keyframes pebble-aura-pulse {
   0%, 100% {
-    opacity: 0.65;
+    opacity: 0.55;
     transform: scale(1);
   }
   50% {
-    opacity: 0.95;
-    transform: scale(1.18, 1.25);
+    opacity: 0.9;
+    transform: scale(1.15, 1.2);
   }
 }
 
 /* 5. Antenna Sway */
 .pebble-antenna-stem {
-  animation: pebble-antenna-sway 4.8s ease-in-out infinite;
-  transform-origin: 100px 48px;
+  animation: pebble-antenna-sway 4s ease-in-out infinite;
+  transform-origin: 100px 38px;
 }
 
 @keyframes pebble-antenna-sway {
   0%, 100% {
     transform: rotate(0deg);
   }
-  30% {
-    transform: rotate(3deg);
+  25% {
+    transform: rotate(5deg);
   }
-  70% {
-    transform: rotate(-3deg);
+  75% {
+    transform: rotate(-5deg);
   }
 }
 
-/* 6. Power Core Glow */
-.pebble-power-core {
-  animation: pebble-core-glow 2.5s ease-in-out infinite;
+/* 6. Legs Subtle Hover Drift */
+.pebble-leg-left {
+  animation: pebble-leg-left-drift 3.6s ease-in-out infinite;
+  transform-origin: 80px 174px;
 }
 
-@keyframes pebble-core-glow {
+.pebble-leg-right {
+  animation: pebble-leg-right-drift 3.6s ease-in-out infinite 0.2s;
+  transform-origin: 120px 174px;
+}
+
+@keyframes pebble-leg-left-drift {
   0%, 100% {
-    opacity: 0.7;
+    transform: translateY(0) rotate(0deg);
   }
   50% {
-    opacity: 1;
-    filter: drop-shadow(0 0 6px #38bdf8);
+    transform: translateY(1.5px) rotate(-2deg);
   }
 }
 
-/* 7. Interactive Dragging State */
+@keyframes pebble-leg-right-drift {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(1.5px) rotate(2deg);
+  }
+}
+
+/* 7. Dizzy Spiral Eyes for Dragging State */
+.pebble-spiral-eyes {
+  animation: pebble-spiral-spin 2.6s linear infinite;
+  transform-origin: 100px 96px;
+}
+
+@keyframes pebble-spiral-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 8. Cute Idle Floating Zzz */
+.pebble-zzz {
+  animation: pebble-zzz-float 3.2s ease-in-out infinite;
+  transform-origin: 130px 45px;
+}
+
+@keyframes pebble-zzz-float {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translateY(0px) scale(0.9);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translateY(-6px) scale(1.12);
+  }
+}
+
+/* 9. Interactive Dragging State */
 .mode-dragging .pebble-main-pod {
   animation: none !important;
   transform: scale(0.96, 1.05) rotate(-3deg);
@@ -1225,23 +1298,35 @@ footer span:last-child {
 
 .mode-dragging .pebble-hand-left {
   animation: none !important;
-  transform: translateY(-16px) rotate(26deg);
+  transform: translateY(-12px) rotate(24deg);
   transition: transform 0.15s ease;
 }
 
 .mode-dragging .pebble-hand-right {
   animation: none !important;
-  transform: translateY(-16px) rotate(-26deg);
+  transform: translateY(-12px) rotate(-24deg);
   transition: transform 0.15s ease;
+}
+
+.mode-dragging .pebble-leg-left {
+  animation: none !important;
+  transform: translateY(6px) rotate(-8deg);
+  transition: transform 0.2s ease;
+}
+
+.mode-dragging .pebble-leg-right {
+  animation: none !important;
+  transform: translateY(8px) rotate(10deg);
+  transition: transform 0.2s ease;
 }
 
 .mode-dragging .pebble-aura-group {
   animation: none !important;
-  opacity: 0.35;
-  transform: scale(0.85);
+  opacity: 0.2;
+  transform: scale(0.75);
 }
 
-/* 8. Resting Idle State */
+/* 10. Resting Idle State */
 .mode-idle .pebble-main-pod {
   animation: pebble-idle-breathe 4.6s ease-in-out infinite;
 }
@@ -1261,7 +1346,7 @@ footer span:last-child {
 
 @keyframes pebble-idle-aura {
   0%, 100% {
-    opacity: 0.4;
+    opacity: 0.35;
     transform: scale(0.9);
   }
   50% {
@@ -1270,10 +1355,11 @@ footer span:last-child {
   }
 }
 
+
 .companion-bubble {
-  background: rgba(17, 17, 22, 0.95);
+  background: rgba(18, 23, 43, 0.95);
   backdrop-filter: blur(12px);
-  border: 1px solid #282C3D;
+  border: 1px solid #2B355E;
   border-radius: 8px;
   padding: 7px 12px;
   font-size: 11px;
@@ -1283,7 +1369,7 @@ footer span:last-child {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6), 0 0 12px rgba(124, 113, 216, 0.15);
   pointer-events: none;
   animation: bubble-pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -1300,14 +1386,28 @@ footer span:last-child {
 }
 
 .companion-menu {
-  width: 240px;
-  background: #111116;
-  border: 1px solid #242432;
+  width: 230px;
+  background: #12172B;
+  border: 1px solid #2B355E;
   border-radius: 12px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75);
-  padding: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 20px rgba(124, 113, 216, 0.15);
+  padding: 8px 10px;
   color: #F8FAFC;
+  flex-shrink: 0;
+  animation: menu-slide-in 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+
+@keyframes menu-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
 
 .companion-menu > button {
   display: flex;
@@ -1329,7 +1429,7 @@ footer span:last-child {
 }
 
 .companion-menu > button:hover {
-  background: #181924;
+  background: #1B2342;
   color: var(--accent);
   transform: none;
 }
@@ -1339,15 +1439,15 @@ footer span:last-child {
   display: block;
   padding: 4px 10px 8px;
   color: var(--muted);
-  border-bottom: 1px solid #1E202B;
+  border-bottom: 1px solid #1E2544;
   margin-bottom: 6px;
 }
 
 .companion-menu select {
   font-size: 12px;
   padding: 7px 10px;
-  background: #16161F;
-  border: 1px solid #242432;
+  background: #161D36;
+  border: 1px solid #28335A;
   border-radius: 7px;
   color: #F8FAFC;
   margin: 6px 0;
