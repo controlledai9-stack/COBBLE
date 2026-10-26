@@ -1,6 +1,6 @@
 # Cobble
 
-A local-first desktop workspace for a team's plan, saved code changes, and conversations. The current development source is version 0.2.1, including the Pebble drag and full-app shutdown fixes. The remaining integration and release checks are listed below.
+A local-first desktop workspace for a team's plan, saved code changes, and conversations. The current development source is version 0.3.0, including teammate-hosted internet transport, IDE discovery, and the Pebble drag/shutdown fixes. Automatic best-laptop election and state handover remain planned; see [the internet collaboration plan](docs/INTERNET-COLLABORATION-PLAN.md).
 
 ## Install the app
 
@@ -8,7 +8,7 @@ The Windows x64 download is `release/Cobble-Setup-0.2.0-x64.exe`. It includes El
 
 This is an unsigned development installer. A clean Windows VM installation and real multi-device testing remain release checks; building the installer is not evidence those checks passed.
 
-The older 0.2.0 installer does not contain the current drag/shutdown fixes. Pulling Git source does not update an executable that was built earlier. Rebuild the current source and confirm **Cobble 0.2.1** in the app window title or Profile settings before comparing drag behavior. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
+The older 0.2.0 installer does not contain the current internet, IDE or drag/shutdown updates. Pulling Git source does not update an executable that was built earlier. Rebuild the current source and confirm **Cobble 0.3.0** in the app window title or Profile settings. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
 
 ## Run from source (developers only)
 
@@ -44,7 +44,7 @@ Create your local profile, then a team with a required starting plan. Choose the
 - Explicit completed-work announcements, separate from ordinary file saves and agent turn endings.
 - Main integration proposals tied to an exact personal-branch commit, main revision, plan version, and member list. Every teammate must currently vote Yes explicitly; this unanimity rule is provisional pending the team's policy choice. Changed plan/membership or a moved main requires fresh approval. Cobble performs a reviewed local merge; it does not push or enforce remote branch protection against other Git clients.
 - Local IDE bridge and a VS Code extension for authenticated workspace pairing, save events, focus, heartbeat, and lost-connection state.
-- Encrypted HTTPS team hosting on a reachable LAN/VPN, certificate-pinned joining, owner approval, private threads, plan sync, duplicate handling, and a durable retry queue. Credentials and host certificate keys are encrypted through Electron's OS secure storage.
+- Encrypted team hosting on LAN, a directly reachable teammate laptop, or an optional teammate-hosted relay. Internet invitations explicitly trust the host certificate and pin its identity. Owner approval, private threads, targeted notices, exact votes and durable retries use the same backend. No paid provider or automatic external fallback is configured. Blocked routers/ISPs can prevent cross-city connections; automatic host migration is not yet implemented. See [internet setup](docs/INTERNET-RELAY.md).
 - Companion lifecycle: normal/chatting, idle edge docking, and dragging/hanging. Artwork is intentionally absent; a plain controls placeholder is used.
 - Voice recording with explicit start/stop/cancel, a bundled CPU transcription engine and default multilingual model, recipient parsing, editable preview, and optional OS speech confirmation.
 

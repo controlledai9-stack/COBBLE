@@ -1,5 +1,6 @@
 import { build } from "esbuild";
 import { build as viteBuild } from "vite";
+import { copyFile } from "node:fs/promises";
 await build({
   entryPoints: ["src/main/main.ts"],
   bundle: true,
@@ -16,6 +17,14 @@ await build({
   external: ["electron"],
   outfile: "dist/main/preload.cjs",
 });
+await build({
+  entryPoints: ["src/internet/entry.ts"],
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  outfile: "dist/relay.cjs",
+});
+await copyFile("node_modules/ws/LICENSE", "dist/main/ws-LICENSE.txt");
 await build({
   entryPoints: ["src/cli.ts"],
   bundle: true,

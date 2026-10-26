@@ -133,7 +133,10 @@ export class CobbleService extends EventEmitter {
         mode: "normal",
         availability: profile?.availability ?? "available",
       },
-      network: this.network.state,
+      network: {
+        ...this.network.state,
+        relayUrl: this.store.setting("internetRelay", ""),
+      },
       coverage: this.monitoringError
         ? [this.monitoringError]
         : (this.observer?.coverage ?? [
@@ -623,12 +626,21 @@ export class CobbleService extends EventEmitter {
       case "host": {
         const t = this.activeTeam();
         if (!t) throw new Error("Select a team first");
-        await this.network.host(t);
+        if (action.relayUrl !== undefined)
+          requiredText(action.relayUrl, "Relay URL", 2000);
+        if (action.publicAddress !== undefined)
+          requiredText(
+            action.publicAddress,
+            "Reachable teammate address",
+            2000,
+          );
+        await this.network.host(t, action.relayUrl, action.publicAddress);
+        if (action.relayUrl) this.store.set("internetRelay", action.relayUrl);
         break;
       }
       case "join":
         await this.network.join(
-          requiredText(action.address, "Host address", 2000),
+          requiredText(action.address, "Host address", 12000),
           requiredText(action.code, "Join code", 100),
         );
         break;

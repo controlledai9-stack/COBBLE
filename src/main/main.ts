@@ -26,6 +26,7 @@ import { IdeDiscovery, discoverIdes } from "./ide-discovery";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import type { ExtendedAction as Action, Tab, AppState } from "../shared/types";
 import { installAgentHooks } from "../core/agents";
+import { runRelay } from "../internet/cli";
 let service: CobbleService;
 let main: BrowserWindow;
 let companion: BrowserWindow;
@@ -49,9 +50,21 @@ const smoke =
 if (smoke)
   app.setPath(
     "userData",
-    join(process.cwd(), ".cobble", `smoke-profile-${process.pid}-${Date.now()}`),
+    join(
+      process.cwd(),
+      ".cobble",
+      `smoke-profile-${process.pid}-${Date.now()}`,
+    ),
   );
-if (!app.requestSingleInstanceLock()) app.quit();
+if (process.argv.includes("--relay-server")) {
+  void app
+    .whenReady()
+    .then(runRelay)
+    .catch((error) => {
+      console.error(error.message);
+      app.exit(1);
+    });
+} else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
     if (quitting) return;

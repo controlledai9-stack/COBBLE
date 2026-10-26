@@ -203,6 +203,8 @@ export interface AppState {
     role: "local" | "host" | "client";
     state: string;
     address?: string;
+    transport?: "lan" | "internet";
+    relayUrl?: string;
   };
   coverage: string[];
   planHistory: { version: number; source: string; createdAt: string }[];
@@ -246,7 +248,7 @@ export type Action =
     }
   | { type: "resolve"; activityId: string; resolution: "kept" | "dismissed" }
   | { type: "observe" }
-  | { type: "host" }
+  | { type: "host"; relayUrl?: string; publicAddress?: string }
   | { type: "join"; address: string; code: string }
   | { type: "decideJoin"; requestId: string; accept: boolean };
 export type ExtendedAction =

@@ -1,4 +1,4 @@
-import { createServer, request, type Server } from "node:https";
+import { createServer, request, Agent, type Server } from "node:https";
 import type { ClientRequest } from "node:http";
 import type { TLSSocket } from "node:tls";
 import { randomBytes, randomUUID, X509Certificate } from "node:crypto";
@@ -11,7 +11,23 @@ import { matchesPath as importPathMatches, moduleOwners } from "./graph";
 import { explicitPathConflict } from "./engine";
 import { notificationAudience } from "./notification-policy";
 import { Collaboration } from "./collaboration";
-import type { ChatMessage, Team, Member, Activity } from "../shared/types";
+import type {
+  AppState,
+  ChatMessage,
+  Team,
+  Member,
+  Activity,
+} from "../shared/types";
+import { RelayHost, tunnelAgent } from "../internet/tunnel";
+import {
+  invitation,
+  directInvitation,
+  parseDirectInvite,
+  newRoom,
+  parseInvite,
+  relayOrigin,
+  type RoomKeys,
+} from "../internet/protocol";
 
 interface Session {
   address: string;
@@ -23,7 +39,7 @@ interface Session {
 export class TeamNetwork {
   private collaboration: Collaboration;
   server?: Server;
-  state = {
+  state: AppState["network"] = {
     role: "local" as "local" | "host" | "client",
     state: "Local only",
     address: undefined as string | undefined,
@@ -32,6 +48,8 @@ export class TeamNetwork {
   private interval?: ReturnType<typeof setInterval>;
   private busyGeneration?: number;
   private requests = new Set<ClientRequest>();
+  private relayHost?: RelayHost;
+  private connectionAbort = new AbortController();
   private failures = 0;
   private nextAttempt = 0;
   mainIntegrationActive = false;
@@ -63,7 +81,27 @@ export class TeamNetwork {
     this.saveSecret("network-session", session);
     this.saveSecret(`network-session:${session.teamId}`, session);
   }
-  async host(team: Team) {
+  async host(team: Team, relayUrl?: string, publicAddress?: string) {
+    const relay = relayUrl ? relayOrigin(relayUrl) : undefined;
+    const direct = publicAddress ? new URL(publicAddress) : undefined;
+    if (direct && Number(direct.port || 443) < 1)
+      throw new Error("Choose a reachable host port from 1 to 65535");
+    if (relay && direct)
+      throw new Error(
+        "Choose a direct teammate address or a teammate relay, not both",
+      );
+    if (
+      direct &&
+      (direct.protocol !== "https:" ||
+        direct.username ||
+        direct.password ||
+        direct.pathname !== "/" ||
+        direct.hash ||
+        direct.search)
+    )
+      throw new Error(
+        "Enter your reachable HTTPS origin and port without a path or credentials",
+      );
     if (team.ownerId !== this.store.profile()?.id)
       throw new Error("Only the owner can host this team");
     this.close();
@@ -399,8 +437,10 @@ export class TeamNetwork {
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(
-        this.store.setting<number>(`host-port:${team.id}`, 0),
-        "0.0.0.0",
+        direct
+          ? Number(direct.port || 443)
+          : this.store.setting<number>(`host-port:${team.id}`, 0),
+        relay ? "127.0.0.1" : direct?.hostname.includes(":") ? "::" : "0.0.0.0",
         resolve,
       );
     });
@@ -415,8 +455,47 @@ export class TeamNetwork {
     this.state = {
       role: "host",
       state: "Hosting · encrypted connection",
-      address: `https://${address}:${port}/#${pin}`,
+      address: direct
+        ? directInvitation({
+            address: direct.origin,
+            pin,
+            certificate: certificate.cert,
+          })
+        : `https://${address}:${port}/#${pin}`,
+      transport: direct ? "internet" : "lan",
     };
+    if (relay) {
+      const keys =
+        this.secret<RoomKeys>(`internet-room:${team.id}:${relay}`) ?? newRoom();
+      this.saveSecret(`internet-room:${team.id}:${relay}`, keys);
+      const invite = invitation({
+        relay,
+        room: keys.room,
+        key: keys.key,
+        pin,
+        certificate: certificate.cert,
+      });
+      this.relayHost = new RelayHost(relay, keys, port, (online) => {
+        if (generation !== this.generation) return;
+        this.state.state = online
+          ? "Hosting online · encrypted connection"
+          : "Internet relay disconnected · reconnecting";
+        this.changed();
+      });
+      try {
+        await this.relayHost.start();
+      } catch (error) {
+        if (generation === this.generation) this.close();
+        throw error;
+      }
+      if (generation !== this.generation) return;
+      this.state = {
+        role: "host",
+        state: "Hosting online · encrypted connection",
+        address: invite,
+        transport: "internet",
+      };
+    }
     this.changed();
   }
   private sharedTeam(team: Team): Team {
@@ -613,9 +692,12 @@ export class TeamNetwork {
     const profile = this.store.profile();
     if (!profile) throw new Error("Create a profile first");
     const url = new URL(address);
-    const fingerprint = url.hash.slice(1).toLowerCase();
+    const internet = parseInvite(address);
+    const direct = parseDirectInvite(address);
+    const fingerprint =
+      internet?.pin ?? direct?.pin ?? url.hash.slice(1).toLowerCase();
     if (
-      url.protocol !== "https:" ||
+      (!internet && url.protocol !== "https:") ||
       !/^[a-f0-9]{64}$/.test(fingerprint) ||
       url.username ||
       url.password
@@ -626,7 +708,7 @@ export class TeamNetwork {
     this.close();
     const generation = this.generation;
     const result = await this.call(
-      url.origin,
+      internet || direct ? url.href : url.origin,
       fingerprint,
       "/join-request",
       "POST",
@@ -634,7 +716,7 @@ export class TeamNetwork {
     );
     if (generation !== this.generation) return;
     this.pending = {
-      address: url.origin,
+      address: internet || direct ? url.href : url.origin,
       fingerprint,
       secret: result.secret,
       requestId: result.requestId,
@@ -642,7 +724,8 @@ export class TeamNetwork {
     this.state = {
       role: "client",
       state: "Waiting for host approval",
-      address: url.origin,
+      address: internet || direct ? url.href : url.origin,
+      transport: internet || direct ? "internet" : "lan",
     };
     this.changed();
     this.interval = setInterval(() => {
@@ -974,6 +1057,11 @@ export class TeamNetwork {
         role: "client",
         state: "Reconnecting",
         address: this.session.address,
+        transport:
+          parseInvite(this.session.address) ||
+          parseDirectInvite(this.session.address)
+            ? "internet"
+            : "lan",
       };
       this.interval = setInterval(() => {
         void this.tick();
@@ -981,7 +1069,7 @@ export class TeamNetwork {
       await this.tick();
     }
   }
-  private call(
+  private async call(
     address: string,
     fingerprint: string,
     path: string,
@@ -990,15 +1078,34 @@ export class TeamNetwork {
     token?: string,
   ): Promise<any> {
     const generation = this.generation;
+    const internet = parseInvite(address);
+    const direct = parseDirectInvite(address);
+    const relayAgent = internet
+      ? await tunnelAgent(internet, this.connectionAbort.signal)
+      : direct
+        ? new Agent({
+            ca: direct.certificate,
+            rejectUnauthorized: true,
+            checkServerIdentity: (_hostname, cert) =>
+              cert.fingerprint256?.replaceAll(":", "").toLowerCase() ===
+              direct.pin
+                ? undefined
+                : new Error("Host identity changed"),
+          })
+        : undefined;
+    if (generation !== this.generation) {
+      relayAgent?.destroy();
+      throw new Error("Team connection closed");
+    }
     return new Promise((resolve, reject) => {
-      const url = new URL(path, address);
+      const url = new URL(path, internet ? "https://cobble.local" : address);
       const bytes = body === undefined ? "" : JSON.stringify(body);
       const req = request(
         url,
         {
           method,
-          rejectUnauthorized: false,
-          agent: false,
+          rejectUnauthorized: internet || direct ? true : false,
+          agent: relayAgent ?? false,
           timeout: 4000,
           headers: {
             "content-type": "application/json",
@@ -1055,12 +1162,41 @@ export class TeamNetwork {
           else req.end(bytes);
         });
       });
-      req.on("timeout", () => req.destroy(new Error("Host did not respond")));
-      req.on("error", reject);
-    });
+      req.on("timeout", () =>
+        req.destroy(
+          new Error(
+            direct
+              ? "The teammate host did not respond. It may be offline, or its router/ISP may block incoming connections. No external fallback is enabled."
+              : "Host did not respond",
+          ),
+        ),
+      );
+      req.on("error", (error: NodeJS.ErrnoException) => {
+        if (
+          direct &&
+          [
+            "ECONNREFUSED",
+            "EHOSTUNREACH",
+            "ENETUNREACH",
+            "ECONNRESET",
+            "ETIMEDOUT",
+          ].includes(error.code ?? "")
+        )
+          reject(
+            new Error(
+              "The teammate host is unreachable or offline. Its router/ISP may block incoming connections. No external fallback is enabled.",
+            ),
+          );
+        else reject(error);
+      });
+    }).finally(() => relayAgent?.destroy());
   }
   close() {
     this.generation++;
+    this.connectionAbort.abort();
+    this.connectionAbort = new AbortController();
+    this.relayHost?.close();
+    this.relayHost = undefined;
     clearInterval(this.interval);
     this.interval = undefined;
     for (const req of this.requests)

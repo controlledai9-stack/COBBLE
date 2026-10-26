@@ -115,8 +115,9 @@ function App() {
           <span className="eyebrow">LOCAL-FIRST COLLABORATION</span>
           <h1>Build in sync.</h1>
           <p>
-            Your team's plan, live code changes, and peer-to-peer sync. Kept
-            private on your local network.
+            Your team's plan, live code changes, and encrypted collaboration.
+            Keep your projects local and connect on LAN or through your team's
+            internet relay.
           </p>
           <ProfileForm state={state} act={act} busy={busy} />
           {error && (
@@ -129,7 +130,7 @@ function App() {
           </small>
         </div>
         <div className="welcome-note">
-          Zero cloud dependencies. Completely peer-to-peer.
+          No Cobble subscription. Your team's own host.
         </div>
       </div>
     );
@@ -849,6 +850,11 @@ function Teams({
   const [edit, setEdit] = useState(false);
   const [editPlan, setEditPlan] = useState("");
   const [pair, setPair] = useState("");
+  const [hostMode, setHostMode] = useState<"direct" | "internet" | "lan">(
+    "direct",
+  );
+  const [publicAddress, setPublicAddress] = useState("");
+  const [relayUrl, setRelayUrl] = useState(state.network.relayUrl ?? "");
   useEffect(() => {
     setCreate(!team);
     setEdit(false);
@@ -941,8 +947,9 @@ function Teams({
         <section className="panel">
           <h2>Join an existing team</h2>
           <p>
-            Paste the complete host address, including its fingerprint, from a
-            teammate.
+            Paste the complete internet invitation or LAN address from a
+            teammate, plus the separate join code. The host must approve your
+            request.
           </p>
           <form
             onSubmit={(e) => {
@@ -951,7 +958,7 @@ function Teams({
             }}
           >
             <label>
-              Secure host address
+              Internet invitation or LAN address
               <input
                 required
                 value={address}
@@ -1055,11 +1062,81 @@ function Teams({
             )}
             {team.ownerId === state.profile?.id && (
               <div className="hosting">
+                <label>
+                  Connect your team
+                  <select
+                    value={hostMode}
+                    onChange={(e) =>
+                      setHostMode(
+                        e.target.value as "direct" | "internet" | "lan",
+                      )
+                    }
+                  >
+                    <option value="direct">
+                      Internet · reachable teammate laptop
+                    </option>
+                    <option value="internet">
+                      Internet · teammate-hosted relay
+                    </option>
+                    <option value="lan">Local network · same LAN</option>
+                  </select>
+                </label>
+                {hostMode === "direct" && (
+                  <>
+                    <label>
+                      Reachable address of this laptop
+                      <input
+                        type="url"
+                        value={publicAddress}
+                        onChange={(e) => setPublicAddress(e.target.value)}
+                        placeholder="https://your-reachable-address:port"
+                      />
+                    </label>
+                    <p className="small muted">
+                      Enter an address and port teammates can reach. Cobble
+                      cannot bypass a blocked router or ISP and will not use an
+                      external fallback. A local/private address alone does not
+                      establish cross-city connectivity.
+                    </p>
+                  </>
+                )}
+                {hostMode === "internet" && (
+                  <>
+                    <label>
+                      Team relay URL
+                      <input
+                        type="url"
+                        value={relayUrl}
+                        onChange={(e) => setRelayUrl(e.target.value)}
+                        placeholder="HTTPS relay address from a teammate"
+                      />
+                    </label>
+                    <p className="small muted">
+                      No public relay is configured by default. A teammate must
+                      run a reachable Cobble relay. Teammates need only Cobble;
+                      keep this host app open while collaborating.
+                    </p>
+                  </>
+                )}
                 <button
-                  disabled={busy}
-                  onClick={() => void act({ type: "host" })}
+                  disabled={
+                    busy ||
+                    (hostMode === "internet" && !relayUrl.trim()) ||
+                    (hostMode === "direct" && !publicAddress.trim())
+                  }
+                  onClick={() =>
+                    void act({
+                      type: "host",
+                      ...(hostMode === "internet"
+                        ? { relayUrl: relayUrl.trim() }
+                        : {}),
+                      ...(hostMode === "direct"
+                        ? { publicAddress: publicAddress.trim() }
+                        : {}),
+                    })
+                  }
                 >
-                  Host this team
+                  {hostMode !== "lan" ? "Host online" : "Host on LAN"}
                 </button>
                 {state.network.role === "host" && (
                   <>
@@ -1076,7 +1153,9 @@ function Teams({
                       <input readOnly value={team.code} />
                     </label>
                     <small>
-                      Members need an available LAN/VPN route to this device.
+                      {state.network.transport === "internet"
+                        ? "Share the complete invitation and join code. This teammate host and any teammate relay must stay online."
+                        : "Members need a reachable LAN route to this device."}
                     </small>
                   </>
                 )}
@@ -1312,7 +1391,7 @@ function Chat({
           <small>
             {recipient === "team"
               ? "Team discussion channel"
-              : "Direct peer-to-peer message"}
+              : "Private message through your team host"}
           </small>
         </div>
         <div className="messages">

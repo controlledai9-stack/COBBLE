@@ -1,6 +1,6 @@
 {
   "name": "cobble",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "license": "UNLICENSED",
   "author": "Cobble",
@@ -17,6 +17,8 @@
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "start": "electron .",
+    "relay": "node dist/relay.cjs",
+    "test:relay": "node scripts/test-relay.mjs",
     "cli": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write src scripts test extensions/vscode/src",
@@ -40,13 +42,15 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "selfsigned": "^5.5.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/vscode": "^1.100.0",
+    "@types/ws": "^8.18.2",
     "@vscode/vsce": "^4.0.0",
     "electron": "^42.0.0",
     "electron-builder": "^26.15.3",
