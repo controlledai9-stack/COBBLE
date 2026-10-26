@@ -171,6 +171,10 @@ export class HostCoordinator {
     };
   }
   assertCanHost(team: Team) {
+    if (this.store.setting(`restored-offline:${team.id}`, false))
+      throw new Error(
+        "Recovered history is offline; reconnect to the current authority before hosting",
+      );
     const me = this.store.profile()!.id;
     const grant = this.adapter.secret<{ epoch: number }>(
       `host-grant:${team.id}`,
@@ -215,6 +219,10 @@ export class HostCoordinator {
     if (this.frozen)
       throw new Error("Wait for the acknowledged handover to finish");
     const team = this.selected();
+    if (team && this.store.setting(`restored-offline:${team.id}`, false))
+      throw new Error(
+        "Reconnect the recovered team before configuring hosting",
+      );
     if (
       !team ||
       !this.store

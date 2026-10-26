@@ -32,6 +32,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY, team_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sync_log(cursor INTEGER PRIMARY KEY AUTOINCREMENT, team_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS activity_team ON activities(team_id);
+      CREATE INDEX IF NOT EXISTS sync_team_cursor ON sync_log(team_id,cursor);
       CREATE INDEX IF NOT EXISTS message_team ON messages(team_id);
       INSERT OR IGNORE INTO migrations VALUES(1);`);
     this.db

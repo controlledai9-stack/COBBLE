@@ -22,6 +22,8 @@ import { notificationAudience } from "./notification-policy";
 import { gitFacts, integrateApproved } from "./git-main";
 import { agentContext } from "./agents";
 import { capacity } from "./host-capacity";
+import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
+import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
 import type {
   ExtendedAction,
   AppState,
@@ -48,9 +50,11 @@ export class CobbleService extends EventEmitter {
   private integrationTask?: Promise<void>;
   private agentMessages = new Map<string, string>();
   private contextVersions = new Map<string, number>();
+  private backupTasks = new Set<Promise<unknown>>();
+  private closeTask?: Promise<void>;
   constructor(
     file: string,
-    secrets: {
+    private readonly secrets: {
       protect: (s: string) => string;
       unprotect: (s: string) => string;
     } = { protect: (s) => s, unprotect: (s) => s },
@@ -112,6 +116,47 @@ export class CobbleService extends EventEmitter {
       this.emit("diagnostic", `Saved team connection is unavailable: ${error}`);
     }
     await this.monitor();
+  }
+  async createBackup(destination: string) {
+    if (this.closed) throw new Error("Cobble is closing");
+    if (this.backupTasks.size)
+      throw new Error("A backup or recovery is already in progress");
+    const task = createDatabaseBackup(this.store, destination, this.secrets);
+    this.backupTasks.add(task);
+    try {
+      return await task;
+    } finally {
+      this.backupTasks.delete(task);
+    }
+  }
+  async restoreBackupCopy(source: string, destination: string) {
+    if (this.closed) throw new Error("Cobble is closing");
+    if (this.backupTasks.size)
+      throw new Error("A backup or recovery is already in progress");
+    const task = restoreDatabaseCopy(source, destination, this.secrets);
+    this.backupTasks.add(task);
+    try {
+      return await task;
+    } finally {
+      this.backupTasks.delete(task);
+    }
+  }
+  maintenance(days = 30) {
+    return maintenanceStatus(this.store, days);
+  }
+  pruneLocalHistory(days: number) {
+    if (
+      this.closed ||
+      this.integrating ||
+      this.observing ||
+      this.network.hosting.frozen
+    )
+      throw new Error(
+        "Wait for current work to finish before maintaining local history",
+      );
+    const result = pruneResolvedBatches(this.store, days);
+    this.changed();
+    return result;
   }
   activeTeam(): Team | null {
     const id = this.store.setting<string | null>("activeTeamId", null);
@@ -370,6 +415,11 @@ export class CobbleService extends EventEmitter {
         "Finish the approved main integration before changing the team or its agreements",
       );
     switch (action.type) {
+      case "refreshConnection":
+        await this.network.refreshConnection(
+          requiredText(action.address, "Current invitation", 12000),
+        );
+        break;
       case "configureHosting":
         await this.network.hosting.configure(action.allow, action.address);
         break;
@@ -731,6 +781,10 @@ export class CobbleService extends EventEmitter {
       !team.workspace
     )
       throw new Error("Only your own local changes can be reverted");
+    if (!this.store.batch(activityId).length)
+      throw new Error(
+        "No local revert snapshot remains for this change; it may have been removed by history maintenance",
+      );
     return previewRevert(
       activityId,
       team.workspace,
@@ -856,11 +910,20 @@ export class CobbleService extends EventEmitter {
       ...this.state().coverage.map((c) => `- ${c}`),
     ].join("\n");
   }
-  async close() {
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
     this.closed = true;
+    this.closeTask = this.finishClose();
+    return this.closeTask;
+  }
+  private async finishClose() {
     clearTimeout(this.timer);
-    await this.watcher?.close();
-    await Promise.allSettled([this.integrationTask]);
+    await Promise.allSettled([
+      this.watcher?.close(),
+      this.monitorTask,
+      this.integrationTask,
+      ...this.backupTasks,
+    ]);
     this.bridge.close();
     this.network.close();
     await this.network.hosting.settled();

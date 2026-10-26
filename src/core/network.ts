@@ -63,6 +63,8 @@ export class TeamNetwork {
     fingerprint: string;
     secret: string;
     requestId: string;
+    teamId?: string;
+    createdAt?: number;
   };
   private rates = new Map<string, { at: number; count: number }>();
   private redirectServers = new Set<Server>();
@@ -359,7 +361,7 @@ export class TeamNetwork {
             });
             this.saveSecret(`join-secret:${id}`, secret);
             this.changed();
-            return json(res, 202, { requestId: id, secret });
+            return json(res, 202, { requestId: id, secret, teamId: team.id });
           }
           if (req.method === "POST" && url.pathname === "/join-status") {
             const body = await readBody();
@@ -376,7 +378,7 @@ export class TeamNetwork {
             )
               return json(res, 403, { error: "Invalid pending request" });
             if (invite.state !== "accepted")
-              return json(res, 200, { state: invite.state });
+              return json(res, 200, { state: invite.state, teamId: team.id });
             const token = this.secret<string>(
               `member-token:${team.id}:${invite.deviceId}`,
             );
@@ -389,6 +391,7 @@ export class TeamNetwork {
               });
             return json(res, 200, {
               state: "accepted",
+              teamId: team.id,
               token,
               team: this.sharedTeam(teamNow),
               members: this.store.members(team.id),
@@ -429,6 +432,11 @@ export class TeamNetwork {
               members: this.store.members(team.id),
               events,
               cursor: rows.at(-1)?.cursor ?? since,
+              more: !!this.store.db
+                .prepare(
+                  "SELECT 1 FROM sync_log WHERE team_id=? AND cursor>? LIMIT 1",
+                )
+                .get(team.id, rows.at(-1)?.cursor ?? since),
               completions: this.collaboration.completions(team.id),
               proposals: this.collaboration.proposals(team.id),
               hostControl: this.hosting.control(),
@@ -1288,7 +1296,10 @@ export class TeamNetwork {
       fingerprint: resolvedPin,
       secret: result.secret,
       requestId: result.requestId,
+      teamId: result.teamId,
+      createdAt: Date.now(),
     };
+    this.saveSecret("pending-join", this.pending);
     this.state = {
       role: "client",
       state: "Waiting for host approval",
@@ -1299,6 +1310,137 @@ export class TeamNetwork {
     this.interval = setInterval(() => {
       void this.tick();
     }, 250);
+  }
+  // Explicitly trust a refreshed invitation, never an unauthenticated directory.
+  // Probe without following redirects so failed recovery cannot mutate a session.
+  async refreshConnection(address: string) {
+    if (!parseDirectInvite(address) && !parseInvite(address))
+      throw new Error(
+        "Paste the current full certificate-bearing invitation from a connected teammate",
+      );
+    const pending =
+      this.pending ??
+      this.secret<NonNullable<TeamNetwork["pending"]>>("pending-join");
+    if (pending && this.state.role !== "host") {
+      if (
+        !pending.teamId ||
+        !pending.createdAt ||
+        Date.now() - pending.createdAt > 600000
+      )
+        throw new Error(
+          "The pending request expired or lacks team identity. Submit a new join request using the current invitation.",
+        );
+      const generation = this.generation;
+      const result = await this.call(
+        address,
+        this.addressPin(address),
+        "/join-status",
+        "POST",
+        { requestId: pending.requestId, secret: pending.secret },
+        undefined,
+        4,
+      );
+      if (generation !== this.generation)
+        throw new Error("Connection context changed");
+      if (
+        result.teamId !== pending.teamId ||
+        !["pending", "accepted"].includes(result.state) ||
+        (result.state === "accepted" && result.team?.id !== pending.teamId)
+      )
+        throw new Error(
+          "This invitation does not match the pending team request",
+        );
+      this.close();
+      this.pending = {
+        ...pending,
+        address,
+        fingerprint: this.addressPin(address),
+      };
+      this.saveSecret("pending-join", this.pending);
+      this.state = {
+        role: "client",
+        state: "Pending request recovered at current host",
+        address,
+        transport: "internet",
+      };
+      this.interval = setInterval(() => void this.tick(), 250);
+      await this.tick();
+      return;
+    }
+    const teamId = this.store.setting<string | null>("activeTeamId", null);
+    if (
+      !teamId ||
+      this.state.role === "host" ||
+      (this.hosting.frozen &&
+        !this.store.setting(`restored-offline:${teamId}`, false))
+    )
+      throw new Error(
+        "Select an offline member team before refreshing its connection",
+      );
+    const saved = this.secret<Session>(`network-session:${teamId}`);
+    if (!saved || saved.teamId !== teamId)
+      throw new Error(
+        "No saved membership exists. Request a new invitation and approval.",
+      );
+    if (!parseDirectInvite(address) && !parseInvite(address))
+      throw new Error(
+        "Paste the current full certificate-bearing invitation from a connected teammate",
+      );
+    const generation = this.generation;
+    const previous = this.store.team(teamId);
+    const result = await this.call(
+      address,
+      this.addressPin(address),
+      "/sync?since=0",
+      "GET",
+      undefined,
+      saved.token,
+      4,
+    );
+    if (generation !== this.generation)
+      throw new Error("Connection context changed");
+    const host = result.team?.hosting;
+    if (
+      result.team?.id !== teamId ||
+      result.team.ownerId !== previous.ownerId ||
+      !host ||
+      !Number.isSafeInteger(host.epoch) ||
+      host.epoch < (previous.hosting?.epoch ?? 0) ||
+      !Array.isArray(result.members) ||
+      !result.members.some((m: Member) => m.id === this.store.profile()?.id) ||
+      !result.members.some((m: Member) => m.id === host.hostId) ||
+      (host.epoch === (previous.hosting?.epoch ?? 0) &&
+        previous.hosting &&
+        host.hostId !== previous.hosting.hostId)
+    )
+      throw new Error(
+        "The invitation does not prove current membership in this team",
+      );
+    this.close();
+    this.store.transaction(() => {
+      if (this.store.setting(`restored-offline:${teamId}`, false)) {
+        for (const key of ["host-journal", "host-grant", "candidate-stage"])
+          this.saveSecret(`${key}:${teamId}`, null);
+      }
+      this.store.putTeam({ ...previous, hosting: { ...host, address } });
+      this.store.set(`restored-offline:${teamId}`, false);
+      this.session = {
+        ...saved,
+        address,
+        fingerprint: this.addressPin(address),
+        cursor: 0,
+      };
+      this.saveSession(this.session);
+    });
+    this.state = {
+      role: "client",
+      state: "Refreshed invitation verified; synchronizing",
+      address,
+      transport: "internet",
+    };
+    this.interval = setInterval(() => void this.tick(), 250);
+    this.nextAttempt = 0;
+    await this.tick();
   }
   async decide(requestId: string, accept: boolean, authorizedManager = false) {
     if (this.state.role === "client" && !authorizedManager)
@@ -1407,6 +1549,7 @@ export class TeamNetwork {
       return;
     const generation = this.generation;
     this.busyGeneration = generation;
+    let catchingUp = false;
     try {
       if (this.state.role === "host") {
         if (this.hosting.frozen) await this.hosting.retryPending();
@@ -1427,6 +1570,7 @@ export class TeamNetwork {
           this.state.state = "Join request declined";
           clearInterval(this.interval);
           this.pending = undefined;
+          this.saveSecret("pending-join", null);
         }
         if (result.state === "accepted") {
           const existing = this.store
@@ -1448,6 +1592,7 @@ export class TeamNetwork {
             cursor: 0,
           };
           this.pending = undefined;
+          this.saveSecret("pending-join", null);
           this.saveSession(this.session);
         }
       }
@@ -1456,11 +1601,43 @@ export class TeamNetwork {
         if (generation !== this.generation) return;
         const s = this.session;
         if (!s) return;
-        const outbox = this.store.db
+        const queuedRows = this.store.db
           .prepare(
-            "SELECT id,kind,data FROM outbox WHERE team_id=? ORDER BY rowid LIMIT 50",
+            "SELECT id,kind,data FROM outbox WHERE team_id=? ORDER BY CASE WHEN kind='receipts' THEN 1 ELSE 0 END,rowid LIMIT 50",
           )
           .all(s.teamId) as { id: string; kind: string; data: string }[];
+        // Passive delivery acknowledgements must not bury new chat/votes behind
+        // thousands of history receipts. Preserve order among substantive events.
+        const singles = queuedRows.filter((row) => {
+          if (row.kind !== "receipts") return false;
+          try {
+            const data = JSON.parse(row.data);
+            return (
+              Array.isArray(data.ids) &&
+              data.ids.length === 1 &&
+              typeof data.ids[0] === "string"
+            );
+          } catch {
+            return false;
+          }
+        });
+        const grouped = new Set(singles.map((row) => row.id));
+        const outbox: {
+          id: string;
+          kind: string;
+          data: string;
+          acknowledgedRows?: string[];
+        }[] = queuedRows.filter((row) => !grouped.has(row.id));
+        if (singles.length)
+          outbox.push({
+            ...singles[0],
+            data: JSON.stringify({
+              ids: [
+                ...new Set(singles.map((row) => JSON.parse(row.data).ids[0])),
+              ],
+            }),
+            acknowledgedRows: singles.map((row) => row.id),
+          });
         for (const row of outbox) {
           if (
             ![
@@ -1491,9 +1668,10 @@ export class TeamNetwork {
             if (status === 503) break; // Read the frozen host's relocation intent without dropping queued work.
             if (status === 400 || status === 403 || status === 409) {
               this.store.transaction(() => {
-                this.store.db
-                  .prepare("DELETE FROM outbox WHERE id=?")
-                  .run(row.id);
+                for (const id of row.acknowledgedRows ?? [row.id])
+                  this.store.db
+                    .prepare("DELETE FROM outbox WHERE id=?")
+                    .run(id);
                 this.store.notify(
                   s.teamId,
                   "A queued update needs your review",
@@ -1509,7 +1687,8 @@ export class TeamNetwork {
           }
           if (generation !== this.generation) return;
           this.store.transaction(() => {
-            this.store.db.prepare("DELETE FROM outbox WHERE id=?").run(row.id);
+            for (const id of row.acknowledgedRows ?? [row.id])
+              this.store.db.prepare("DELETE FROM outbox WHERE id=?").run(id);
             if (row.kind === "chat")
               this.store.db
                 .prepare("UPDATE messages SET data=? WHERE id=?")
@@ -1529,6 +1708,7 @@ export class TeamNetwork {
         );
         if (generation !== this.generation) return;
         const local = this.store.team(s.teamId);
+        catchingUp = result.more === true;
         this.store.transaction(() => {
           const pendingOwnerUpdate = this.store.db
             .prepare(
@@ -1612,7 +1792,14 @@ export class TeamNetwork {
         await this.hosting.clientTick(result.hostControl);
       }
       this.failures = 0;
-      this.nextAttempt = Date.now() + 1500;
+      // Keep bounded pages, but use the existing 250 ms scheduler while history
+      // remains. Ordinary idle polling and failure backoff are unchanged.
+      const queued =
+        this.session &&
+        this.store.db
+          .prepare("SELECT 1 FROM outbox WHERE team_id=? LIMIT 1")
+          .get(this.session.teamId);
+      this.nextAttempt = Date.now() + (catchingUp || queued ? 0 : 1500);
     } catch (error) {
       if (generation !== this.generation) return;
       this.state.state = `Offline · retrying: ${error instanceof Error ? error.message : "connection unavailable"}`;
@@ -1649,6 +1836,33 @@ export class TeamNetwork {
     teamId = this.store.setting<string | null>("activeTeamId", null),
   ) {
     this.close();
+    if (teamId && this.store.setting(`restored-offline:${teamId}`, false)) {
+      this.state.state =
+        "Recovered database is offline. Obtain a current invitation and explicitly reconnect before hosting.";
+      return;
+    }
+    const pending =
+      this.secret<NonNullable<TeamNetwork["pending"]>>("pending-join");
+    if (
+      pending &&
+      (!teamId || teamId === pending.teamId) &&
+      pending.createdAt &&
+      Date.now() - pending.createdAt < 600000
+    ) {
+      this.pending = pending;
+      this.state = {
+        role: "client",
+        state: "Resuming pending approval",
+        address: pending.address,
+        transport:
+          parseDirectInvite(pending.address) || parseInvite(pending.address)
+            ? "internet"
+            : "lan",
+      };
+      this.interval = setInterval(() => void this.tick(), 250);
+      await this.tick();
+      return;
+    }
     if (teamId) {
       if (await this.hosting.restoreDelegated(teamId)) return;
       if (await this.hosting.recover(teamId)) return;
@@ -1793,7 +2007,7 @@ export class TeamNetwork {
         )
           reject(
             new Error(
-              "The teammate host is unreachable or offline. Its router/ISP may block incoming connections. No external fallback is enabled.",
+              "The teammate host is unreachable or offline. If hosting moved, ask a connected teammate for the current full invitation. Its router/ISP may block incoming connections. No external fallback is enabled.",
             ),
           );
         else reject(error);
@@ -1841,6 +2055,7 @@ export class TeamNetwork {
         if (this.pending) {
           this.pending.address = move.address;
           this.pending.fingerprint = this.addressPin(move.address);
+          this.saveSecret("pending-join", this.pending);
         }
         const result = await this.call(
           move.address,
@@ -1889,6 +2104,7 @@ export class TeamNetwork {
   }
   disconnect() {
     this.close();
+    this.saveSecret("pending-join", null);
     this.store.set("network-session", null);
   }
 }

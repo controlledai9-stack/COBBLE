@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 export async function runSmoke(
   main: BrowserWindow,
   companion: BrowserWindow,
@@ -233,7 +234,7 @@ export async function runSmoke(
     }),
   });
   assert.equal(paired.status, 200);
-  await wait('/IDE (linked|connected)/.test(document.body.innerText)');
+  await wait("/IDE (linked|connected)/.test(document.body.innerText)");
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[2].click()`,
   );
@@ -255,7 +256,10 @@ export async function runSmoke(
     'document.body.innerText.includes("Verified project connections:") && document.body.innerText.includes("Second IDE")',
   );
   assert.equal(service.bridge.current.connections?.length, 2);
-  await writeFile(join(root, "smoke-ides.png"), (await main.webContents.capturePage()).toPNG());
+  await writeFile(
+    join(root, "smoke-ides.png"),
+    (await main.webContents.capturePage()).toPNG(),
+  );
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[0].click()`,
   );
@@ -292,6 +296,26 @@ export async function runSmoke(
     join(root, "smoke-plan.png"),
     (await main.webContents.capturePage()).toPNG(),
   );
+  const maintenance = await main.webContents.executeJavaScript(
+    "window.cobble.maintenance()",
+  );
+  assert.ok(maintenance.databaseBytes > 0);
+  assert.ok(maintenance.activities > 0);
+  const archive = join(root, `desktop-backup-${process.pid}.cobblebackup`);
+  const recovery = join(root, `desktop-recovered-${process.pid}.sqlite`);
+  await service.createBackup(archive);
+  await service.restoreBackupCopy(archive, recovery);
+  const recovered = new DatabaseSync(recovery, { readOnly: true });
+  try {
+    assert.equal(
+      recovered
+        .prepare("SELECT value FROM settings WHERE key=?")
+        .get(`restored-offline:${service.activeTeam()!.id}`)?.value,
+      "true",
+    );
+  } finally {
+    recovered.close();
+  }
   if (errors.length) throw new Error(`Renderer errors: ${errors.join("; ")}`);
   if (app.isPackaged) {
     const runtime = JSON.parse(

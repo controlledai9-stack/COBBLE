@@ -1,14 +1,14 @@
 # Cobble
 
-A local-first desktop workspace for a team's plan, saved code changes, and conversations. Development source 0.4.0 adds automatic selection of an eligible teammate laptop and safe live host handover to the existing internet transport, IDE discovery and Pebble fixes. The backend is implemented; the hosting panel remains assigned to Vyom in [the UI integration document](docs/VYOM-HOSTING-UI-INTEGRATION.md).
+A local-first desktop workspace for a team's plan, saved code changes, and conversations. Development source 0.4.1 adds refreshed-invitation recovery, improved conservative plan mapping, compatibility diagnostics, encrypted backup/offline recovery and local history maintenance to the existing safe-handover backend. See [backend delivery and UI contracts](docs/BACKEND-4-8-DELIVERY.md). The hosting panel remains assigned to Vyom in [the UI integration document](docs/VYOM-HOSTING-UI-INTEGRATION.md).
 
 ## Install the app
 
-The current local Windows x64 installer is `release/Cobble-Setup-0.4.0-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products. The installer has not been published to GitHub; see [0.4.0 build evidence and checksum](docs/RELEASE-0.4.0.md).
+The current local Windows x64 installer is `release/Cobble-Setup-0.4.1-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products. The installer has not been published to GitHub; see [0.4.1 build evidence and checksum](docs/RELEASE-0.4.1.md).
 
 This is an unsigned development installer. A clean Windows VM installation and real multi-device testing remain release checks; building the installer is not evidence those checks passed.
 
-The older 0.2.0 installer does not contain the current hosting, internet, IDE or drag/shutdown updates. Pulling Git source does not update an executable that was built earlier. Use the new 0.4.0 installer or rebuild current source, and confirm **Cobble 0.4.0** in the app window title or Profile settings. The hosting panel remains pending even in this installer. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
+The older installers do not contain all current backend changes. Pulling Git source does not update an executable that was built earlier. Use the new 0.4.1 installer or rebuild current source, and confirm **Cobble 0.4.1** in the app window title or Profile settings. The hosting/settings panels remain pending even in this installer. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
 
 ## Run from source (developers only)
 
@@ -105,10 +105,12 @@ npm run test:voice
 npm run test:packaged
 ```
 
-The 30 automated tests cover exact plans, conservative findings, agent authentication/configuration, canonical public shapes, safe reverts, actual bundled-Git merges, and five/eight logical-client workflows on one machine. The desktop smoke test uses an isolated profile under ignored `.cobble/`, exercises rendered profile/plan/work-area/completion/vote/chat/activity screens, performs a real approved merge, previews a revert, checks IDE authentication and companion poses, and saves screenshots there. It never seeds the user's real profile.
+The automated tests cover exact plans, conservative findings, agent authentication/configuration, canonical public shapes, safe reverts, actual bundled-Git merges, encrypted backup/offline recovery, refreshed invitations, receipt batching and five/eight logical-client workflows on one machine. The desktop smoke test uses an isolated profile under ignored `.cobble/`, exercises rendered profile/plan/work-area/completion/vote/chat/activity screens, performs a real approved merge, previews a revert, checks IDE authentication and companion poses, round-trips a backup through Windows secure storage and saves screenshots there. It never seeds the user's real profile.
+
+`npm run test:editors` checks actual installed editor CLIs and installs the included VSIX only in temporary profiles. `npm run diagnose:integrations` reports capabilities without launching editor windows. `npm run test:soak` exercises durable queues and repeated restarts; its duration/peer/history settings and measured results are in [the delivery report](docs/BACKEND-4-8-DELIVERY.md). These checks do not establish real agent-turn or cross-city compatibility.
 
 Still to validate/build: clean Windows installation, real microphone capture, real IDE/agent auto-install and event compatibility, real 5–8-device operation, richer local semantic matching, owner management UI, release signing, and detailed companion polish. The native IDE-window adapter is reserved for the teammate under [docs/GEMINI-HANDOFF.md](docs/GEMINI-HANDOFF.md); artwork is reserved for the artist. Logical IDE connection does not yet attach the companion to a native editor window.
 
 Architecture and implementation decisions are in [docs/architecture.md](docs/architecture.md). The product's target behavior is in [cobble-full-build-spec.md](cobble-full-build-spec.md).
 
-Current build evidence, installer checksum and a manual test walkthrough are in [docs/RELEASE-0.4.0.md](docs/RELEASE-0.4.0.md). The older [0.2.0 report](docs/RELEASE-0.2.0.md) is historical.
+Current build evidence and installer checksum are in [docs/RELEASE-0.4.1.md](docs/RELEASE-0.4.1.md). The [0.4.0 manual walkthrough](docs/RELEASE-0.4.0.md) remains useful for unchanged core workflows; older reports are historical.

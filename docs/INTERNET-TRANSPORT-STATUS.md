@@ -1,4 +1,4 @@
-# Internet transport and handover checkpoint — source 0.4.0
+# Internet transport and handover checkpoint — source 0.4.1
 
 User policy: teammate-hosted only; no paid hosting, provider account or automatic
 external relay. The creator hosts initially. A router/ISP can block connections;
@@ -33,14 +33,14 @@ stronger hardware does not create an inbound route.
 
 Backend state/actions are live. The hosting panel remains assigned to Vyom in
 `VYOM-HOSTING-UI-INTEGRATION.md`; it has not been integrated in this checkpoint.
-No mascot graphics or animations changed. Source version is 0.4.0. A local 0.4.0
-development installer now includes the backend and passed packaged workflow,
-companion, shutdown, voice and relay checks; see `RELEASE-0.4.0.md`. The hosting
-panel remains pending. No installer or public endpoint is published externally.
+No mascot graphics or animations changed. Source version is 0.4.1. The local
+development installer and verification record are described in `RELEASE-0.4.1.md`.
+The hosting/settings presentation remains pending. No installer or public
+endpoint is published externally.
 
 ## Verification
 
-- `npm run check`: typecheck, **101 tests** and production build passed.
+- `npm run check`: typecheck, **112 tests** and production build passed.
   Coverage includes multi-peer and successive-epoch handover, concurrent voting,
   lost acknowledgements, creator-offline continuity, restart, private filtering,
   unauthorized administration and actual Git integration after delegation.
@@ -65,7 +65,10 @@ an existing relay connection does not make a candidate eligible automatically.
 An unreachable network produces an honest blocked state with no external fallback.
 
 This is planned migration, not crash failover or a replicated quorum service.
-Offline pending invite holders may need a refreshed invite after an old endpoint
-closes. The local installer needs rebuilding after UI integration, plus clean-
+Offline members and pending applicants can explicitly submit a current
+certificate-bearing invite after an old endpoint closes, preserving credentials
+and queue IDs only after same-team verification. No global host directory is
+provided. See `BACKEND-4-8-DELIVERY.md` for 0.4.1 recovery, receipt batching and
+eight-peer stress results. The local installer needs rebuilding after UI integration, plus clean-
 Windows install/upgrade/uninstall verification. Local tests do not establish internet load,
 external security review or universal NAT traversal.

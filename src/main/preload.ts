@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopApi } from "../shared/types";
 const api: DesktopApi = {
+  integrationDiagnostics: () =>
+    ipcRenderer.invoke("cobble:integration-diagnostics"),
+  createBackup: () => ipcRenderer.invoke("cobble:create-backup"),
+  restoreBackupCopy: () => ipcRenderer.invoke("cobble:restore-backup-copy"),
+  maintenance: (days) => ipcRenderer.invoke("cobble:maintenance", days),
+  pruneLocalHistory: (days) =>
+    ipcRenderer.invoke("cobble:prune-local-history", days),
   state: () => ipcRenderer.invoke("cobble:state"),
   action: (action) => ipcRenderer.invoke("cobble:action", action),
   chooseWorkspace: () => ipcRenderer.invoke("cobble:choose"),

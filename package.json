@@ -1,6 +1,6 @@
 {
   "name": "cobble",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "license": "UNLICENSED",
   "author": "Cobble",
@@ -28,6 +28,9 @@
     "test:shutdown": "node scripts/test-shutdown.mjs",
     "test:packaged": "node scripts/test-packaged.mjs",
     "test:voice": "tsx scripts/test-voice.ts",
+    "test:editors": "tsx scripts/test-editor-compatibility.ts",
+    "diagnose:integrations": "tsx scripts/diagnose-integrations.ts",
+    "test:soak": "tsx scripts/soak-backend.ts",
     "verify:runtime": "node scripts/verify-runtime.mjs",
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
     "bundle:extension": "node scripts/package-extension.mjs",

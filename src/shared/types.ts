@@ -290,6 +290,7 @@ export type ExtendedAction =
   | Action
   | { type: "configureHosting"; allow: boolean; address?: string }
   | { type: "evaluateHosting" }
+  | { type: "refreshConnection"; address: string }
   | { type: "completeWork"; itemId: string; note: string }
   | { type: "proposeMain"; title: string; sourceRef: string }
   | { type: "voteMain"; proposalId: string; choice: "yes" | "no" }
@@ -314,7 +315,55 @@ export type ExtendedAction =
       text: string;
       expectedVersion: number;
     };
+export interface IntegrationDiagnostics {
+  checkedAt: string;
+  editors: {
+    name: string;
+    status:
+      | "detection-only"
+      | "extension-installed"
+      | "extension-missing"
+      | "probe-failed";
+    version?: string;
+    detail: string;
+  }[];
+  hooks: {
+    agent: "claude" | "cursor";
+    status:
+      | "no-workspace"
+      | "configured"
+      | "not-configured"
+      | "needs-repair"
+      | "check-failed";
+    detail: string;
+  }[];
+  bridge: { state: IdeStatus["state"]; editor?: string; agent?: string };
+  limitations: string[];
+}
 export interface DesktopApi {
+  integrationDiagnostics(): Promise<IntegrationDiagnostics>;
+  createBackup(): Promise<{
+    path: string;
+    bytes: number;
+    sameDeviceOnly: true;
+  } | null>;
+  restoreBackupCopy(): Promise<{ path: string; offline: true } | null>;
+  maintenance(
+    days?: number,
+  ): Promise<{
+    days: number;
+    cutoff: string;
+    databaseBytes: number;
+    activities: number;
+    messages: number;
+    queued: number;
+    revertBatches: number;
+    eligibleBatches: number;
+    eligibleBytes: number;
+  }>;
+  pruneLocalHistory(
+    days: number,
+  ): Promise<{ removedBatches: number; removedSourceBytes: number } | null>;
   state(): Promise<AppState>;
   action(action: ExtendedAction): Promise<AppState>;
   chooseWorkspace(): Promise<string | null>;

@@ -27,6 +27,7 @@ import { readFile, writeFile, rm } from "node:fs/promises";
 import type { ExtendedAction as Action, Tab, AppState } from "../shared/types";
 import { installAgentHooks } from "../core/agents";
 import { runRelay } from "../internet/cli";
+import { diagnoseIntegrations } from "./integration-diagnostics";
 let service: CobbleService;
 let main: BrowserWindow;
 let companion: BrowserWindow;
@@ -204,6 +205,57 @@ else {
           return callback(event, ...args);
         });
       handle("state", () => service.state());
+      handle("integration-diagnostics", async () =>
+        diagnoseIntegrations(
+          await discoverIdes({ signal: ideShutdown.signal }),
+          service.activeTeam()?.workspace,
+          service.bridge.current,
+        ),
+      );
+      handle("create-backup", async () => {
+        const selection = await dialog.showSaveDialog(main, {
+          title: "Save encrypted backup (this Windows account only)",
+          defaultPath: `Cobble-${new Date().toISOString().slice(0, 10)}.cobblebackup`,
+          filters: [
+            { name: "Encrypted Cobble backup", extensions: ["cobblebackup"] },
+          ],
+        });
+        if (selection.canceled || !selection.filePath) return null;
+        return service.createBackup(selection.filePath);
+      });
+      handle("restore-backup-copy", async () => {
+        const source = await dialog.showOpenDialog(main, {
+          title: "Choose an encrypted backup from this Windows account",
+          properties: ["openFile"],
+          filters: [
+            { name: "Encrypted Cobble backup", extensions: ["cobblebackup"] },
+          ],
+        });
+        if (source.canceled || !source.filePaths[0]) return null;
+        const target = await dialog.showSaveDialog(main, {
+          title:
+            "Save recovered offline database (current data stays unchanged)",
+          defaultPath: "Cobble-recovered.sqlite",
+          filters: [{ name: "Recovered database", extensions: ["sqlite"] }],
+        });
+        if (target.canceled || !target.filePath) return null;
+        return service.restoreBackupCopy(source.filePaths[0], target.filePath);
+      });
+      handle("maintenance", (_, days = 30) => service.maintenance(days));
+      handle("prune-local-history", async (_, days: number) => {
+        const summary = service.maintenance(days);
+        const choice = await dialog.showMessageBox(main, {
+          type: "warning",
+          title: "Remove old resolved revert snapshots?",
+          message: `Remove ${summary.eligibleBatches} resolved snapshots older than ${days} days?`,
+          detail:
+            "These changes will no longer be revertible through Cobble. Messages, plan history, unresolved changes, votes and queued work remain. Take an encrypted backup first if you need these snapshots.",
+          buttons: ["Cancel", "Remove resolved snapshots"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        return choice.response === 1 ? service.pruneLocalHistory(days) : null;
+      });
       const chosenFolders = new Set<string>();
       handle("action", async (_, action: Action) => {
         if (
