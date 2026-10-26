@@ -118,6 +118,22 @@ export class CobbleService extends EventEmitter {
     const team = this.activeTeam();
     const paused = this.store.setting("paused", false);
     return {
+      hosting: {
+        available: false,
+        phase: this.network.state.role === "local" ? "local" : "blocked",
+        hostId:
+          team?.hosting?.hostId ??
+          (this.network.state.role === "host"
+            ? (profile?.id ?? null)
+            : (team?.ownerId ?? null)),
+        epoch: team?.hosting?.epoch ?? 0,
+        automatic: false,
+        allowThisDevice: false,
+        advertisedAddress: "",
+        candidates: [],
+        reason:
+          "Automatic host selection is not available in this build. The current host is unchanged.",
+      },
       profile,
       teams: this.store.teams(),
       activeTeamId: team?.id ?? null,
@@ -335,6 +351,11 @@ export class CobbleService extends EventEmitter {
         "Finish the approved main integration before changing the team or its agreements",
       );
     switch (action.type) {
+      case "configureHosting":
+      case "evaluateHosting":
+        throw new Error(
+          "Automatic host selection is not available in this build",
+        );
       case "profile":
         this.store.saveProfile(
           action.name,

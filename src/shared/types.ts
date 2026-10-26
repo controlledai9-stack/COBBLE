@@ -29,6 +29,38 @@ export interface Team {
   workspace: string;
   createdAt: string;
   graph?: PlanGraph;
+  hosting?: { hostId: string; epoch: number; address: string };
+}
+export interface HostingCandidate {
+  memberId: string;
+  name: string;
+  cpuThreads: number;
+  memoryMB: number;
+  freeMemoryMB: number;
+  score: number;
+  willing: boolean;
+  reachable: boolean;
+  reason: string;
+  reportedAt: string;
+}
+export interface HostingState {
+  available: boolean;
+  phase:
+    | "local"
+    | "collecting"
+    | "evaluating"
+    | "preparing"
+    | "committing"
+    | "hosting"
+    | "following"
+    | "blocked";
+  hostId: string | null;
+  epoch: number;
+  automatic: boolean;
+  allowThisDevice: boolean;
+  advertisedAddress: string;
+  candidates: HostingCandidate[];
+  reason: string;
 }
 export interface ModulePlan {
   id: string;
@@ -188,6 +220,7 @@ export interface JoinRequest {
   createdAt: string;
 }
 export interface AppState {
+  hosting: HostingState;
   profile: Profile | null;
   teams: Team[];
   activeTeamId: string | null;
@@ -253,6 +286,8 @@ export type Action =
   | { type: "decideJoin"; requestId: string; accept: boolean };
 export type ExtendedAction =
   | Action
+  | { type: "configureHosting"; allow: boolean; address?: string }
+  | { type: "evaluateHosting" }
   | { type: "completeWork"; itemId: string; note: string }
   | { type: "proposeMain"; title: string; sourceRef: string }
   | { type: "voteMain"; proposalId: string; choice: "yes" | "no" }
