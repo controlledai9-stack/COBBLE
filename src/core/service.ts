@@ -21,6 +21,7 @@ import { Collaboration } from "./collaboration";
 import { notificationAudience } from "./notification-policy";
 import { gitFacts, integrateApproved } from "./git-main";
 import { agentContext } from "./agents";
+import { capacity } from "./host-capacity";
 import type {
   ExtendedAction,
   AppState,
@@ -44,6 +45,7 @@ export class CobbleService extends EventEmitter {
   private monitoringError?: string;
   gitBinary = "git";
   private integrating = false;
+  private integrationTask?: Promise<void>;
   private agentMessages = new Map<string, string>();
   private contextVersions = new Map<string, number>();
   constructor(
@@ -52,6 +54,7 @@ export class CobbleService extends EventEmitter {
       protect: (s: string) => string;
       unprotect: (s: string) => string;
     } = { protect: (s) => s, unprotect: (s) => s },
+    options: { measureCapacity?: typeof capacity } = {},
   ) {
     super();
     this.store = new Store(file);
@@ -98,6 +101,7 @@ export class CobbleService extends EventEmitter {
       },
       secrets.protect,
       secrets.unprotect,
+      options.measureCapacity,
     );
   }
   async start() {
@@ -118,22 +122,7 @@ export class CobbleService extends EventEmitter {
     const team = this.activeTeam();
     const paused = this.store.setting("paused", false);
     return {
-      hosting: {
-        available: false,
-        phase: this.network.state.role === "local" ? "local" : "blocked",
-        hostId:
-          team?.hosting?.hostId ??
-          (this.network.state.role === "host"
-            ? (profile?.id ?? null)
-            : (team?.ownerId ?? null)),
-        epoch: team?.hosting?.epoch ?? 0,
-        automatic: false,
-        allowThisDevice: false,
-        advertisedAddress: "",
-        candidates: [],
-        reason:
-          "Automatic host selection is not available in this build. The current host is unchanged.",
-      },
+      hosting: this.network.hosting.state(),
       profile,
       teams: this.store.teams(),
       activeTeamId: team?.id ?? null,
@@ -234,6 +223,7 @@ export class CobbleService extends EventEmitter {
   async observe(agent: AgentPayload | null = null): Promise<Activity | null> {
     if (
       this.closed ||
+      this.network.hosting.frozen ||
       this.integrating ||
       this.observing ||
       !this.observer ||
@@ -246,7 +236,12 @@ export class CobbleService extends EventEmitter {
       const observer = this.observer;
       const profile = this.store.profile();
       if (!team || !profile) return null;
+      const previousBaseline = observer.baseline;
       const changes = await observer.changes();
+      if (this.network.hosting.frozen) {
+        observer.baseline = previousBaseline;
+        return null;
+      }
       if (
         this.closed ||
         this.activeTeam()?.id !== team.id ||
@@ -332,6 +327,28 @@ export class CobbleService extends EventEmitter {
       typeof action.type !== "string"
     )
       throw new Error("Invalid action");
+    const beforeTeam = this.activeTeam();
+    if (
+      this.network.hosting.frozen &&
+      [
+        "createTeam",
+        "selectTeam",
+        "join",
+        "host",
+        "updatePlan",
+        "configureModule",
+        "captureContracts",
+        "amendFromActivity",
+        "revokeMember",
+        "rotateCode",
+        "decideJoin",
+        "configureHosting",
+        "evaluateHosting",
+      ].includes(action.type)
+    )
+      throw new Error(
+        "Host handover is in progress; wait for the acknowledged server",
+      );
     if (
       this.integrating &&
       [
@@ -345,6 +362,8 @@ export class CobbleService extends EventEmitter {
         "amendFromActivity",
         "revokeMember",
         "decideJoin",
+        "configureHosting",
+        "evaluateHosting",
       ].includes(action.type)
     )
       throw new Error(
@@ -352,10 +371,11 @@ export class CobbleService extends EventEmitter {
       );
     switch (action.type) {
       case "configureHosting":
+        await this.network.hosting.configure(action.allow, action.address);
+        break;
       case "evaluateHosting":
-        throw new Error(
-          "Automatic host selection is not available in this build",
-        );
+        await this.network.evaluateHosting();
+        break;
       case "profile":
         this.store.saveProfile(
           action.name,
@@ -437,11 +457,14 @@ export class CobbleService extends EventEmitter {
           sentVia: action.sentVia,
           createdAt: new Date().toISOString(),
           state:
-            this.network.state.role === "client"
+            this.network.state.role === "client" || this.network.hosting.frozen
               ? ("queued" as const)
               : ("local" as const),
         };
-        this.store.putMessage(message, this.network.state.role === "client");
+        this.store.putMessage(
+          message,
+          this.network.state.role === "client" || this.network.hosting.frozen,
+        );
         await this.network.publish("chat", message);
         break;
       }
@@ -582,10 +605,12 @@ export class CobbleService extends EventEmitter {
         break;
       }
       case "revokeMember":
-        this.network.revoke(action.memberId);
+        this.requireOwner();
+        await this.network.revoke(action.memberId);
         break;
       case "rotateCode":
-        this.network.rotateCode();
+        this.requireOwner();
+        await this.network.rotateCode();
         break;
       case "acknowledgeNotice":
         this.store.acknowledgeNotice(action.id);
@@ -668,11 +693,25 @@ export class CobbleService extends EventEmitter {
       case "decideJoin":
         if (typeof action.accept !== "boolean")
           throw new Error("Invalid decision");
-        this.network.decide(action.requestId, action.accept);
+        this.requireOwner();
+        await this.network.decide(action.requestId, action.accept);
         break;
       default:
         throw new Error("Unsupported action");
     }
+    const afterTeam = this.activeTeam();
+    if (
+      beforeTeam &&
+      afterTeam?.id === beforeTeam.id &&
+      afterTeam.ownerId === this.store.profile()?.id &&
+      [
+        "updatePlan",
+        "configureModule",
+        "captureContracts",
+        "amendFromActivity",
+      ].includes(action.type)
+    )
+      await this.network.publishOwnerTeam(beforeTeam, afterTeam);
     this.changed();
     return this.state();
   }
@@ -723,6 +762,19 @@ export class CobbleService extends EventEmitter {
     this.changed();
   }
   async integrateMain(proposalId: string) {
+    if (this.closed || this.network.hosting.frozen)
+      throw new Error("Wait for the team host to be ready");
+    if (this.integrationTask)
+      throw new Error("An integration is already in progress");
+    const task = this.performIntegration(proposalId);
+    this.integrationTask = task;
+    try {
+      await task;
+    } finally {
+      if (this.integrationTask === task) this.integrationTask = undefined;
+    }
+  }
+  private async performIntegration(proposalId: string) {
     if (this.integrating)
       throw new Error("An integration is already in progress");
     const team = this.requireOwner();
@@ -732,6 +784,7 @@ export class CobbleService extends EventEmitter {
     this.integrating = true;
     this.network.mainIntegrationActive = true;
     try {
+      await this.network.acquireMain(proposalId);
       const sha = await integrateApproved(
         team.workspace,
         proposal,
@@ -743,6 +796,7 @@ export class CobbleService extends EventEmitter {
         },
       );
       this.collaboration.integrated(proposalId, sha);
+      await this.network.publishIntegrated(proposalId, sha);
       this.changed();
     } catch (error) {
       if ((error as { code?: string }).code === "MAIN_MOVED") {
@@ -750,16 +804,24 @@ export class CobbleService extends EventEmitter {
           proposalId,
           error instanceof Error ? error.message : "Main changed",
         );
+        await this.network.publishStale(
+          proposalId,
+          error instanceof Error ? error.message : "Main changed",
+        );
         this.changed();
       }
       throw error;
     } finally {
-      this.integrating = false;
-      this.network.mainIntegrationActive = false;
+      try {
+        await this.network.releaseMain();
+      } finally {
+        this.integrating = false;
+        this.network.mainIntegrationActive = false;
+      }
     }
   }
   async bindWorkspace(path: string) {
-    if (this.closed || this.integrating)
+    if (this.closed || this.integrating || this.network.hosting.frozen)
       throw new Error(
         "Finish the approved main integration before changing the project folder",
       );
@@ -798,8 +860,10 @@ export class CobbleService extends EventEmitter {
     this.closed = true;
     clearTimeout(this.timer);
     await this.watcher?.close();
+    await Promise.allSettled([this.integrationTask]);
     this.bridge.close();
     this.network.close();
+    await this.network.hosting.settled();
     this.store.close();
   }
 }

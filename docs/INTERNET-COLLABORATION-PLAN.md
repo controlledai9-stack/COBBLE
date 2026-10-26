@@ -11,9 +11,10 @@
 - Use teammate-hosted connections only. When every candidate is unreachable
   because of its router/ISP, clearly report the blocked network. Do not use an
   external relay provider or enable paid fallback.
-- The relay implementation below is transport infrastructure that can run on a
-  reachable teammate laptop. It does **not** yet implement automatic election
-  and safe authoritative-state transfer. Do not call that requirement complete.
+- The relay implementation below runs on a reachable teammate laptop. Source
+  0.4.0 also implements automatic selection and safe authoritative-state transfer
+  in the backend. The hosting panel remains Vyom's separate assignment in
+  `VYOM-HOSTING-UI-INTEGRATION.md`; physical cross-city testing remains pending.
 
 ## Goal and cost constraint
 
@@ -40,7 +41,7 @@ operator deployment is separate from end-user installation.
    durable source of truth. The host must stay open for remote collaboration;
    host-independent cloud coordination/failover is a separate later design.
 3. Tunnel the existing certificate-pinned HTTPS protocol through the relay.
-   The TLS peer remains the team owner's Cobble instance. The relay cannot
+   The TLS peer remains the current team host's Cobble instance. The relay cannot
    decrypt the tunneled application traffic. The team host still reads team
    traffic, as in the existing trusted-host model. This does not claim secrecy
    from the team owner.
@@ -68,11 +69,11 @@ operator deployment is separate from end-user installation.
    wrong TLS pin, room isolation, bounded frames and shutdown.
 6. Run the full core/build/desktop checks, commit and push shared source.
 
-## Next phase: laptop selection and safe handover
+## Implemented backend phase: laptop selection and safe handover
 
 1. Start with the creator as the authoritative host, preserving current behavior.
 2. Collect bounded, local capacity summaries from approved teammates: available
-   CPU threads, memory headroom, online stability and willingness to host. Do not
+   CPU threads, memory headroom, online freshness and willingness to host. Do not
    collect unrelated processes, documents or credentials. Hardware alone must
    not win over a candidate that other members cannot reach.
 3. Probe a proposed host's authenticated endpoint from the relevant peers before
@@ -105,6 +106,8 @@ operator deployment is separate from end-user installation.
 ## Release boundary
 
 Implementation and local remote-style tests do not establish a live public
-service. Activation across cities requires an actual reachable relay deployment
-and a real separate-network test. Do not publish a placeholder URL, claim a
+service. Use across cities requires a directly reachable teammate or a teammate
+relay and a real separate-network test. Handover currently targets a directly
+reachable opted-in HTTPS candidate; all approved teammates must be online to
+probe and acknowledge the route. Do not publish a placeholder URL, claim a
 public service exists, enable paid infrastructure, or create a provider account.

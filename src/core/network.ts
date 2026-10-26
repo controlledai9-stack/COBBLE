@@ -6,11 +6,13 @@ import { networkInterfaces } from "node:os";
 import { generate } from "selfsigned";
 import type { Store } from "./store";
 import { equalSecret, json, readJson } from "./bridge";
-import { requiredText } from "./plan";
+import { requiredText, splitPlan, fingerprint } from "./plan";
 import { matchesPath as importPathMatches, moduleOwners } from "./graph";
 import { explicitPathConflict } from "./engine";
 import { notificationAudience } from "./notification-policy";
 import { Collaboration } from "./collaboration";
+import { HostCoordinator, type HostMove } from "./host-coordinator";
+import { capacity } from "./host-capacity";
 import type {
   AppState,
   ChatMessage,
@@ -37,6 +39,7 @@ interface Session {
   cursor: number;
 }
 export class TeamNetwork {
+  readonly hosting: HostCoordinator;
   private collaboration: Collaboration;
   server?: Server;
   state: AppState["network"] = {
@@ -62,13 +65,137 @@ export class TeamNetwork {
     requestId: string;
   };
   private rates = new Map<string, { at: number; count: number }>();
+  private redirectServers = new Set<Server>();
+  private localMainLock?: {
+    teamId: string;
+    proposalId: string;
+    lockId: string;
+  };
+  private resolvedEndpoints = new WeakMap<object, string>();
   constructor(
     private store: Store,
     private changed: () => void,
     private protect: (value: string) => string,
     private unprotect: (value: string) => string,
+    measure = capacity,
   ) {
     this.collaboration = new Collaboration(store);
+    this.hosting = new HostCoordinator(
+      store,
+      {
+        role: () => this.state.role,
+        address: () => this.state.address,
+        teamId: () => this.activeHostId ?? this.session?.teamId ?? null,
+        session: () => this.session,
+        mainBusy: () => this.mainIntegrationActive,
+        changed: () => this.changed(),
+        secret: <T>(key: string) => this.secret<T>(key),
+        save: (key, value) => this.saveSecret(key, value),
+        rpc: (address, path, method, body, token) =>
+          this.call(
+            address,
+            this.session?.address === address
+              ? this.session.fingerprint
+              : this.addressPin(address),
+            path,
+            method,
+            body,
+            token,
+          ),
+        activate: async (team) => {
+          await this.host(team, undefined, undefined, true);
+          if (!this.server?.listening)
+            throw new Error("Delegated host could not start");
+          const cert = this.secret<{ cert: string; private: string }>(
+            `host-certificate:${team.id}`,
+          )!;
+          const internal = directInvitation({
+            address: `https://127.0.0.1:${(this.server.address() as { port: number }).port}`,
+            certificate: cert.cert,
+            pin: new X509Certificate(cert.cert).fingerprint256
+              .replaceAll(":", "")
+              .toLowerCase(),
+          });
+          this.state.address = team.hosting!.address;
+          this.state.transport = "internet";
+          return internal;
+        },
+        follow: async (team, token) => {
+          const oldServer = this.server;
+          this.server = undefined;
+          this.close(true);
+          if (oldServer) this.redirectServers.add(oldServer);
+          this.session = {
+            address: team.hosting!.address,
+            fingerprint: this.addressPin(team.hosting!.address),
+            token,
+            teamId: team.id,
+            cursor: 0,
+          };
+          this.saveSession(this.session);
+          this.state = {
+            role: "client",
+            state: "Following the acknowledged team host",
+            address: this.session.address,
+            transport: "internet",
+          };
+          this.interval = setInterval(() => void this.tick(), 250);
+          await this.tick();
+        },
+        replay: () => this.replayHostQueue(),
+        rememberMove: (move) => {
+          this.validateMove(move);
+          this.saveSecret(`known-host-move:${move.teamId}`, move);
+        },
+        redirect: (move) => {
+          this.validateMove(move);
+          const session = this.session!;
+          session.address = move.address;
+          session.fingerprint = this.addressPin(move.address);
+          session.cursor = 0;
+          this.saveSession(session);
+          const team = this.store.team(move.teamId);
+          this.store.putTeam({
+            ...team,
+            hosting: {
+              hostId: move.targetId,
+              epoch: move.epoch,
+              address: move.address,
+            },
+          });
+          this.state.address = move.address;
+        },
+      },
+      measure,
+    );
+  }
+  private addressPin(address: string) {
+    const pin =
+      parseDirectInvite(address)?.pin ??
+      parseInvite(address)?.pin ??
+      new URL(address).hash.slice(1).toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(pin))
+      throw new Error("Pinned team endpoint required");
+    return pin;
+  }
+  private validateMove(move: HostMove) {
+    const session = this.session;
+    if (
+      !session ||
+      session.teamId !== move.teamId ||
+      typeof move.id !== "string" ||
+      !/^[a-f0-9-]{1,100}$/.test(move.id) ||
+      !/^[a-f0-9]{64}$/.test(move.digest) ||
+      !Number.isSafeInteger(move.epoch) ||
+      !parseDirectInvite(move.address)
+    )
+      throw new Error("Invalid host transition intent");
+    const team = this.store.team(session.teamId);
+    if (
+      move.epoch !== (team.hosting?.epoch ?? 0) + 1 ||
+      !this.store.members(team.id).some((m) => m.id === move.targetId)
+    )
+      throw new Error("Stale or unrelated host transition intent");
   }
   private saveSecret(key: string, value: unknown) {
     this.store.set(key, this.protect(JSON.stringify(value)));
@@ -81,7 +208,12 @@ export class TeamNetwork {
     this.saveSecret("network-session", session);
     this.saveSecret(`network-session:${session.teamId}`, session);
   }
-  async host(team: Team, relayUrl?: string, publicAddress?: string) {
+  async host(
+    team: Team,
+    relayUrl?: string,
+    publicAddress?: string,
+    internal = false,
+  ) {
     const relay = relayUrl ? relayOrigin(relayUrl) : undefined;
     const direct = publicAddress ? new URL(publicAddress) : undefined;
     if (direct && Number(direct.port || 443) < 1)
@@ -102,9 +234,8 @@ export class TeamNetwork {
       throw new Error(
         "Enter your reachable HTTPS origin and port without a path or credentials",
       );
-    if (team.ownerId !== this.store.profile()?.id)
-      throw new Error("Only the owner can host this team");
-    this.close();
+    this.hosting.assertCanHost(team);
+    this.close(internal);
     const generation = this.generation;
     const known = new Set(
       this.store.db
@@ -141,19 +272,56 @@ export class TeamNetwork {
         minVersion: "TLSv1.2",
       },
       async (req, res) => {
-        const readBody = async () => {
-          const body = await readJson(req);
+        let actorId: string | undefined;
+        const readBody = async (max?: number, handoverAck = false) => {
+          const body = await readJson(req, max);
           if (generation !== this.generation || res.destroyed)
             throw new Error("Team connection closed");
+          if (this.hosting.frozen && !handoverAck)
+            throw Object.assign(
+              new Error("Host handover in progress; retry queued work"),
+              { statusCode: 503 },
+            );
+          if (
+            actorId &&
+            (!this.store.members(team.id).some((m) => m.id === actorId) ||
+              !equalSecret(
+                req.headers.authorization?.replace(/^Bearer /, ""),
+                this.secret<string>(`member-token:${team.id}:${actorId}`) ?? "",
+              ))
+          )
+            throw Object.assign(new Error("Membership is no longer current"), {
+              statusCode: 401,
+            });
           return body;
         };
         try {
-          if (generation !== this.generation) return res.destroy();
+          if (generation !== this.generation) {
+            if (this.state.role !== "local") {
+              const current = this.store.team(team.id);
+              if (
+                current.hosting &&
+                current.hosting.epoch > (team.hosting?.epoch ?? 0)
+              )
+                return json(res, 200, {
+                  relocate: { ...current.hosting, teamId: current.id },
+                });
+            }
+            return res.destroy();
+          }
+          const url = new URL(req.url ?? "/", "https://localhost");
+          if (
+            this.hosting.frozen &&
+            !(req.method === "GET" && url.pathname === "/sync") &&
+            !(req.method === "POST" && url.pathname === "/hosting/intent-ack")
+          )
+            return json(res, 503, {
+              error: "Host handover in progress; retry queued work",
+            });
           if (req.headers.origin)
             return json(res, 403, {
               error: "Browser requests are not supported",
             });
-          const url = new URL(req.url ?? "/", "https://localhost");
           const teamNow = this.store.team(team.id);
           if (req.method === "POST" && url.pathname === "/join-request") {
             const ip = req.socket.remoteAddress ?? "unknown";
@@ -169,7 +337,7 @@ export class TeamNetwork {
             if (this.rates.size > 1024) this.rates.clear();
             this.rates.set(ip, rate);
             const body = await readBody();
-            if (!equalSecret(body.code, teamNow.code))
+            if (!equalSecret(body.code, this.store.team(team.id).code))
               return json(res, 403, { error: "Invalid join code" });
             requiredText(body.name, "Name", 80);
             requiredText(body.deviceId, "Device ID", 100);
@@ -229,16 +397,15 @@ export class TeamNetwork {
           const bearer = req.headers.authorization?.replace(/^Bearer /, "");
           const member = this.store
             .members(team.id)
-            .find(
-              (m) =>
-                m.role !== "owner" &&
-                equalSecret(
-                  bearer,
-                  this.secret<string>(`member-token:${team.id}:${m.id}`) ?? "",
-                ),
+            .find((m) =>
+              equalSecret(
+                bearer,
+                this.secret<string>(`member-token:${team.id}:${m.id}`) ?? "",
+              ),
             );
           if (!member)
             return json(res, 401, { error: "Approved membership required" });
+          actorId = member.id;
           if (req.method === "GET" && url.pathname === "/sync") {
             const since = Number(url.searchParams.get("since") ?? 0);
             if (!Number.isSafeInteger(since) || since < 0)
@@ -264,11 +431,42 @@ export class TeamNetwork {
               cursor: rows.at(-1)?.cursor ?? since,
               completions: this.collaboration.completions(team.id),
               proposals: this.collaboration.proposals(team.id),
+              hostControl: this.hosting.control(),
+              invites:
+                member.id === teamNow.ownerId
+                  ? this.store.invites(team.id)
+                  : [],
               membershipEpoch: this.store.setting(
                 `membershipEpoch:${team.id}`,
                 0,
               ),
             });
+          }
+          if (req.method === "POST" && url.pathname === "/hosting/report") {
+            this.hosting.receiveReport(member.id, await readBody());
+            return json(res, 200, { ok: true });
+          }
+          if (req.method === "POST" && url.pathname === "/hosting/intent-ack") {
+            this.hosting.acknowledgeIntent(
+              member.id,
+              await readBody(undefined, true),
+            );
+            return json(res, 200, { ok: true });
+          }
+          if (
+            req.method === "POST" &&
+            ["/owner-team", "/owner-admin"].includes(url.pathname)
+          ) {
+            if (member.id !== this.store.team(team.id).ownerId)
+              return json(res, 403, { error: "Team manager required" });
+            const body = await readBody(
+              url.pathname === "/owner-team" ? 1_000_000 : undefined,
+            );
+            if (url.pathname === "/owner-team")
+              this.applyOwnerTeam(team.id, body);
+            else await this.applyOwnerCommand(team.id, body);
+            this.changed();
+            return json(res, 200, { ok: true });
           }
           if (
             req.method === "POST" &&
@@ -297,10 +495,14 @@ export class TeamNetwork {
                   .run(message.id, team.id, JSON.stringify(message));
                 this.store.appendSync(team.id, "chat", message);
                 if (
-                  this.visible(message, teamNow.ownerId) &&
-                  message.senderId !== teamNow.ownerId
+                  this.visible(message, this.store.profile()!.id) &&
+                  message.senderId !== this.store.profile()!.id
                 )
-                  this.recordReceipt(team.id, message.id, teamNow.ownerId);
+                  this.recordReceipt(
+                    team.id,
+                    message.id,
+                    this.store.profile()!.id,
+                  );
               });
               this.changed();
             }
@@ -426,7 +628,7 @@ export class TeamNetwork {
           json(res, 404, { error: "Unknown route" });
         } catch (error) {
           if (generation !== this.generation || res.destroyed) return;
-          json(res, 400, {
+          json(res, (error as { statusCode?: number }).statusCode ?? 400, {
             error: error instanceof Error ? error.message : "Invalid request",
           });
         }
@@ -437,10 +639,16 @@ export class TeamNetwork {
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(
-        direct
-          ? Number(direct.port || 443)
-          : this.store.setting<number>(`host-port:${team.id}`, 0),
-        relay ? "127.0.0.1" : direct?.hostname.includes(":") ? "::" : "0.0.0.0",
+        internal
+          ? 0
+          : direct
+            ? Number(direct.port || 443)
+            : this.store.setting<number>(`host-port:${team.id}`, 0),
+        relay || internal
+          ? "127.0.0.1"
+          : direct?.hostname.includes(":")
+            ? "::"
+            : "0.0.0.0",
         resolve,
       );
     });
@@ -496,10 +704,349 @@ export class TeamNetwork {
         transport: "internet",
       };
     }
+    if (!internal) this.hosting.started(team.id);
+    this.mainIntegrationActive = !!this.store.setting(
+      `main-lock:${team.id}`,
+      null,
+    );
+    this.interval = setInterval(() => void this.tick(), 1500);
     this.changed();
   }
   private sharedTeam(team: Team): Team {
     return { ...team, workspace: "" };
+  }
+  private applyOwnerTeam(teamId: string, body: any) {
+    if (this.mainIntegrationActive)
+      throw Object.assign(
+        new Error("Main integration is active; queued update will retry"),
+        { statusCode: 503 },
+      );
+    const current = this.store.team(teamId),
+      next = body.team as Team;
+    if (
+      !next ||
+      next.id !== teamId ||
+      next.ownerId !== current.ownerId ||
+      next.workspace !== "" ||
+      typeof next.plan !== "string" ||
+      JSON.stringify(next.items) !== JSON.stringify(splitPlan(next.plan))
+    )
+      throw new Error("Invalid manager plan update");
+    const oldGraph = current.graph?.version ?? 0,
+      newGraph = next.graph?.version ?? 0;
+    const graphChanged =
+      JSON.stringify(current.graph) !== JSON.stringify(next.graph);
+    if (
+      current.version === next.version &&
+      current.plan === next.plan &&
+      !graphChanged &&
+      current.code === next.code
+    )
+      return;
+    if (
+      current.version !== body.expectedPlanVersion ||
+      oldGraph !== body.expectedGraphVersion ||
+      !Number.isSafeInteger(next.version) ||
+      next.version < current.version ||
+      next.version > current.version + 1 ||
+      (next.plan !== current.plan && next.version !== current.version + 1) ||
+      (graphChanged &&
+        (!Number.isSafeInteger(newGraph) ||
+          newGraph <= oldGraph ||
+          newGraph > oldGraph + (current.graph ? 1 : 2))) ||
+      next.code !== current.code
+    )
+      throw new Error(
+        "The shared agreements changed before this manager update",
+      );
+    this.store.putTeam({
+      ...next,
+      hosting: current.hosting,
+      workspace: current.workspace,
+      createdAt: current.createdAt,
+    });
+  }
+  private applyOwnerCommand(teamId: string, body: any) {
+    this.store.transaction(() => {
+      let eventKey: string | undefined;
+      if (body.id !== undefined) {
+        requiredText(body.id, "Manager event ID", 100);
+        const prefix = `manager:${body.id}:`;
+        eventKey = `${prefix}${fingerprint(body)}`;
+        const previous = this.store.db
+          .prepare(
+            "SELECT id FROM collaboration_events WHERE team_id=? AND substr(id,1,?)=?",
+          )
+          .get(teamId, prefix.length, prefix);
+        if (previous) {
+          if (previous.id !== eventKey)
+            throw new Error(
+              "Manager event ID already identifies another action",
+            );
+          return;
+        }
+      }
+      this.executeOwnerCommand(teamId, body);
+      if (eventKey)
+        this.store.db
+          .prepare("INSERT OR IGNORE INTO collaboration_events VALUES(?,?)")
+          .run(eventKey, teamId);
+    });
+  }
+  private executeOwnerCommand(teamId: string, body: any) {
+    const lock = this.store.setting<{
+      proposalId: string;
+      lockId: string;
+    } | null>(`main-lock:${teamId}`, null);
+    if (body.command === "integration-lock") {
+      requiredText(body.lockId, "Integration lease", 100);
+      if (body.active === true) {
+        const proposal = this.collaboration.proposal(body.proposalId);
+        if (
+          proposal.teamId !== teamId ||
+          proposal.status !== "approved" ||
+          (lock && lock.lockId !== body.lockId)
+        )
+          throw new Error(
+            "Current exact approval and an available integration lease are required",
+          );
+        this.store.set(`main-lock:${teamId}`, {
+          proposalId: body.proposalId,
+          lockId: body.lockId,
+        });
+        this.mainIntegrationActive = true;
+      } else if (body.active === false) {
+        if (lock?.lockId === body.lockId) {
+          this.store.set(`main-lock:${teamId}`, null);
+          this.mainIntegrationActive = false;
+        }
+      } else throw new Error("Invalid integration lease action");
+      return;
+    }
+    if (body.command === "integrated" || body.command === "stale-proposal") {
+      const proposal = this.collaboration.proposal(body.proposalId);
+      if (proposal.teamId !== teamId) throw new Error("Unrelated proposal");
+      if (body.command === "stale-proposal")
+        this.collaboration.stale(
+          proposal.id,
+          requiredText(body.reason, "Proposal revision reason", 2000),
+        );
+      else {
+        if (!/^[a-f0-9]{40,64}$/.test(body.sha))
+          throw new Error("Invalid integrated revision");
+        if (proposal.status === "integrated") {
+          if (proposal.integratedSha !== body.sha)
+            throw new Error("Integration already records another revision");
+        } else this.collaboration.integrated(proposal.id, body.sha);
+      }
+      if (lock?.lockId === body.lockId) {
+        this.store.set(`main-lock:${teamId}`, null);
+        this.mainIntegrationActive = false;
+      }
+      return;
+    }
+    if (this.mainIntegrationActive)
+      throw Object.assign(
+        new Error("Finish the active main integration first"),
+        { statusCode: 503 },
+      );
+    if (body.command === "ready") {
+      this.hosting.enable(teamId, false);
+      return;
+    }
+    if (body.command === "decide") {
+      if (typeof body.accept !== "boolean")
+        throw new Error("Invalid membership decision");
+      this.decideHere(body.requestId, body.accept, true);
+    } else if (body.command === "revoke") this.revokeHere(body.memberId, true);
+    else if (body.command === "rotate") this.rotateHere(true);
+    else throw new Error("Unsupported manager command");
+  }
+  private async queueOwner(body: Record<string, unknown>) {
+    const s = this.session;
+    if (!s || this.store.team(s.teamId).ownerId !== this.store.profile()?.id)
+      throw new Error("Reconnect the team manager to the current host");
+    const id = randomUUID();
+    this.store.db
+      .prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)")
+      .run(id, s.teamId, "owner-admin", JSON.stringify({ id, ...body }));
+    await this.tick();
+  }
+  async evaluateHosting() {
+    if (this.state.role === "client")
+      return this.queueOwner({ command: "ready" });
+    await this.hosting.ready();
+  }
+  async publishOwnerTeam(before: Team, next: Team) {
+    if (this.state.role !== "client") return;
+    if (next.ownerId !== this.store.profile()?.id || before.id !== next.id)
+      throw new Error("Manager authorization required");
+    const id = randomUUID();
+    this.store.db.prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)").run(
+      id,
+      next.id,
+      "owner-team",
+      JSON.stringify({
+        id,
+        expectedPlanVersion: before.version,
+        expectedGraphVersion: before.graph?.version ?? 0,
+        team: this.sharedTeam(next),
+      }),
+    );
+    await this.tick();
+  }
+  async acquireMain(proposalId: string) {
+    if (this.state.role !== "client") return;
+    const s = this.session!;
+    const lock = { teamId: s.teamId, proposalId, lockId: randomUUID() };
+    await this.call(
+      s.address,
+      s.fingerprint,
+      "/owner-admin",
+      "POST",
+      { command: "integration-lock", ...lock, active: true },
+      s.token,
+    );
+    this.localMainLock = lock;
+  }
+  async publishIntegrated(proposalId: string, sha: string) {
+    if (this.state.role === "client")
+      await this.criticalOwner({
+        command: "integrated",
+        proposalId,
+        sha,
+        lockId: this.localMainLock?.lockId,
+      });
+  }
+  async publishStale(proposalId: string, reason: string) {
+    if (this.state.role === "client")
+      await this.criticalOwner({
+        command: "stale-proposal",
+        proposalId,
+        reason,
+        lockId: this.localMainLock?.lockId,
+      });
+  }
+  async releaseMain() {
+    const lock = this.localMainLock;
+    this.localMainLock = undefined;
+    if (lock && this.session?.teamId === lock.teamId) {
+      const pending = this.store.db
+        .prepare(
+          "SELECT 1 FROM outbox WHERE team_id=? AND kind='owner-admin' AND json_extract(data,'$.lockId')=? AND json_extract(data,'$.command') IN ('integrated','stale-proposal')",
+        )
+        .get(lock.teamId, lock.lockId);
+      if (pending)
+        await this.queueOwner({
+          command: "integration-lock",
+          ...lock,
+          active: false,
+        });
+      else
+        await this.criticalOwner({
+          command: "integration-lock",
+          ...lock,
+          active: false,
+        });
+    }
+  }
+  private async criticalOwner(body: Record<string, unknown>) {
+    const s = this.session;
+    if (!s || this.store.team(s.teamId).ownerId !== this.store.profile()?.id)
+      throw new Error("Team manager connection required");
+    const id = randomUUID(),
+      data = { id, ...body };
+    this.store.db
+      .prepare("INSERT INTO outbox VALUES(?,?,?,?)")
+      .run(id, s.teamId, "owner-admin", JSON.stringify(data));
+    const generation = this.generation;
+    try {
+      await this.call(
+        s.address,
+        s.fingerprint,
+        "/owner-admin",
+        "POST",
+        data,
+        s.token,
+      );
+      if (generation === this.generation)
+        this.store.db.prepare("DELETE FROM outbox WHERE id=?").run(id);
+    } catch {
+      /* Keep durable order and the remote lease until the queued record is acknowledged. */
+    }
+  }
+  private async replayHostQueue() {
+    if (this.state.role !== "host" || !this.activeHostId) return;
+    const teamId = this.activeHostId,
+      me = this.store.profile()!.id;
+    const token = this.secret<string>(`member-token:${teamId}:${me}`)!;
+    const address = this.state.address!;
+    const rows = this.store.db
+      .prepare("SELECT id,kind,data FROM outbox WHERE team_id=? ORDER BY rowid")
+      .all(teamId) as unknown as { id: string; kind: string; data: string }[];
+    for (const row of rows) {
+      const body = JSON.parse(row.data);
+      try {
+        if (
+          ![
+            "chat",
+            "activity",
+            "work",
+            "proposal",
+            "ballot",
+            "decision",
+            "receipts",
+            "owner-team",
+            "owner-admin",
+          ].includes(row.kind)
+        )
+          throw Object.assign(new Error("Unsupported queued event"), {
+            statusCode: 400,
+          });
+        if (row.kind === "activity" || row.kind === "chat") {
+          const author =
+            row.kind === "activity" ? body.authorId : body.senderId;
+          if (author !== me || body.teamId !== teamId)
+            throw new Error("Queued work belongs to another actor");
+          const known = this.store.db
+            .prepare(
+              "SELECT 1 FROM sync_log WHERE team_id=? AND kind=? AND json_extract(data,'$.id')=?",
+            )
+            .get(teamId, row.kind, body.id);
+          if (row.kind === "chat") {
+            body.state = "sent";
+            this.store.db
+              .prepare("UPDATE messages SET data=? WHERE id=?")
+              .run(JSON.stringify(body), row.id);
+          }
+          if (!known) {
+            this.store.appendSync(teamId, row.kind, body);
+            if (row.kind === "activity")
+              this.routeChange(this.store.team(teamId), body);
+          }
+        } else
+          await this.call(
+            address,
+            this.addressPin(address),
+            `/${row.kind}`,
+            "POST",
+            body,
+            token,
+          );
+        this.store.db.prepare("DELETE FROM outbox WHERE id=?").run(row.id);
+      } catch (error) {
+        const status = (error as { statusCode?: number }).statusCode;
+        if (status && [400, 403, 409].includes(status)) {
+          this.store.db.prepare("DELETE FROM outbox WHERE id=?").run(row.id);
+          this.store.notify(
+            teamId,
+            "A queued update needs review",
+            error instanceof Error ? error.message : "Queued update rejected",
+            `rejected:${row.id}`,
+          );
+        } // transient failures remain queued for retry on the next host tick
+      }
+    }
   }
   private routeChange(
     team: Team,
@@ -601,8 +1148,9 @@ export class TeamNetwork {
       );
   }
   async publishDecision(activity: Activity) {
-    if (this.state.role === "host") this.routeDecision(activity);
-    else if (this.state.role === "client") {
+    if (this.state.role === "host" && !this.hosting.frozen)
+      this.routeDecision(activity);
+    else if (this.state.role === "client" || this.hosting.frozen) {
       this.store.db
         .prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)")
         .run(
@@ -614,7 +1162,12 @@ export class TeamNetwork {
       await this.tick();
     }
   }
-  revoke(memberId: string) {
+  async revoke(memberId: string, authorizedManager = false) {
+    if (this.state.role === "client" && !authorizedManager)
+      return this.queueOwner({ command: "revoke", memberId });
+    this.revokeHere(memberId, authorizedManager);
+  }
+  private revokeHere(memberId: string, authorizedManager = false) {
     if (this.mainIntegrationActive)
       throw new Error(
         "Finish the approved main integration before changing membership",
@@ -622,7 +1175,11 @@ export class TeamNetwork {
     const teamId =
       this.activeHostId ?? this.store.setting<string>("activeTeamId", "");
     const team = this.store.team(teamId);
-    if (team.ownerId !== this.store.profile()?.id || memberId === team.ownerId)
+    if (
+      (!authorizedManager && team.ownerId !== this.store.profile()?.id) ||
+      memberId === team.ownerId ||
+      !this.store.members(teamId).some((m) => m.id === memberId)
+    )
       throw new Error("Only the owner can remove another member");
     this.store.transaction(() => {
       this.store.set(
@@ -640,13 +1197,18 @@ export class TeamNetwork {
         this.store.set(`join-secret:${invite.id}`, null);
       }
     });
-    this.changed();
+    if (!authorizedManager) this.changed();
   }
-  rotateCode() {
+  async rotateCode(authorizedManager = false) {
+    if (this.state.role === "client" && !authorizedManager)
+      return this.queueOwner({ command: "rotate" });
+    this.rotateHere(authorizedManager);
+  }
+  private rotateHere(authorizedManager = false) {
     const teamId =
       this.activeHostId ?? this.store.setting<string>("activeTeamId", "");
     const team = this.store.team(teamId);
-    if (team.ownerId !== this.store.profile()?.id)
+    if (!authorizedManager && team.ownerId !== this.store.profile()?.id)
       throw new Error("Only the owner can rotate the join code");
     this.store.putTeam({
       ...team,
@@ -656,7 +1218,7 @@ export class TeamNetwork {
       .invites(teamId)
       .filter((i) => i.state === "pending"))
       this.store.putInvite(teamId, { ...invite, state: "declined" });
-    this.changed();
+    if (!authorizedManager) this.changed();
   }
   private visible(message: ChatMessage, memberId: string) {
     return (
@@ -715,16 +1277,22 @@ export class TeamNetwork {
       { code, name: profile.name, deviceId: profile.id },
     );
     if (generation !== this.generation) return;
+    const resolvedAddress =
+      this.resolvedEndpoints.get(result) ??
+      (internet || direct ? url.href : url.origin);
+    const resolvedPin = this.resolvedEndpoints.has(result)
+      ? this.addressPin(resolvedAddress)
+      : fingerprint;
     this.pending = {
-      address: internet || direct ? url.href : url.origin,
-      fingerprint,
+      address: resolvedAddress,
+      fingerprint: resolvedPin,
       secret: result.secret,
       requestId: result.requestId,
     };
     this.state = {
       role: "client",
       state: "Waiting for host approval",
-      address: internet || direct ? url.href : url.origin,
+      address: resolvedAddress,
       transport: internet || direct ? "internet" : "lan",
     };
     this.changed();
@@ -732,13 +1300,26 @@ export class TeamNetwork {
       void this.tick();
     }, 250);
   }
-  decide(requestId: string, accept: boolean) {
+  async decide(requestId: string, accept: boolean, authorizedManager = false) {
+    if (this.state.role === "client" && !authorizedManager)
+      return this.queueOwner({ command: "decide", requestId, accept });
+    this.decideHere(requestId, accept, authorizedManager);
+  }
+  private decideHere(
+    requestId: string,
+    accept: boolean,
+    authorizedManager = false,
+  ) {
+    if (typeof accept !== "boolean")
+      throw new Error("Invalid membership decision");
     if (this.mainIntegrationActive)
       throw new Error(
         "Finish the approved main integration before approving membership changes",
       );
     if (!this.activeHostId) throw new Error("Start hosting this team first");
     const team = this.store.team(this.activeHostId);
+    if (!authorizedManager && team.ownerId !== this.store.profile()?.id)
+      throw new Error("Only the manager can approve membership");
     const invite = this.store.invites(team.id).find((i) => i.id === requestId);
     if (!invite || invite.state !== "pending")
       throw new Error("Request is no longer pending");
@@ -770,15 +1351,15 @@ export class TeamNetwork {
         );
       }
     });
-    this.changed();
+    if (!authorizedManager) this.changed();
   }
   async publish(kind: "chat" | "activity", data: ChatMessage | Activity) {
-    if (this.state.role === "host") {
+    if (this.state.role === "host" && !this.hosting.frozen) {
       this.store.appendSync(data.teamId, kind, data);
       if (kind === "activity")
         this.routeChange(this.store.team(data.teamId), data as Activity);
     }
-    if (this.state.role === "client") {
+    if (this.state.role === "client" || this.hosting.frozen) {
       this.store.db
         .prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)")
         .run(data.id, data.teamId, kind, JSON.stringify(data));
@@ -800,11 +1381,11 @@ export class TeamNetwork {
     )
       throw new Error("Connect to this team host before sending an update");
     if (
-      this.state.role !== "client" &&
+      this.state.role === "local" &&
       this.store.team(body.teamId).ownerId !== actor.id
     )
       throw new Error("Reconnect to the team host before sending an update");
-    if (this.state.role === "client") {
+    if (this.state.role === "client" || this.hosting.frozen) {
       this.store.db
         .prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)")
         .run(body.id, body.teamId, kind, JSON.stringify(body));
@@ -827,6 +1408,11 @@ export class TeamNetwork {
     const generation = this.generation;
     this.busyGeneration = generation;
     try {
+      if (this.state.role === "host") {
+        if (this.hosting.frozen) await this.hosting.retryPending();
+        else await this.replayHostQueue();
+        return;
+      }
       if (this.pending) {
         const p = this.pending;
         const result = await this.call(
@@ -866,7 +1452,10 @@ export class TeamNetwork {
         }
       }
       if (this.session) {
+        await this.hosting.checkMove();
+        if (generation !== this.generation) return;
         const s = this.session;
+        if (!s) return;
         const outbox = this.store.db
           .prepare(
             "SELECT id,kind,data FROM outbox WHERE team_id=? ORDER BY rowid LIMIT 50",
@@ -882,6 +1471,8 @@ export class TeamNetwork {
               "work",
               "proposal",
               "ballot",
+              "owner-team",
+              "owner-admin",
             ].includes(row.kind)
           )
             throw new Error("Invalid queued event type");
@@ -897,7 +1488,8 @@ export class TeamNetwork {
           } catch (error) {
             if (generation !== this.generation) return;
             const status = (error as { statusCode?: number }).statusCode;
-            if (status === 400 || status === 409) {
+            if (status === 503) break; // Read the frozen host's relocation intent without dropping queued work.
+            if (status === 400 || status === 403 || status === 409) {
               this.store.transaction(() => {
                 this.store.db
                   .prepare("DELETE FROM outbox WHERE id=?")
@@ -938,12 +1530,21 @@ export class TeamNetwork {
         if (generation !== this.generation) return;
         const local = this.store.team(s.teamId);
         this.store.transaction(() => {
-          this.store.putTeam({ ...result.team, workspace: local.workspace });
+          const pendingOwnerUpdate = this.store.db
+            .prepare(
+              "SELECT 1 FROM outbox WHERE team_id=? AND kind='owner-team'",
+            )
+            .get(s.teamId);
+          if (!pendingOwnerUpdate)
+            this.store.putTeam({ ...result.team, workspace: local.workspace });
           this.store.replaceMembers(s.teamId, result.members);
           this.store.set(
             `membershipEpoch:${s.teamId}`,
             result.membershipEpoch ?? 0,
           );
+          if (this.store.profile()?.id === result.team.ownerId)
+            for (const invite of result.invites ?? [])
+              this.store.putInvite(s.teamId, invite);
           for (const event of result.events) {
             const data = JSON.parse(event.data);
             if (event.kind === "chat") {
@@ -1008,6 +1609,7 @@ export class TeamNetwork {
           this.saveSession(s);
         });
         this.state.state = "Connected to host";
+        await this.hosting.clientTick(result.hostControl);
       }
       this.failures = 0;
       this.nextAttempt = Date.now() + 1500;
@@ -1046,11 +1648,15 @@ export class TeamNetwork {
   async resume(
     teamId = this.store.setting<string | null>("activeTeamId", null),
   ) {
+    this.close();
+    if (teamId) {
+      if (await this.hosting.restoreDelegated(teamId)) return;
+      if (await this.hosting.recover(teamId)) return;
+    }
     const saved = teamId
       ? (this.secret<Session>(`network-session:${teamId}`) ??
         this.secret<Session>("network-session"))
       : this.secret<Session>("network-session");
-    this.close();
     this.session = saved && (!teamId || saved.teamId === teamId) ? saved : null;
     if (this.session) {
       this.state = {
@@ -1076,7 +1682,10 @@ export class TeamNetwork {
     method: string,
     body?: unknown,
     token?: string,
+    redirects = 0,
   ): Promise<any> {
+    if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\"))
+      throw new Error("A workspace protocol path is required");
     const generation = this.generation;
     const internet = parseInvite(address);
     const direct = parseDirectInvite(address);
@@ -1189,10 +1798,76 @@ export class TeamNetwork {
           );
         else reject(error);
       });
-    }).finally(() => relayAgent?.destroy());
+    })
+      .finally(() => relayAgent?.destroy())
+      .then(async (value: any) => {
+        if (!value || typeof value !== "object")
+          throw new Error("Invalid host response");
+        if (!value.relocate) return value;
+        if (generation !== this.generation)
+          throw new Error("Team connection closed");
+        const move = value.relocate;
+        if (
+          redirects >= 4 ||
+          !Number.isSafeInteger(move.epoch) ||
+          move.epoch < 1 ||
+          !parseDirectInvite(move.address) ||
+          move.address === address
+        )
+          throw new Error("Invalid or cyclic host relocation");
+        const s = this.session;
+        if (s) {
+          const team = this.store.team(s.teamId);
+          if (
+            move.teamId !== team.id ||
+            move.epoch < (team.hosting?.epoch ?? 0) ||
+            !this.store.members(team.id).some((m) => m.id === move.hostId)
+          )
+            throw new Error("Unrelated or stale host relocation");
+          s.address = move.address;
+          s.fingerprint = this.addressPin(move.address);
+          s.cursor = 0;
+          this.saveSession(s);
+          this.store.putTeam({
+            ...team,
+            hosting: {
+              hostId: move.hostId,
+              epoch: move.epoch,
+              address: move.address,
+            },
+          });
+          this.state.address = move.address;
+        }
+        if (this.pending) {
+          this.pending.address = move.address;
+          this.pending.fingerprint = this.addressPin(move.address);
+        }
+        const result = await this.call(
+          move.address,
+          this.addressPin(move.address),
+          path,
+          method,
+          body,
+          token,
+          redirects + 1,
+        );
+        this.resolvedEndpoints.set(
+          result,
+          this.resolvedEndpoints.get(result) ?? move.address,
+        );
+        return result;
+      });
   }
-  close() {
+  close(preserveHosting = false) {
     this.generation++;
+    this.hosting.close(preserveHosting);
+    if (!preserveHosting) {
+      for (const server of this.redirectServers) {
+        server.close();
+        server.closeAllConnections();
+      }
+      this.redirectServers.clear();
+    }
     this.connectionAbort.abort();
     this.connectionAbort = new AbortController();
     this.relayHost?.close();

@@ -44,6 +44,8 @@ export interface HostingCandidate {
   reportedAt: string;
 }
 export interface HostingState {
+  /** Present on the live backend; shared writes are temporarily queued. */
+  fenced?: boolean;
   available: boolean;
   phase:
     | "local"

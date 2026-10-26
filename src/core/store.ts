@@ -15,6 +15,7 @@ import type {
 
 export class Store {
   readonly db: DatabaseSync;
+  private transactionDepth = 0;
   constructor(file: string) {
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
@@ -40,14 +41,25 @@ export class Store {
       INSERT OR IGNORE INTO migrations VALUES(2);`);
   }
   transaction<T>(fn: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE");
+    const nested = this.transactionDepth > 0;
+    const savepoint = `cobble_transaction_${this.transactionDepth}`;
+    this.db.exec(nested ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
+    this.transactionDepth++;
     try {
       const result = fn();
-      this.db.exec("COMMIT");
+      if (result instanceof Promise)
+        throw new Error("Database transactions require synchronous callbacks");
+      this.db.exec(nested ? `RELEASE SAVEPOINT ${savepoint}` : "COMMIT");
       return result;
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      this.db.exec(
+        nested
+          ? `ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint}`
+          : "ROLLBACK",
+      );
       throw error;
+    } finally {
+      this.transactionDepth--;
     }
   }
   setting<T>(key: string, fallback: T): T {
