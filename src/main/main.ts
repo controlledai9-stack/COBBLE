@@ -31,6 +31,9 @@ import { diagnoseIntegrations } from "./integration-diagnostics";
 let service: CobbleService;
 let main: BrowserWindow;
 let companion: BrowserWindow;
+let chatWindow: BrowserWindow | null = null;
+let chatWindowMinimized = false;
+let savedChatBounds = { width: 380, height: 520, x: 0, y: 0 };
 let tray: Tray;
 let quitting = false;
 let shutdownComplete = false;
@@ -168,7 +171,8 @@ else {
       const renderer = pathToFileURL(
         join(__dirname, "../renderer/index.html"),
       ).href;
-      for (const win of [main, companion]) {
+      const allWindows = [main, companion, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow] : [])];
+        for (const win of allWindows) {
         win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
         win.webContents.on("will-navigate", (event) => event.preventDefault());
         win.webContents.on("will-attach-webview", (event) =>
@@ -179,7 +183,7 @@ else {
         (webContents, permission, callback, details) =>
           callback(
             permission === "media" &&
-              [main.webContents, companion.webContents].includes(webContents) &&
+              [main.webContents, companion.webContents, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow.webContents] : [])].includes(webContents) &&
               "mediaTypes" in details &&
               !!details.mediaTypes?.includes("audio") &&
               !details.mediaTypes.includes("video"),
@@ -187,7 +191,7 @@ else {
       );
       const allowed = (event: Electron.IpcMainInvokeEvent) => {
         if (
-          ![main.webContents, companion.webContents].includes(event.sender) ||
+          ![main.webContents, companion.webContents, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow.webContents] : [])].includes(event.sender) ||
           event.senderFrame !== event.sender.mainFrame
         )
           throw new Error("Untrusted app frame");
@@ -450,8 +454,120 @@ else {
         main.webContents.send("cobble:navigate", tab, voice && tab === "Chats");
         machine.interact();
       });
-      handle(
-        "companion",
+      
+      const getChatWindow = () => {
+        if (chatWindow && !chatWindow.isDestroyed()) return chatWindow;
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const workArea = primaryDisplay.workArea;
+        const w = 380;
+        const h = 520;
+        const x = workArea.x + workArea.width - w - 24;
+        const y = workArea.y + workArea.height - h - 24;
+
+        chatWindow = new BrowserWindow({
+          width: w,
+          height: h,
+          x,
+          y,
+          frame: false,
+          transparent: true,
+          resizable: true,
+          minWidth: 320,
+          minHeight: 400,
+          skipTaskbar: false,
+          alwaysOnTop: true,
+          show: false,
+          webPreferences: { ...options, backgroundThrottling: false },
+        });
+
+        savedChatBounds = chatWindow.getBounds();
+
+        chatWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+        chatWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+        chatWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+
+        const chatUrl = `${devUrl ?? renderer}?view=mini-chat`;
+        void chatWindow.loadURL(chatUrl);
+
+        chatWindow.on("close", (event) => {
+          if (!quitting && !shutdownComplete) {
+            event.preventDefault();
+            chatWindow?.hide();
+          }
+        });
+
+        return chatWindow;
+      };
+
+      handle("chat-window", (_, command: string) => {
+        const win = getChatWindow();
+        if (command === "show") {
+          if (chatWindowMinimized) {
+            win.setResizable(true);
+            win.setBounds(savedChatBounds);
+            chatWindowMinimized = false;
+            win.webContents.send("cobble:chat-window-state", { minimized: false });
+          }
+          win.show();
+          win.focus();
+          return { visible: true, minimized: false };
+        } else if (command === "hide") {
+          win.hide();
+          return { visible: false, minimized: chatWindowMinimized };
+        } else if (command === "toggle") {
+          if (win.isVisible()) {
+            win.hide();
+            return { visible: false, minimized: chatWindowMinimized };
+          } else {
+            if (chatWindowMinimized) {
+              win.setResizable(true);
+              win.setBounds(savedChatBounds);
+              chatWindowMinimized = false;
+              win.webContents.send("cobble:chat-window-state", { minimized: false });
+            }
+            win.show();
+            win.focus();
+            return { visible: true, minimized: false };
+          }
+        } else if (command === "minimize") {
+          if (!chatWindowMinimized) {
+            savedChatBounds = win.getBounds();
+            const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
+            win.setResizable(false);
+            win.setBounds({
+              x: workArea.x + workArea.width - 290,
+              y: workArea.y + workArea.height - 54,
+              width: 270,
+              height: 44,
+            });
+            chatWindowMinimized = true;
+            win.webContents.send("cobble:chat-window-state", { minimized: true });
+          }
+          return { visible: true, minimized: true };
+        } else if (command === "restore") {
+          if (chatWindowMinimized) {
+            win.setResizable(true);
+            win.setBounds(savedChatBounds);
+            chatWindowMinimized = false;
+            win.webContents.send("cobble:chat-window-state", { minimized: false });
+          }
+          win.focus();
+          return { visible: true, minimized: false };
+        } else if (command === "redirect") {
+          if (!smoke) {
+            main.show();
+            main.focus();
+          }
+          main.webContents.send("cobble:navigate", "Chats", false);
+          win.hide();
+          return { visible: false, minimized: chatWindowMinimized };
+        } else if (command === "status") {
+          return { visible: win.isVisible(), minimized: chatWindowMinimized };
+        }
+        throw new Error("Unknown chat window command");
+      });
+
+      handle("companion",
         (_, command: string, point?: { x: number; y: number }) => {
           // Renderer hit points are local CSS coordinates, never screen deltas.
           // Convert page zoom to the DIP coordinates used by Electron windows.
@@ -546,7 +662,7 @@ else {
         void syncPairing().catch((error) =>
           console.error("IDE pairing refresh failed", error),
         );
-        for (const win of [main, companion])
+        for (const win of [main, companion, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow] : [])])
           if (!win.isDestroyed()) win.webContents.send("cobble:changed", state);
       });
       service.on("diagnostic", (message) => console.error("[Cobble]", message));

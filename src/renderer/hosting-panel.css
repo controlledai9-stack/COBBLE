@@ -1,0 +1,890 @@
+/**
+ * Cobble Hosting Panel Styles
+ * Cyber Periwinkle & Radiant Amber Blueprint Theme
+ * Strict WCAG AA Accessibility, Focus Rings, and Layout Controls
+ */
+
+.cobble-hosting-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 24px;
+  border-top: 1px solid var(--border, #232C4F);
+  padding-top: 24px;
+  color: var(--text, #F8FAFC);
+  font-family: inherit;
+}
+
+/* Header & Badges */
+.cobble-hosting-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cobble-hosting-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cobble-hosting-pill {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.cobble-pill-blueprint {
+  background: rgba(124, 113, 216, 0.15);
+  color: var(--periwinkle-light, #9B91F0);
+  border: 1px solid rgba(124, 113, 216, 0.35);
+}
+
+.cobble-pill-neutral {
+  background: #19203B;
+  color: #94A3B8;
+  border: 1px solid #232C4F;
+}
+
+.cobble-pill-info {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38BDF8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.cobble-pill-warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: #F59E0B;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.cobble-pill-active {
+  background: rgba(245, 158, 11, 0.2);
+  color: #FBBF24;
+  border: 1px solid #F59E0B;
+  animation: cobble-pulse 2s infinite ease-in-out;
+}
+
+.cobble-pill-success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.cobble-pill-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #F87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.cobble-hosting-title-group h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text, #F8FAFC);
+  margin: 4px 0 2px 0;
+}
+
+.cobble-hosting-subtitle {
+  font-size: 13px;
+  color: var(--muted, #94A3B8);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Card Base */
+.cobble-hosting-card {
+  background: var(--surface, #12172B);
+  border: 1px solid var(--border, #232C4F);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  transition: border-color 0.18s ease;
+}
+
+.cobble-hosting-card:hover {
+  border-color: #2D3763;
+}
+
+.cobble-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #F1F5F9;
+  margin: 0 0 6px 0;
+}
+
+.cobble-card-desc {
+  font-size: 12px;
+  color: var(--muted, #94A3B8);
+  margin: 0 0 16px 0;
+  line-height: 1.55;
+}
+
+/* Authority Grid (Host vs Manager Split) */
+.cobble-hosting-authority-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.cobble-authority-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: linear-gradient(180deg, #161D36 0%, #12172B 100%);
+  border: 1px solid #232C4F;
+  border-left: 3px solid var(--periwinkle, #7C71D8);
+}
+
+.cobble-authority-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cobble-authority-type {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--periwinkle-light, #9B91F0);
+}
+
+.cobble-authority-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #FFFFFF;
+  word-break: break-all;
+}
+
+.cobble-authority-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #CBD5E1;
+}
+
+.cobble-detail-label {
+  color: #94A3B8;
+  font-weight: 600;
+}
+
+.cobble-detail-item code {
+  background: #0E1326;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #FBBF24;
+  font-size: 11px;
+  border: 1px solid #232C4F;
+}
+
+.cobble-authority-footnote {
+  font-size: 11px;
+  color: #64748B;
+  margin: 4px 0 0 0;
+  font-style: italic;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 8px;
+}
+
+/* Tags */
+.cobble-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  display: inline-block;
+}
+
+.cobble-tag-amber {
+  background: rgba(245, 158, 11, 0.18);
+  color: #F59E0B;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.cobble-tag-periwinkle {
+  background: rgba(124, 113, 216, 0.2);
+  color: #9B91F0;
+  border: 1px solid rgba(124, 113, 216, 0.4);
+}
+
+.cobble-tag-muted {
+  background: #19203B;
+  color: #94A3B8;
+  border: 1px solid #232C4F;
+}
+
+/* Alert Banners */
+.cobble-hosting-alert-banner {
+  display: flex;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 10px;
+  align-items: flex-start;
+}
+
+.cobble-alert-warning {
+  background: #2A1D0B;
+  border: 1px solid #854D0E;
+  color: #FEF3C7;
+}
+
+.cobble-alert-warning strong {
+  color: #F59E0B;
+  display: block;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.cobble-alert-warning p {
+  color: #FDE68A;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.cobble-alert-transferring {
+  background: #141B33;
+  border: 1px solid var(--periwinkle, #7C71D8);
+  color: #F1F5F9;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cobble-transfer-progress-rail {
+  width: 100%;
+  height: 4px;
+  background: rgba(124, 113, 216, 0.2);
+  border-radius: 9999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.cobble-transfer-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, #7C71D8, #F59E0B);
+  border-radius: 9999px;
+  animation: cobble-progress-indeterminate 1.8s infinite ease-in-out;
+}
+
+/* Status Box */
+.cobble-hosting-status-box {
+  border-radius: 10px;
+  padding: 14px 18px;
+  border: 1px solid #232C4F;
+  background: #0E1326;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cobble-status-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cobble-status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #94A3B8;
+  display: inline-block;
+}
+
+.cobble-status-neutral .cobble-status-indicator { background: #94A3B8; }
+.cobble-status-info .cobble-status-indicator { background: #38BDF8; box-shadow: 0 0 8px rgba(56, 189, 248, 0.5); }
+.cobble-status-warning .cobble-status-indicator { background: #F59E0B; box-shadow: 0 0 8px rgba(245, 158, 11, 0.5); }
+.cobble-status-active .cobble-status-indicator { background: #FBBF24; animation: cobble-pulse 1.5s infinite; }
+.cobble-status-success .cobble-status-indicator { background: #10B981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.5); }
+.cobble-status-danger .cobble-status-indicator { background: #EF4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
+
+.cobble-status-phase-label {
+  font-size: 13px;
+  color: #CBD5E1;
+}
+
+.cobble-status-phase-label strong {
+  color: #FFFFFF;
+}
+
+.cobble-status-epoch {
+  margin-left: auto;
+  font-size: 11px;
+  color: #64748B;
+  font-family: monospace;
+}
+
+.cobble-status-reason {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94A3B8;
+}
+
+.cobble-status-reason strong {
+  color: #CBD5E1;
+}
+
+/* Feedback Alert */
+.cobble-hosting-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cobble-feedback-success {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid #10B981;
+  color: #A7F3D0;
+}
+
+.cobble-feedback-error {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid #EF4444;
+  color: #FECACA;
+}
+
+.cobble-feedback-info {
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid #38BDF8;
+  color: #BAE6FD;
+}
+
+.cobble-feedback-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.cobble-feedback-dismiss:hover {
+  background: none;
+  transform: none;
+  box-shadow: none;
+  opacity: 0.8;
+}
+
+/* Candidacy Fieldset & Disclosures */
+.cobble-hosting-fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cobble-disclosure-box {
+  background: #0E1326;
+  border: 1px solid #1E2749;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cobble-disclosure-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.cobble-disclosure-icon {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.cobble-disclosure-item p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94A3B8;
+}
+
+.cobble-disclosure-item strong {
+  color: #E2E8F0;
+}
+
+/* Checkbox & Input */
+.cobble-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cobble-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  margin: 0;
+}
+
+.cobble-checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--accent, #F59E0B);
+  flex-shrink: 0;
+}
+
+.cobble-checkbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cobble-checkbox-text strong {
+  font-size: 13px;
+  color: #F8FAFC;
+}
+
+.cobble-input-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #CBD5E1;
+  margin: 0;
+}
+
+.cobble-input-text {
+  background: #0A0E1A;
+  border: 1px solid #232C4F;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #F8FAFC;
+  width: 100%;
+}
+
+.cobble-input-text:focus-visible {
+  outline: 2px solid var(--accent, #F59E0B);
+  outline-offset: 2px;
+  border-color: #F59E0B;
+}
+
+.cobble-input-hint {
+  font-size: 11px;
+  color: #64748B;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.cobble-host-locked-note {
+  font-size: 12px;
+  color: #F59E0B;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0;
+}
+
+.cobble-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
+.cobble-button-primary {
+  background: var(--accent, #F59E0B);
+  color: #0A0E1A;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 10px 18px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cobble-button-primary:hover:not(:disabled) {
+  background: var(--accent-hover, #D97706);
+  transform: translateY(-1px);
+}
+
+.cobble-button-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Manager Section */
+.cobble-manager-card {
+  border-top: 3px solid var(--accent, #F59E0B);
+}
+
+.cobble-manager-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cobble-button-accent {
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+  color: #0A0E1A;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3);
+  transition: all 0.15s ease;
+}
+
+.cobble-button-accent:hover:not(:disabled) {
+  filter: brightness(1.08);
+  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.45);
+  transform: translateY(-1px);
+}
+
+.cobble-button-accent:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.cobble-manager-rules-text {
+  font-size: 11px;
+  color: #94A3B8;
+  margin: 8px 0 0 0;
+  line-height: 1.5;
+}
+
+.cobble-manager-restricted-box {
+  background: #0E1326;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.cobble-manager-restricted-box p {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* Candidates Grid */
+.cobble-candidates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.cobble-candidate-item {
+  background: #0E1326;
+  border: 1px solid #1E2749;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.cobble-candidate-item:hover {
+  border-color: #2D3A6E;
+  background: #11172E;
+}
+
+.cobble-candidate-current-host {
+  border-color: var(--accent, #F59E0B);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.3);
+}
+
+.cobble-candidate-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cobble-candidate-name-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cobble-candidate-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cobble-inline-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(124, 113, 216, 0.25);
+  color: #9B91F0;
+  border: 1px solid rgba(124, 113, 216, 0.4);
+}
+
+.cobble-candidate-host-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: #F59E0B;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cobble-candidate-score-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  background: #161D36;
+  border: 1px solid #232C4F;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.cobble-candidate-score-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748B;
+  font-weight: 700;
+}
+
+.cobble-candidate-score-val {
+  font-size: 14px;
+  font-weight: 800;
+  color: #FBBF24;
+}
+
+.cobble-candidate-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cobble-spec-chip {
+  background: #141B33;
+  border: 1px solid #1E2749;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #CBD5E1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cobble-spec-icon {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.cobble-candidate-flags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cobble-status-flag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.flag-success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34D399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.flag-muted {
+  background: rgba(148, 163, 184, 0.1);
+  color: #94A3B8;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.flag-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #F87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.cobble-candidate-reason {
+  background: #0A0E1A;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 2px solid #232C4F;
+}
+
+.cobble-reason-label {
+  font-weight: 600;
+  color: #64748B;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+
+.cobble-reason-text {
+  color: #94A3B8;
+  line-height: 1.4;
+}
+
+.cobble-candidate-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 6px;
+}
+
+.cobble-candidate-time {
+  font-size: 10px;
+  color: #64748B;
+}
+
+.cobble-candidates-empty {
+  padding: 24px;
+  text-align: center;
+  background: #0E1326;
+  border-radius: 8px;
+  border: 1px dashed #232C4F;
+}
+
+.cobble-candidates-empty p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* Diagnostics */
+.cobble-diagnostics-card {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #1E2749;
+}
+
+.cobble-diagnostics-summary {
+  padding: 14px 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94A3B8;
+  background: #0E1326;
+}
+
+.cobble-diagnostics-summary:hover {
+  color: #CBD5E1;
+}
+
+.cobble-diagnostics-hint {
+  font-size: 11px;
+  color: #64748B;
+  font-weight: 400;
+}
+
+.cobble-diagnostics-content {
+  padding: 16px 18px;
+  background: #0A0E1A;
+  border-top: 1px solid #1E2749;
+}
+
+.cobble-diagnostics-list {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  row-gap: 8px;
+  column-gap: 14px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.cobble-diagnostics-list dt {
+  color: #64748B;
+  font-weight: 500;
+}
+
+.cobble-diagnostics-list dd {
+  color: #E2E8F0;
+  margin: 0;
+}
+
+.cobble-diagnostics-list dd code {
+  background: #141B33;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #9B91F0;
+}
+
+.cobble-diagnostics-disclaimer {
+  font-size: 11px;
+  color: #64748B;
+  margin: 14px 0 0 0;
+  font-style: italic;
+}
+
+/* Accessibility Focus Visible */
+.cobble-hosting-panel button:focus-visible,
+.cobble-hosting-panel input:focus-visible,
+.cobble-hosting-panel summary:focus-visible {
+  outline: 2px solid var(--accent, #F59E0B) !important;
+  outline-offset: 2px !important;
+}
+
+.cobble-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Keyframes */
+@keyframes cobble-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes cobble-progress-indeterminate {
+  0% { left: -40%; width: 40%; }
+  50% { left: 30%; width: 50%; }
+  100% { left: 100%; width: 40%; }
+}
+
+/* Prefers Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  .cobble-pill-active,
+  .cobble-transfer-progress-bar,
+  .cobble-status-active .cobble-status-indicator {
+    animation: none !important;
+  }
+}

@@ -395,6 +395,9 @@ export interface DesktopApi {
   previewRevert(activityId: string): Promise<RevertPreview>;
   applyRevert(activityId: string, token: string): Promise<void>;
   integrateMain(proposalId: string): Promise<void>;
+  chatWindow?(
+    command: "show" | "hide" | "toggle" | "minimize" | "restore" | "redirect" | "status",
+  ): Promise<{ visible: boolean; minimized: boolean }>;
   onCompanion(callback: (mode: CompanionMode) => void): () => void;
   onNavigate(callback: (tab: Tab, startVoice: boolean) => void): () => void;
 }

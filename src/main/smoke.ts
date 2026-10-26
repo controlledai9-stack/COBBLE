@@ -97,7 +97,7 @@ export async function runSmoke(
     await main.webContents.executeJavaScript(
       'document.querySelectorAll("nav button").length',
     ),
-    5,
+    4,
   );
   const fill = async (selector: string, value: string) =>
     main.webContents.executeJavaScript(
@@ -126,7 +126,7 @@ export async function runSmoke(
   });
   assert.equal(service.activeTeam()!.graph!.contracts.length, 1);
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[0].click()`,
+    `document.querySelectorAll('nav button')[2].click()`,
   );
   await wait(
     "!!document.querySelector('form[aria-label=\"Mark completed work\"]')",

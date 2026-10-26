@@ -34,6 +34,10 @@ import {
   IconAlert,
   IconClose,
   IconEmpty,
+  IconSun,
+  IconMoon,
+  IconSettings,
+  IconMinimize,
 } from "./icons";
 import { PebbleRobot } from "./pebble";
 import "./styles.css";
@@ -47,7 +51,6 @@ const navTabs: { tab: Tab; label: string; icon: React.ReactNode }[] = [
   { tab: "Chats", label: "Discussions", icon: <IconChats /> },
   { tab: "Teams", label: "Workspace & Plan", icon: <IconTeams /> },
   { tab: "Invites", label: "Join Requests", icon: <IconInvites /> },
-  { tab: "Profile", label: "Profile & Settings", icon: <IconProfile /> },
 ];
 const ideConnected = (state: AppState) =>
   ["files", "linked"].includes(state.ide.state);
@@ -55,6 +58,37 @@ const stamp = (time: string) =>
   new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 function App() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    try {
+      const saved = localStorage.getItem("cobble-theme");
+      if (saved === "dark" || saved === "light") return saved;
+      return "light";
+    } catch {
+      return "light";
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("cobble-theme", theme);
+    } catch {}
+  }, [theme]);
+
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "cobble-theme" && (e.newValue === "light" || e.newValue === "dark")) {
+        setTheme(e.newValue);
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
+
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<Tab>("Home");
   const [error, setError] = useState("");
@@ -64,9 +98,28 @@ function App() {
   const [revertPreview, setRevertPreview] = useState<RevertPreview | null>(
     null,
   );
+  const [teamModal, setTeamModal] = useState<"workspace" | "apps" | "create" | "join" | null>(null);
+  const [floatingChat, setFloatingChat] = useState(false);
+  const [floatingChatMinimized, setFloatingChatMinimized] = useState(false);
+
+  const openMiniChatWindow = async () => {
+    if (window.cobble?.chatWindow) {
+      try {
+        await window.cobble.chatWindow("show");
+        return;
+      } catch {}
+    }
+    setFloatingChat(true);
+    setFloatingChatMinimized(false);
+  };
+
   const team = state?.teams.find((t) => t.id === state.activeTeamId);
   const companion =
     new URLSearchParams(location.search).get("view") === "companion";
+  const isMiniChat =
+    new URLSearchParams(location.search).get("view") === "mini-chat";
+  const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
+  const [workspaceModalMode, setWorkspaceModalMode] = useState<"create" | "join">("create");
   const act = async (action: Action): Promise<boolean> => {
     setError("");
     setBusy(true);
@@ -104,7 +157,8 @@ function App() {
   }, []);
   if (!state)
     return <div className="loading">{error || "Opening your workspace…"}</div>;
-  if (companion) return <Companion state={state} act={act} error={error} />;
+  if (companion) return <Companion state={state} act={act} error={error} theme={theme} onToggleTheme={toggleTheme} />;
+  if (isMiniChat && state) return <StandaloneMiniChat state={state} act={act} busy={busy} onError={setError} theme={theme} />;
   if (!state.profile)
     return (
       <div className="welcome">
@@ -140,23 +194,45 @@ function App() {
         <div className="wordmark">
           cobble<span>●</span>
         </div>
-        <div className="project-label">WORKSPACE</div>
-        <select
-          aria-label="Active team"
-          value={state.activeTeamId ?? ""}
-          onChange={(e) =>
-            void act({ type: "selectTeam", teamId: e.target.value })
-          }
-        >
-          <option value="" disabled>
-            Choose a workspace
-          </option>
-          {state.teams.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+        <div className="sidebar-workspace-group">
+          <div className="project-label">WORKSPACE</div>
+          <button
+            type="button"
+            className="sidebar-action-btn"
+            onClick={() => {
+              setWorkspaceModalMode("create");
+              setWorkspaceModalOpen(true);
+            }}
+            title="Create a new workspace or join an existing team"
+          >
+            <IconPlus />
+            <span>Create New / Join a Workspace</span>
+          </button>
+
+          <div className="project-label workspace-sublabel">YOUR WORKSPACE</div>
+          <div className="workspace-select-wrapper">
+            <select
+              aria-label="Active team"
+              value={state.activeTeamId ?? ""}
+              onChange={(e) => {
+                const teamId = e.target.value;
+                if (teamId) {
+                  void act({ type: "selectTeam", teamId });
+                  setTab("Teams");
+                }
+              }}
+            >
+              <option value="" disabled>
+                Choose a workspace
+              </option>
+              {state.teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         <nav>
           {navTabs.map(({ tab: item, label, icon }) => (
             <button
@@ -177,99 +253,146 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="quiet-note">
-            Small steps.
-            <br />
-            Shared direction.
-          </div>
-          <button className="profile-mini" onClick={() => setTab("Profile")}>
-            <span className="avatar">{state.profile.avatar}</span>
-            <span>
-              {state.profile.name}
-              <small>{state.profile.availability}</small>
+          <button
+            type="button"
+            className={tab === "Profile" ? "profile-mini selected" : "profile-mini"}
+            onClick={() => {
+              setTab("Profile");
+              setError("");
+            }}
+            aria-label="Profile and Settings"
+          >
+            <span className="avatar">
+              {state.profile.avatar || state.profile.name[0]?.toUpperCase() || "●"}
             </span>
+            <div className="profile-mini-details">
+              <span className="profile-mini-name">{state.profile.name}</span>
+              <span className="profile-mini-status">
+                <i className="status-dot green" />
+                <small>{state.profile.availability}</small>
+              </span>
+            </div>
+            <IconSettings className="profile-mini-gear" />
           </button>
         </div>
       </aside>
-      <main>
+      <main className={tab === "Chats" ? "main-full-chat" : ""}>
         <header className="topbar">
           <span>{team?.name ?? "No active workspace"}</span>
-          <span className="connection">
-            <i
-              className={
-                ideConnected(state) ? "status-dot green" : "status-dot"
-              }
-            />
-            {ideConnected(state)
-              ? `IDE connected (${state.ide.editor ?? "Editor"})`
-              : "IDE not connected"}
-          </span>
-        </header>
-        <div className="page">
-          <div className="page-title">
-            <div>
-              <span className="eyebrow">
-                {
-                  {
-                    Home: "WORKSPACE SIGNALS",
-                    Chats: "TEAM COMMUNICATOR",
-                    Teams: "COLLECTIVE DIRECTION",
-                    Invites: "ACCESS REQUESTS",
-                    Profile: "IDENTITY & INTEGRATIONS",
-                  }[tab]
-                }
-              </span>
-              <h1>
-                {
-                  {
-                    Home: "Overview",
-                    Chats: "Discussions",
-                    Teams: "Workspace & Plan",
-                    Invites: "Join Requests",
-                    Profile: "Profile & Settings",
-                  }[tab]
-                }
-              </h1>
-              <p>
-                {
-                  {
-                    Home: "Track live progress, saved file changes, and plan alignment in real time.",
-                    Chats:
-                      "Direct and team sync with local offline voice transcription.",
-                    Teams:
-                      "Define starting milestones, assign module ownership, and vote on branch proposals.",
-                    Invites: "Manage team join requests and invitations.",
-                    Profile:
-                      "Manage local developer identity, speech engine, and agent hooks.",
-                  }[tab]
-                }
-              </p>
-            </div>
+          <div className="topbar-actions">
             <button
-              className="secondary"
-              onClick={() => void window.cobble.companion("show")}
+              type="button"
+              className={`topbar-chat-btn ${floatingChat ? "active" : ""}`}
+              onClick={() => setFloatingChat((f) => !f)}
+              title="Toggle floating discussions window"
+              aria-label="Floating discussions window"
             >
-              <span>Summon Pebble</span>
-              <IconExternal />
+              <IconChats />
+              <span>Chat Window</span>
             </button>
+            <button
+              type="button"
+              className="theme-toggle-btn"
+              onClick={toggleTheme}
+              title={
+                theme === "dark"
+                  ? "Switch to white background (Light mode)"
+                  : "Switch to true black background (Dark mode)"
+              }
+              aria-label="Toggle color theme"
+            >
+              {theme === "dark" ? <IconSun /> : <IconMoon />}
+              <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
+            </button>
+            <span className="connection">
+              <i
+                className={
+                  ideConnected(state) ? "status-dot green" : "status-dot"
+                }
+              />
+              {ideConnected(state)
+                ? `IDE connected (${state.ide.editor ?? "Editor"})`
+                : "IDE not connected"}
+            </span>
           </div>
-          {error && (
-            <div className="error" role="alert">
-              <span>{error}</span>
-              <button onClick={() => setError("")}>
-                <IconClose />
+        </header>
+
+        {tab === "Chats" ? (
+          <Chat
+            state={state}
+            act={act}
+            busy={busy}
+            onError={setError}
+            autoRecord={autoRecord}
+            consumed={() => setAutoRecord(false)}
+            onOpenFloating={() => setFloatingChat(true)}
+          />
+        ) : (
+          <div className="page">
+            <div className="page-title">
+              <div>
+                <span className="eyebrow">
+                  {
+                    {
+                      Home: "WORKSPACE SIGNALS",
+                      Chats: "TEAM COMMUNICATOR",
+                      Teams: "COLLECTIVE DIRECTION",
+                      Invites: "ACCESS REQUESTS",
+                      Profile: "IDENTITY & INTEGRATIONS",
+                    }[tab]
+                  }
+                </span>
+                <h1>
+                  {
+                    {
+                      Home: "Overview",
+                      Chats: "Discussions",
+                      Teams: "Workspace & Plan",
+                      Invites: "Join Requests",
+                      Profile: "Profile & Settings",
+                    }[tab]
+                  }
+                </h1>
+                <p>
+                  {
+                    {
+                      Home: "Track live progress, saved file changes, and plan alignment in real time.",
+                      Chats:
+                        "Direct and team sync with local offline voice transcription.",
+                      Teams:
+                        "Define starting milestones, assign module ownership, and vote on branch proposals.",
+                      Invites: "Manage team join requests and invitations.",
+                      Profile:
+                        "Manage local developer identity, speech engine, and agent hooks.",
+                    }[tab]
+                  }
+                </p>
+              </div>
+              <button
+                className="secondary"
+                onClick={() => void window.cobble.companion("show")}
+              >
+                <span>Summon Pebble</span>
+                <IconExternal />
               </button>
             </div>
-          )}
-          {notice && (
-            <div className="notice" role="status">
-              <span>{notice}</span>
-              <button onClick={() => setNotice("")}>
-                <IconClose />
-              </button>
-            </div>
-          )}
-          {tab === "Home" && (
+            {error && (
+              <div className="error" role="alert">
+                <span>{error}</span>
+                <button onClick={() => setError("")}>
+                  <IconClose />
+                </button>
+              </div>
+            )}
+            {notice && (
+              <div className="notice" role="status">
+                <span>{notice}</span>
+                <button onClick={() => setNotice("")}>
+                  <IconClose />
+                </button>
+              </div>
+            )}
+            {tab === "Home" && (
             <>
               <div className="status-grid">
                 <Status
@@ -483,7 +606,7 @@ function App() {
                   </button>
                 </section>
               </div>
-              <CollaborationPanel state={state} act={act} onError={setError} />
+              {/* Collaboration panel moved to Teams */}
             </>
           )}
           {revertPreview && (
@@ -493,16 +616,6 @@ function App() {
               onError={setError}
             />
           )}
-          {tab === "Chats" && (
-            <Chat
-              state={state}
-              act={act}
-              busy={busy}
-              onError={setError}
-              autoRecord={autoRecord}
-              consumed={() => setAutoRecord(false)}
-            />
-          )}
           {tab === "Teams" && (
             <Teams
               state={state}
@@ -510,6 +623,8 @@ function App() {
               busy={busy}
               onError={setError}
               notice={setNotice}
+              externalModal={teamModal}
+              onClearModal={() => setTeamModal(null)}
             />
           )}
           {tab === "Invites" && (
@@ -574,6 +689,18 @@ function App() {
                 <ProfileForm state={state} act={act} busy={busy} />
                 <p className="small">Device ID · {state.profile.id}</p>
                 <label>
+                  Theme appearance
+                  <select
+                    value={theme}
+                    onChange={(e) =>
+                      setTheme(e.target.value as "light" | "dark")
+                    }
+                  >
+                    <option value="light">Light Mode (Clean White)</option>
+                    <option value="dark">Dark Mode (True Black)</option>
+                  </select>
+                </label>
+                <label>
                   Availability
                   <select
                     value={state.profile.availability}
@@ -616,7 +743,34 @@ function App() {
             <span>Local first · v{appVersion}</span>
           </footer>
         </div>
+      )}
       </main>
+      
+      <WorkspaceModal
+        isOpen={workspaceModalOpen}
+        onClose={() => setWorkspaceModalOpen(false)}
+        state={state}
+        act={act}
+        onError={setError}
+        initialMode={workspaceModalMode}
+        onCreated={() => setTab("Teams")}
+      />
+
+      {floatingChat && (
+        <FloatingChat
+          state={state}
+          act={act}
+          busy={busy}
+          onError={setError}
+          minimized={floatingChatMinimized}
+          onToggleMinimize={() => setFloatingChatMinimized((m) => !m)}
+          onClose={() => setFloatingChat(false)}
+          onOpenFullChat={() => {
+            setTab("Chats");
+            setFloatingChat(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -832,14 +986,25 @@ function Teams({
   busy,
   onError,
   notice,
+  externalModal,
+  onClearModal,
 }: {
   state: AppState;
   act: (a: Action) => Promise<boolean>;
   busy: boolean;
   onError: (s: string) => void;
   notice: (s: string) => void;
+  externalModal?: "workspace" | "apps" | "create" | "join" | null;
+  onClearModal?: () => void;
 }) {
   const team = state.teams.find((t) => t.id === state.activeTeamId);
+  const [localModal, setLocalModal] = useState<"workspace" | "apps" | "create" | "join" | null>(null);
+  const modal = externalModal !== undefined ? externalModal : localModal;
+  const setModal = (m: "workspace" | "apps" | "create" | "join" | null) => {
+    setLocalModal(m);
+    if (m === null && onClearModal) onClearModal();
+  };
+
   const [create, setCreate] = useState(!team);
   const [name, setName] = useState("");
   const [plan, setPlan] = useState("");
@@ -850,341 +1015,190 @@ function Teams({
   const [edit, setEdit] = useState(false);
   const [editPlan, setEditPlan] = useState("");
   const [pair, setPair] = useState("");
-  const [hostMode, setHostMode] = useState<"direct" | "internet" | "lan">(
-    "direct",
-  );
+  const [hostMode, setHostMode] = useState<"direct" | "internet" | "lan">("direct");
   const [publicAddress, setPublicAddress] = useState("");
   const [relayUrl, setRelayUrl] = useState(state.network.relayUrl ?? "");
+
   useEffect(() => {
     setCreate(!team);
     setEdit(false);
     setPair("");
   }, [team?.id]);
+
   useEffect(() => {
     setEdit(false);
   }, [team?.version]);
+
   return (
     <>
-      <div className="inline section-actions">
-        <button onClick={() => setCreate(!create)}>
-          <IconPlus />
-          <span>Create workspace</span>
-        </button>
-        <button className="secondary" onClick={() => setJoin(!join)}>
-          Join existing team
-        </button>
-      </div>
-      <IdeConnections state={state} notice={notice} />
-      {create && (
-        <section className="panel">
-          <h2>Create a shared workspace</h2>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void act({ type: "createTeam", name, plan, workspace });
-            }}
-          >
-            <label>
-              Team or workspace name
-              <input
-                required
-                maxLength={100}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Core Engine"
-              />
-            </label>
-            <label>
-              Starting plan <span className="muted">required</span>
-              <textarea
-                required
-                rows={8}
-                maxLength={100000}
-                value={plan}
-                onChange={(e) => setPlan(e.target.value)}
-                placeholder={
-                  "What are we building?\nWhich features do we need?\nWhat should stay out of scope?\n\nFor an explicit folder boundary: Do not modify `legacy/`"
-                }
-              />
-            </label>
-            <label>
-              Project folder
-              <div className="inline">
-                <input
-                  readOnly
-                  value={workspace}
-                  placeholder="Choose the project folder"
-                />
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={async () => {
-                    try {
-                      setWorkspace(
-                        (await window.cobble.chooseWorkspace()) ?? "",
-                      );
-                    } catch (e) {
-                      onError(message(e));
-                    }
-                  }}
-                >
-                  Choose project folder…
-                </button>
-              </div>
-              <span className="small muted">
-                Select the folder containing your code. Cobble detects editor
-                apps separately.
-              </span>
-            </label>
-            <button disabled={busy || !name.trim() || !plan.trim()}>
-              <span>Create with starting plan</span>
-              <IconArrowRight />
-            </button>
-          </form>
-        </section>
-      )}
-      {join && (
-        <section className="panel">
-          <h2>Join an existing team</h2>
-          <p>
-            Paste the complete internet invitation or LAN address from a
-            teammate, plus the separate join code. The host must approve your
-            request.
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void act({ type: "join", address, code });
-            }}
-          >
-            <label>
-              Internet invitation or LAN address
-              <input
-                required
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="https://192.168.x.x:port/#fingerprint"
-              />
-            </label>
-            <label>
-              Join code
-              <input
-                required
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="CB-…"
-              />
-            </label>
-            <button disabled={busy}>Request to join</button>
-          </form>
-          <p className="small">{state.network.state}</p>
-        </section>
-      )}
-      {team && (
+      {!team && (
         <>
-          <section className="panel">
-            <div className="section-title">
-              <div>
-                <span className="eyebrow">CURRENT TEAM</span>
-                <h2>{team.name}</h2>
-              </div>
-              <span className="tag">{state.members.length} / 8 people</span>
-            </div>
-            <div className="members">
-              {state.members.map((m) => (
-                <div key={m.id}>
-                  <span className="avatar">{m.name[0]}</span>
-                  <span>
-                    {m.name}
-                    <small>
-                      {m.role} · {m.availability}
-                    </small>
-                  </span>
-                </div>
-              ))}
-            </div>
-            <hr />
-            <label>
-              Watched workspace
-              <div className="inline">
-                <input
-                  value={team.workspace}
-                  readOnly
-                  placeholder="Choose your local project folder"
-                />
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void window.cobble
-                      .bindWorkspace()
-                      .catch((e) => onError(message(e)))
-                  }
-                >
-                  Choose folder
-                </button>
-              </div>
-            </label>
-            <details>
-              <summary>Connection diagnostics</summary>
-              <button
-                className="text-button"
-                onClick={async () => {
-                  try {
-                    setPair(JSON.stringify(await window.cobble.pairing()));
-                  } catch (error) {
-                    onError(message(error));
-                  }
+          <div className="inline section-actions">
+            <button onClick={() => { setCreate(true); setJoin(false); }}>
+              <IconPlus />
+              <span>Create workspace</span>
+            </button>
+            <button className="secondary" onClick={() => { setJoin(true); setCreate(false); }}>
+              Join existing team
+            </button>
+          </div>
+          <IdeConnections state={state} notice={notice} />
+          {create && (
+            <section className="panel">
+              <h2>Create a shared workspace</h2>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  await act({ type: "createTeam", name, plan, workspace });
                 }}
               >
-                Show manual pairing details
-              </button>
-            </details>
-            {pair && (
-              <div className="pairing">
-                <p>
-                  In the Cobble Workspace extension, run{" "}
-                  <strong>Cobble: Pair Workspace</strong> and paste these
-                  details. This secret is for this device only.
-                </p>
-                <textarea readOnly value={pair} rows={3} />
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void window.cobble
-                      .copyPairing()
-                      .then(() => notice("Pairing details copied."))
-                      .catch((error) => onError(message(error)))
-                  }
-                >
-                  Copy pairing details
-                </button>
-              </div>
-            )}
-            {team.ownerId === state.profile?.id && (
-              <div className="hosting">
                 <label>
-                  Connect your team
-                  <select
-                    value={hostMode}
-                    onChange={(e) =>
-                      setHostMode(
-                        e.target.value as "direct" | "internet" | "lan",
-                      )
-                    }
-                  >
-                    <option value="direct">
-                      Internet · reachable teammate laptop
-                    </option>
-                    <option value="internet">
-                      Internet · teammate-hosted relay
-                    </option>
-                    <option value="lan">Local network · same LAN</option>
-                  </select>
+                  Team or workspace name
+                  <input
+                    required
+                    maxLength={100}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Core Engine"
+                  />
                 </label>
-                {hostMode === "direct" && (
-                  <>
-                    <label>
-                      Reachable address of this laptop
-                      <input
-                        type="url"
-                        value={publicAddress}
-                        onChange={(e) => setPublicAddress(e.target.value)}
-                        placeholder="https://your-reachable-address:port"
-                      />
-                    </label>
-                    <p className="small muted">
-                      Enter an address and port teammates can reach. Cobble
-                      cannot bypass a blocked router or ISP and will not use an
-                      external fallback. A local/private address alone does not
-                      establish cross-city connectivity.
-                    </p>
-                  </>
-                )}
-                {hostMode === "internet" && (
-                  <>
-                    <label>
-                      Team relay URL
-                      <input
-                        type="url"
-                        value={relayUrl}
-                        onChange={(e) => setRelayUrl(e.target.value)}
-                        placeholder="HTTPS relay address from a teammate"
-                      />
-                    </label>
-                    <p className="small muted">
-                      No public relay is configured by default. A teammate must
-                      run a reachable Cobble relay. Teammates need only Cobble;
-                      keep this host app open while collaborating.
-                    </p>
-                  </>
-                )}
-                <button
-                  disabled={
-                    busy ||
-                    (hostMode === "internet" && !relayUrl.trim()) ||
-                    (hostMode === "direct" && !publicAddress.trim())
-                  }
-                  onClick={() =>
-                    void act({
-                      type: "host",
-                      ...(hostMode === "internet"
-                        ? { relayUrl: relayUrl.trim() }
-                        : {}),
-                      ...(hostMode === "direct"
-                        ? { publicAddress: publicAddress.trim() }
-                        : {}),
-                    })
-                  }
-                >
-                  {hostMode !== "lan" ? "Host online" : "Host on LAN"}
+                <label>
+                  Starting plan <span className="muted">required</span>
+                  <textarea
+                    required
+                    rows={8}
+                    maxLength={100000}
+                    value={plan}
+                    onChange={(e) => setPlan(e.target.value)}
+                    placeholder="What are we building?\nWhich features do we need?\nWhat should stay out of scope?\n\nFor an explicit folder boundary: Do not modify `legacy/`"
+                  />
+                </label>
+                <label>
+                  Project folder
+                  <div className="inline">
+                    <input
+                      readOnly
+                      value={workspace}
+                      placeholder="Choose the project folder"
+                    />
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={async () => {
+                        try {
+                          setWorkspace((await window.cobble.chooseWorkspace()) ?? "");
+                        } catch (e) {
+                          onError(message(e));
+                        }
+                      }}
+                    >
+                      Choose project folder…
+                    </button>
+                  </div>
+                  <span className="small muted">
+                    Select the folder containing your code. Cobble detects editor apps separately.
+                  </span>
+                </label>
+                <button disabled={busy || !name.trim() || !plan.trim()}>
+                  <span>Create with starting plan</span>
+                  <IconArrowRight />
                 </button>
-                {state.network.role === "host" && (
-                  <>
-                    <label>
-                      Share this address
-                      <textarea
-                        readOnly
-                        rows={2}
-                        value={state.network.address}
-                      />
-                    </label>
-                    <label>
-                      Join code
-                      <input readOnly value={team.code} />
-                    </label>
-                    <small>
-                      {state.network.transport === "internet"
-                        ? "Share the complete invitation and join code. This teammate host and any teammate relay must stay online."
-                        : "Members need a reachable LAN route to this device."}
-                    </small>
-                  </>
-                )}
-              </div>
-            )}
-          </section>
-          <section className="panel">
-            <div className="section-title">
-              <div>
-                <span className="eyebrow">VERSION {team.version}</span>
+              </form>
+            </section>
+          )}
+          {join && (
+            <section className="panel">
+              <h2>Join an existing team</h2>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  await act({ type: "join", address, code });
+                }}
+              >
+                <label>
+                  Internet invitation or LAN address
+                  <input
+                    required
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="https://192.168.x.x:port/#fingerprint"
+                  />
+                </label>
+                <label>
+                  Join code
+                  <input
+                    required
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="CB-…"
+                  />
+                </label>
+                <button disabled={busy}>Request to join</button>
+              </form>
+              <p className="small">{state.network.state}</p>
+            </section>
+          )}
+        </>
+      )}
+
+      {team && (
+        <>
+          <section className="panel plan-hero-card">
+            <div className="plan-toolbar">
+              <div className="plan-toolbar-left">
+                <span className="eyebrow">VERSION {team.version} · ACTIVE DIRECTION</span>
                 <h2>The core plan</h2>
               </div>
-              {team.ownerId === state.profile?.id && (
+              <div className="plan-toolbar-actions">
+                {team.ownerId === state.profile?.id && (
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setEditPlan(team.plan);
+                      setEdit(!edit);
+                    }}
+                  >
+                    {edit ? "Cancel editing" : "Edit plan"}
+                  </button>
+                )}
                 <button
                   className="secondary"
-                  onClick={() => {
-                    setEditPlan(team.plan);
-                    setEdit(!edit);
-                  }}
+                  onClick={() => setModal("workspace")}
                 >
-                  Edit plan
+                  Workspace & Hosting
                 </button>
-              )}
+                <button
+                  className="secondary"
+                  onClick={() => setModal("apps")}
+                >
+                  Connected IDEs & Agents
+                </button>
+              </div>
+            </div>
+            <div className="plan-meta-row">
+              <span className="plan-meta-item">
+                <strong>Project folder:</strong> {team.workspace ? team.workspace.split(/[/\\]/).pop() : "None"}
+              </span>
+              <span className="plan-meta-item">
+                <strong>Milestones:</strong> {team.items.length} pieces
+              </span>
+              <span className="plan-meta-item">
+                <strong>Team:</strong> {state.members.length} / 8 members
+              </span>
+              <span className="plan-meta-item">
+                <strong>Verified project connections: </strong>
+                {(state.ide.connections ?? []).length
+                  ? (state.ide.connections ?? [])
+                      .map((c) => `${c.editor}${c.focused ? " (focused)" : ""}`)
+                      .join(", ")
+                  : (state.ide.editor ? state.ide.editor : "Waiting for editor confirmation")}
+              </span>
             </div>
             {edit ? (
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
-                  void act({
+                  await act({
                     type: "updatePlan",
                     teamId: team.id,
                     expectedVersion: team.version,
@@ -1221,6 +1235,7 @@ function Teams({
             </details>
           </section>
           <WorkAreas state={state} act={act} />
+          <CollaborationPanel state={state} act={act} onError={onError} />
           <AgentConnections state={state} onError={onError} notice={notice} />
         </>
       )}
@@ -1234,6 +1249,7 @@ function Chat({
   onError,
   autoRecord,
   consumed,
+  onOpenFloating,
 }: {
   state: AppState;
   act: (a: Action) => Promise<boolean>;
@@ -1241,7 +1257,9 @@ function Chat({
   onError: (s: string) => void;
   autoRecord: boolean;
   consumed: () => void;
+  onOpenFloating?: () => void;
 }) {
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [recipient, setRecipient] = useState("team");
   const [content, setContent] = useState("");
   const [voice, setVoice] = useState(false);
@@ -1334,6 +1352,9 @@ function Chat({
       : (m.senderId === state.profile?.id && m.recipientId === recipient) ||
         (m.senderId === recipient && m.recipientId === state.profile?.id),
   );
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!recipient) return;
@@ -1382,17 +1403,32 @@ function Chat({
       </aside>
       <div className="chat-thread">
         <div className="thread-header">
-          <h2>
-            {recipient === "team"
-              ? "Everyone"
-              : (state.members.find((m) => m.id === recipient)?.name ??
-                "Choose a recipient")}
-          </h2>
-          <small>
-            {recipient === "team"
-              ? "Team discussion channel"
-              : "Private message through your team host"}
-          </small>
+          <div className="thread-header-info">
+            <h2>
+              {recipient === "team"
+                ? "Everyone"
+                : (state.members.find((m) => m.id === recipient)?.name ??
+                  "Choose a recipient")}
+            </h2>
+            <small>
+              {recipient === "team"
+                ? "Team discussion channel"
+                : "Private message through your team host"}
+            </small>
+          </div>
+          {onOpenFloating && (
+            <div className="thread-header-actions">
+              <button
+                type="button"
+                className="secondary floating-window-btn"
+                onClick={onOpenFloating}
+                title="Pop out into floating window"
+              >
+                <IconExternal />
+                <span>Floating Window</span>
+              </button>
+            </div>
+          )}
         </div>
         <div className="messages">
           {!messages.length && (
@@ -1407,111 +1443,147 @@ function Chat({
               </p>
             </div>
           )}
-          {messages.map((m) => (
-            <div
-              className={
-                m.senderId === state.profile?.id ? "bubble mine" : "bubble"
-              }
-              key={m.id}
-            >
-              <small>
-                {state.members.find((p) => p.id === m.senderId)?.name ??
-                  "Teammate"}
-              </small>
-              <p>{m.content}</p>
-              <small>
-                {stamp(m.createdAt)} ·{" "}
-                {m.state === "delivered"
-                  ? "Delivered"
-                  : m.state === "sent"
-                    ? "Sent"
-                    : m.state === "queued"
-                      ? "Queued"
-                      : "Saved locally"}
-                {m.sentVia === "voice" ? " · voice" : ""}
-              </small>
-            </div>
-          ))}
+          <div className="messages-stream">
+            {messages.map((m) => {
+              const isMine = m.senderId === state.profile?.id;
+              const author = isMine
+                ? "You"
+                : state.members.find((p) => p.id === m.senderId)?.name ?? "Teammate";
+              return (
+                <div
+                  className={isMine ? "bubble-row mine" : "bubble-row"}
+                  key={m.id}
+                >
+                  {!isMine && (
+                    <span className="avatar chat-avatar">
+                      {author[0]?.toUpperCase() ?? "●"}
+                    </span>
+                  )}
+                  <div className={isMine ? "bubble mine" : "bubble"}>
+                    <div className="bubble-meta">
+                      <span className="bubble-author">{author}</span>
+                      <span className="bubble-time">{stamp(m.createdAt)}</span>
+                    </div>
+                    <p>{m.content}</p>
+                    <div className="bubble-status">
+                      <small>
+                        {m.state === "delivered"
+                          ? "Delivered"
+                          : m.state === "sent"
+                            ? "Sent"
+                            : m.state === "queued"
+                              ? "Queued"
+                              : "Saved locally"}
+                        {m.sentVia === "voice" ? " · voice" : ""}
+                      </small>
+                    </div>
+                  </div>
+                  {isMine && (
+                    <span className="avatar chat-avatar mine">
+                      {state.profile?.avatar || state.profile?.name?.[0]?.toUpperCase() || "●"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div ref={messagesEndRef} />
         </div>
         <form className="composer" onSubmit={(e) => void send(e)}>
-          <label className="small">
-            Send to
-            <select
-              aria-label="Message recipient"
-              value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
-            >
-              <option value="" disabled>
-                Choose a recipient
-              </option>
-              <option value="team">Everyone</option>
-              {state.members
-                .filter((m) => m.id !== state.profile?.id)
-                .map((m) => (
-                  <option value={m.id} key={m.id}>
-                    {m.name}
+          <div className="composer-inner">
+            <div className="composer-header-row">
+              <label className="composer-recipient-label">
+                <span>Send to</span>
+                <select
+                  aria-label="Message recipient"
+                  value={recipient}
+                  onChange={(e) => setRecipient(e.target.value)}
+                >
+                  <option value="" disabled>
+                    Choose a recipient
                   </option>
-                ))}
-            </select>
-          </label>
-          {hint && <p className="small">{hint}</p>}
-          <textarea
-            rows={2}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            maxLength={8000}
-            placeholder="Type a team update or question…"
-          />
-          <div className="inline">
-            <button
-              type="button"
-              className={recording ? "recording" : "secondary"}
-              disabled={transcribing || !state.activeTeamId}
-              onClick={() => void capture()}
-            >
-              {recording ? (
-                <>
-                  <IconStop />
-                  <span>Stop recording</span>
-                </>
-              ) : transcribing ? (
-                <span>Transcribing locally…</span>
-              ) : (
-                <>
-                  <IconMic />
-                  <span>Voice draft</span>
-                </>
-              )}
-            </button>
-            {recording && (
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => {
-                  cancelled.current = true;
-                  recorder.current?.stop();
-                }}
-              >
-                Cancel
-              </button>
-            )}
-            <button
-              disabled={
-                busy ||
-                !content.trim() ||
-                !recipient ||
-                !state.activeTeamId ||
-                recording ||
-                transcribing
+                  <option value="team"># Everyone</option>
+                  {state.members
+                    .filter((m) => m.id !== state.profile?.id)
+                    .map((m) => (
+                      <option value={m.id} key={m.id}>
+                        @{m.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {hint && <span className="composer-hint">{hint}</span>}
+            </div>
+            <textarea
+              rows={2}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send(e);
+                }
+              }}
+              maxLength={8000}
+              placeholder={
+                recipient === "team"
+                  ? "Message #Everyone (Enter to send, Shift+Enter for newline)…"
+                  : `Message @${state.members.find((m) => m.id === recipient)?.name ?? "teammate"}…`
               }
-            >
-              <span>Send</span>
-              <IconSend />
-            </button>
+            />
+            <div className="composer-bottom-bar">
+              <div className="composer-actions-left">
+                <button
+                  type="button"
+                  className={recording ? "recording" : "secondary"}
+                  disabled={transcribing || !state.activeTeamId}
+                  onClick={() => void capture()}
+                >
+                  {recording ? (
+                    <>
+                      <IconStop />
+                      <span>Stop recording</span>
+                    </>
+                  ) : transcribing ? (
+                    <span>Transcribing locally…</span>
+                  ) : (
+                    <>
+                      <IconMic />
+                      <span>Voice draft</span>
+                    </>
+                  )}
+                </button>
+                {recording && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      cancelled.current = true;
+                      recorder.current?.stop();
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+                <small className="muted voice-note-hint">
+                  Offline voice transcription · On-device only
+                </small>
+              </div>
+              <button
+                disabled={
+                  busy ||
+                  !content.trim() ||
+                  !recipient ||
+                  !state.activeTeamId ||
+                  recording ||
+                  transcribing
+                }
+              >
+                <span>Send</span>
+                <IconSend />
+              </button>
+            </div>
           </div>
-          <small>
-            Offline voice transcription. Voice data stays on device.
-          </small>
         </form>
       </div>
     </section>
@@ -1521,10 +1593,14 @@ function Companion({
   state,
   act,
   error,
+  theme,
+  onToggleTheme,
 }: {
   state: AppState;
   act: (a: Action) => Promise<boolean>;
   error: string;
+  theme?: "light" | "dark";
+  onToggleTheme?: () => void;
 }) {
   const [mode, setMode] = useState<CompanionMode>("normal");
   const [menu, setMenu] = useState(false);
@@ -1670,6 +1746,12 @@ function Companion({
             <IconActivity />
             <span>{state.paused ? "Resume watching" : "Pause watching"}</span>
           </button>
+          {onToggleTheme && (
+            <button onClick={onToggleTheme}>
+              {theme === "dark" ? <IconSun /> : <IconMoon />}
+              <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
+            </button>
+          )}
           <button onClick={() => void window.cobble.companion("hide")}>
             <IconClose />
             <span>Hide controls</span>
@@ -1794,3 +1876,678 @@ function download(name: string, content: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 createRoot(document.getElementById("root")!).render(<App />);
+
+function FloatingChat({
+  state,
+  act,
+  busy,
+  onError,
+  minimized,
+  onToggleMinimize,
+  onClose,
+  onOpenFullChat,
+}: {
+  state: AppState;
+  act: (a: Action) => Promise<boolean>;
+  busy: boolean;
+  onError: (s: string) => void;
+  minimized: boolean;
+  onToggleMinimize: () => void;
+  onClose: () => void;
+  onOpenFullChat: () => void;
+}) {
+  const [recipient, setRecipient] = useState("team");
+  const [content, setContent] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const stream = useRef<MediaStream | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const messages = state.messages.filter((m) =>
+    recipient === "team"
+      ? m.recipientId === null
+      : (m.senderId === state.profile?.id && m.recipientId === recipient) ||
+        (m.senderId === recipient && m.recipientId === state.profile?.id),
+  );
+
+  useEffect(() => {
+    if (!minimized) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length, minimized]);
+
+  const capture = async () => {
+    try {
+      if (recording) {
+        recorder.current?.stop();
+        return;
+      }
+      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream.current);
+      const chunks: Blob[] = [];
+      recorder.current = rec;
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+      rec.onstop = async () => {
+        clearTimeout(timer.current);
+        stream.current?.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        setTranscribing(true);
+        try {
+          const text = await window.cobble.transcribe(
+            await recordingToWav(
+              await new Blob(chunks, { type: rec.mimeType }).arrayBuffer(),
+            ),
+          );
+          const command = parseCommand(text, state.members);
+          setContent(command.content);
+          if (command.type === "broadcast") setRecipient("team");
+          else if (command.type === "dm" && command.recipientId) setRecipient(command.recipientId);
+        } catch (e) {
+          onError(message(e));
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      rec.start();
+      setRecording(true);
+      timer.current = setTimeout(() => rec.stop(), 60_000);
+    } catch (e) {
+      onError(message(e));
+      stream.current?.getTracks().forEach((t) => t.stop());
+    }
+  };
+
+  const send = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!recipient || !content.trim() || !state.activeTeamId) return;
+    const ok = await act({
+      type: "send",
+      content,
+      recipientId: recipient === "team" ? null : recipient,
+      sentVia: "text",
+    });
+    if (ok) {
+      setContent("");
+    }
+  };
+
+  const recipientName =
+    recipient === "team"
+      ? "Everyone"
+      : state.members.find((m) => m.id === recipient)?.name ?? "Direct";
+
+  if (minimized) {
+    return (
+      <div
+        className="floating-chat-pill"
+        onClick={onToggleMinimize}
+        role="button"
+        tabIndex={0}
+        title="Click to restore floating discussions"
+      >
+        <span className="pill-dot" />
+        <IconChats />
+        <span className="pill-text">Discussions · {recipientName}</span>
+        <span className="pill-count">{messages.length}</span>
+        <button
+          type="button"
+          className="pill-close-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          title="Close floating chat"
+        >
+          <IconClose />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="floating-chat-window" role="dialog" aria-label="Floating discussions window">
+      <div className="floating-chat-header">
+        <div className="floating-chat-header-left">
+          <IconChats />
+          <span className="title">Discussions</span>
+          <select
+            className="floating-recipient-select"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            aria-label="Floating chat recipient"
+          >
+            <option value="team">Everyone</option>
+            {state.members
+              .filter((m) => m.id !== state.profile?.id)
+              .map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+          </select>
+        </div>
+        <div className="floating-chat-header-actions">
+          <button
+            type="button"
+            className="header-icon-btn"
+            onClick={onToggleMinimize}
+            title="Minimize"
+          >
+            <IconMinimize />
+          </button>
+          <button
+            type="button"
+            className="header-icon-btn"
+            onClick={onOpenFullChat}
+            title="Open full view"
+          >
+            <IconExternal />
+          </button>
+          <button
+            type="button"
+            className="header-icon-btn"
+            onClick={onClose}
+            title="Close"
+          >
+            <IconClose />
+          </button>
+        </div>
+      </div>
+      <div className="floating-chat-messages">
+        {messages.length === 0 ? (
+          <div className="floating-empty">
+            <p>No messages yet in this channel.</p>
+          </div>
+        ) : (
+          messages.map((m) => {
+            const isMine = m.senderId === state.profile?.id;
+            const author = isMine
+              ? "You"
+              : state.members.find((p) => p.id === m.senderId)?.name ?? "Teammate";
+            return (
+              <div
+                key={m.id}
+                className={isMine ? "float-bubble-row mine" : "float-bubble-row"}
+              >
+                <div className={isMine ? "float-bubble mine" : "float-bubble"}>
+                  <div className="float-meta">
+                    <b>{author}</b>
+                    <small>{stamp(m.createdAt)}</small>
+                  </div>
+                  <p>{m.content}</p>
+                </div>
+              </div>
+            );
+          })
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+      <form className="floating-chat-composer" onSubmit={send}>
+        <input
+          type="text"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder={
+            recording
+              ? "Listening…"
+              : transcribing
+                ? "Transcribing…"
+                : `Message ${recipientName}…`
+          }
+          maxLength={8000}
+        />
+        <button
+          type="button"
+          className={recording ? "recording-btn" : "composer-icon-btn"}
+          disabled={transcribing || !state.activeTeamId}
+          onClick={() => void capture()}
+          title={recording ? "Stop recording" : "Voice message"}
+        >
+          {recording ? <IconStop /> : <IconMic />}
+        </button>
+        <button
+          type="submit"
+          className="composer-send-btn"
+          disabled={busy || !content.trim() || !recipient || !state.activeTeamId}
+          title="Send"
+        >
+          <IconSend />
+        </button>
+      </form>
+    </div>
+  );
+}
+
+
+function WorkspaceModal({
+  isOpen,
+  onClose,
+  state,
+  act,
+  onError,
+  initialMode = "create",
+  onCreated,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  state: AppState;
+  act: (a: Action) => Promise<boolean>;
+  onError: (s: string) => void;
+  initialMode?: "create" | "join";
+  onCreated?: () => void;
+}) {
+  const [mode, setMode] = useState<"create" | "join">(initialMode);
+  const [name, setName] = useState("");
+  const [plan, setPlan] = useState("");
+  const [workspace, setWorkspace] = useState("");
+  const [address, setAddress] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode);
+    }
+  }, [isOpen, initialMode]);
+
+  if (!isOpen) return null;
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !plan.trim()) return;
+    setBusy(true);
+    try {
+      const ok = await act({ type: "createTeam", name, plan, workspace });
+      if (ok) {
+        setName("");
+        setPlan("");
+        setWorkspace("");
+        onClose();
+        if (onCreated) onCreated();
+      }
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleJoin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!address.trim() || !code.trim()) return;
+    setBusy(true);
+    try {
+      const ok = await act({ type: "join", address, code });
+      if (ok) {
+        setAddress("");
+        setCode("");
+        onClose();
+        if (onCreated) onCreated();
+      }
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-card workspace-setup-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Workspace Setup"
+      >
+        <div className="modal-header">
+          <div className="modal-title-group">
+            <span className="eyebrow">WORKSPACE MANAGEMENT</span>
+            <h2>Create or Join Workspace</h2>
+          </div>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={onClose}
+            title="Close"
+          >
+            <IconClose />
+          </button>
+        </div>
+
+        <div className="modal-tabs">
+          <button
+            type="button"
+            className={mode === "create" ? "modal-tab active" : "modal-tab"}
+            onClick={() => setMode("create")}
+          >
+            <IconPlus />
+            <span>Create New Workspace</span>
+          </button>
+          <button
+            type="button"
+            className={mode === "join" ? "modal-tab active" : "modal-tab"}
+            onClick={() => setMode("join")}
+          >
+            <IconExternal />
+            <span>Join Existing Team</span>
+          </button>
+        </div>
+
+        {mode === "create" ? (
+          <form onSubmit={handleCreate} className="modal-form">
+            <label>
+              Team or workspace name
+              <input
+                required
+                maxLength={100}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Core Engine"
+                autoFocus
+              />
+            </label>
+            <label>
+              Starting plan <span className="muted">required</span>
+              <textarea
+                required
+                rows={6}
+                maxLength={100000}
+                value={plan}
+                onChange={(e) => setPlan(e.target.value)}
+                placeholder={"What are we building?\nWhich features do we need?\nWhat should stay out of scope?\n\nFor an explicit folder boundary: Do not modify `legacy/`"}
+              />
+            </label>
+            <label>
+              Project folder
+              <div className="inline folder-picker-row">
+                <input
+                  readOnly
+                  value={workspace}
+                  placeholder="Choose the project folder"
+                />
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={async () => {
+                    try {
+                      setWorkspace((await window.cobble.chooseWorkspace()) ?? "");
+                    } catch (e) {
+                      onError(message(e));
+                    }
+                  }}
+                >
+                  Choose folder…
+                </button>
+              </div>
+              <span className="small muted">
+                Select the folder containing your code repository.
+              </span>
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busy || !name.trim() || !plan.trim()}
+              >
+                <span>Create Workspace</span>
+                <IconArrowRight />
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleJoin} className="modal-form">
+            <label>
+              Internet invitation or LAN address
+              <input
+                required
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="https://192.168.x.x:port/#fingerprint or relay URL"
+                autoFocus
+              />
+            </label>
+            <label>
+              Join code
+              <input
+                required
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="e.g. CB-94F02A"
+              />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={busy || !address.trim() || !code.trim()}
+              >
+                <span>Request to Join</span>
+                <IconArrowRight />
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StandaloneMiniChat({
+  state,
+  act,
+  busy,
+  onError,
+  theme,
+}: {
+  state: AppState;
+  act: (a: Action) => Promise<boolean>;
+  busy: boolean;
+  onError: (s: string) => void;
+  theme: "light" | "dark";
+}) {
+  const [recipient, setRecipient] = useState("team");
+  const [content, setContent] = useState("");
+  const [minimized, setMinimized] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const messages = state.messages.filter((m) =>
+    recipient === "team"
+      ? m.recipientId === null
+      : (m.senderId === state.profile?.id && m.recipientId === recipient) ||
+        (m.senderId === recipient && m.recipientId === state.profile?.id),
+  );
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  const send = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!recipient || !content.trim() || !state.activeTeamId) return;
+    const ok = await act({
+      type: "send",
+      content,
+      recipientId: recipient === "team" ? null : recipient,
+      sentVia: "text",
+    });
+    if (ok) {
+      setContent("");
+    }
+  };
+
+  const recipientName =
+    recipient === "team"
+      ? "Everyone"
+      : state.members.find((m) => m.id === recipient)?.name ?? "Direct";
+
+  const handleMinimize = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      if (window.cobble?.chatWindow) {
+        await window.cobble.chatWindow("minimize");
+      }
+    } catch {}
+    setMinimized(true);
+  };
+
+  const handleRestore = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      if (window.cobble?.chatWindow) {
+        await window.cobble.chatWindow("restore");
+      }
+    } catch {}
+    setMinimized(false);
+  };
+
+  const handleRedirect = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      if (window.cobble?.chatWindow) {
+        await window.cobble.chatWindow("redirect");
+      }
+    } catch {}
+  };
+
+  const handleClose = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      if (window.cobble?.chatWindow) {
+        await window.cobble.chatWindow("hide");
+      }
+    } catch {}
+  };
+
+  if (minimized) {
+    return (
+      <div className="mini-chat-host minimized">
+        <div
+          className="mini-chat-pill"
+          onClick={handleRestore}
+          role="button"
+          tabIndex={0}
+          title="Click to restore discussions window"
+        >
+          <span className="pill-dot" />
+          <IconChats />
+          <span className="pill-text">Discussions · {recipientName}</span>
+          <span className="pill-count">{messages.length}</span>
+          <button
+            type="button"
+            className="pill-close-btn"
+            onClick={handleClose}
+            title="Close discussions"
+          >
+            <IconClose />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mini-chat-host">
+      <div className="mini-chat-container">
+        <div className="mini-chat-header">
+          <div className="mini-chat-header-title">
+            <span className="status-dot online" />
+            <span className="title">Discussions</span>
+            <select
+              className="mini-chat-recipient-select"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              aria-label="Discussion recipient"
+            >
+              <option value="team">Everyone</option>
+              {state.members
+                .filter((m) => m.id !== state.profile?.id)
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className="mini-chat-controls">
+            <button
+              type="button"
+              className="mini-chat-ctrl-btn"
+              onClick={handleMinimize}
+              title="Minimize to desktop pill"
+            >
+              <IconMinimize />
+            </button>
+            <button
+              type="button"
+              className="mini-chat-ctrl-btn"
+              onClick={handleRedirect}
+              title="Open inside Cobble app"
+            >
+              <IconExternal />
+            </button>
+            <button
+              type="button"
+              className="mini-chat-ctrl-btn close-btn"
+              onClick={handleClose}
+              title="Close window"
+            >
+              <IconClose />
+            </button>
+          </div>
+        </div>
+
+        <div className="mini-chat-messages">
+          {!messages.length ? (
+            <div className="mini-chat-empty">
+              <IconChats />
+              <p>No messages yet in #{recipientName}.</p>
+            </div>
+          ) : (
+            messages.map((m) => {
+              const isMe = m.senderId === state.profile?.id;
+              return (
+                <div
+                  key={m.id}
+                  className={`mini-chat-bubble ${isMe ? "me" : "other"}`}
+                >
+                  <div className="bubble-header">
+                    <span className="sender">{isMe ? "You" : (state.members.find((u) => u.id === m.senderId)?.name ?? "Teammate")}</span>
+                    <span className="time">{stamp(m.createdAt)}</span>
+                  </div>
+                  <p>{m.content}</p>
+                </div>
+              );
+            })
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <form onSubmit={send} className="mini-chat-composer">
+          <input
+            type="text"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder={`Message ${recipientName}…`}
+            disabled={!state.activeTeamId}
+            maxLength={8000}
+          />
+          <button
+            type="submit"
+            disabled={busy || !content.trim() || !recipient || !state.activeTeamId}
+            title="Send"
+          >
+            <IconSend />
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}

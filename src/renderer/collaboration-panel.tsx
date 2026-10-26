@@ -417,7 +417,7 @@ export function WorkAreas({ state, act }: { state: AppState; act: Act }) {
             </label>
           </div>
           <div className="bottom-grid">
-            <fieldset>
+            <fieldset className="clean-fieldset">
               <legend>
                 Assigned teammates — select everyone sharing this work
               </legend>
@@ -432,7 +432,7 @@ export function WorkAreas({ state, act }: { state: AppState; act: Act }) {
                 </label>
               ))}
             </fieldset>
-            <fieldset>
+            <fieldset className="clean-fieldset">
               <legend>
                 Reviewers for important interface/architecture changes
               </legend>
@@ -448,7 +448,7 @@ export function WorkAreas({ state, act }: { state: AppState; act: Act }) {
               ))}
             </fieldset>
           </div>
-          <fieldset>
+          <fieldset className="clean-fieldset">
             <legend>This area depends on these other work areas</legend>
             {(team.graph?.modules ?? [])
               .filter((m) => m.id !== id)
