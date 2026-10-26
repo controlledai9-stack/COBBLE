@@ -130,4 +130,6 @@ integration and combined checks.
 Backend tests cover multi-peer handover, uncertain acknowledgements, route
 recovery without the creator, queued votes, authorization, private filtering,
 restart and an actual manager Git merge. Separate-network laptop testing and
-release packaging remain necessary. The existing 0.2.0 installer lacks this work.
+release verification remain necessary. A local 0.4.0 development installer now
+includes the backend, but your panel is still pending and will require a rebuild
+after integration. The older 0.2.0 installer lacks the current backend.

@@ -4,11 +4,11 @@ A local-first desktop workspace for a team's plan, saved code changes, and conve
 
 ## Install the app
 
-The Windows x64 download is `release/Cobble-Setup-0.2.0-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products.
+The current local Windows x64 installer is `release/Cobble-Setup-0.4.0-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products. The installer has not been published to GitHub; see [0.4.0 build evidence and checksum](docs/RELEASE-0.4.0.md).
 
 This is an unsigned development installer. A clean Windows VM installation and real multi-device testing remain release checks; building the installer is not evidence those checks passed.
 
-The older 0.2.0 installer does not contain the current hosting, internet, IDE or drag/shutdown updates. Pulling Git source does not update an executable that was built earlier. Rebuild the current source and confirm **Cobble 0.4.0** in the app window title or Profile settings. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
+The older 0.2.0 installer does not contain the current hosting, internet, IDE or drag/shutdown updates. Pulling Git source does not update an executable that was built earlier. Use the new 0.4.0 installer or rebuild current source, and confirm **Cobble 0.4.0** in the app window title or Profile settings. The hosting panel remains pending even in this installer. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
 
 ## Run from source (developers only)
 
@@ -111,4 +111,4 @@ Still to validate/build: clean Windows installation, real microphone capture, re
 
 Architecture and implementation decisions are in [docs/architecture.md](docs/architecture.md). The product's target behavior is in [cobble-full-build-spec.md](cobble-full-build-spec.md).
 
-Build evidence, installer checksum and a manual test walkthrough are in [docs/RELEASE-0.2.0.md](docs/RELEASE-0.2.0.md).
+Current build evidence, installer checksum and a manual test walkthrough are in [docs/RELEASE-0.4.0.md](docs/RELEASE-0.4.0.md). The older [0.2.0 report](docs/RELEASE-0.2.0.md) is historical.

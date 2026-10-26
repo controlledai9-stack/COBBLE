@@ -1,6 +1,7 @@
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { resolve } from "node:path";
 import assert from "node:assert/strict";
 import electron from "electron";
 
@@ -64,5 +65,13 @@ async function verify(command, args, name) {
     if (child.exitCode === null) child.kill();
   }
 }
-await verify(process.execPath, ["dist/relay.cjs"], "standalone bundle");
-await verify(electron, [".", "--relay-server"], "bundled Electron runtime");
+if (process.argv.includes("--packaged")) {
+  await verify(
+    resolve("release/win-unpacked/Cobble.exe"),
+    ["--relay-server"],
+    "packaged Cobble executable",
+  );
+} else {
+  await verify(process.execPath, ["dist/relay.cjs"], "standalone bundle");
+  await verify(electron, [".", "--relay-server"], "bundled Electron runtime");
+}

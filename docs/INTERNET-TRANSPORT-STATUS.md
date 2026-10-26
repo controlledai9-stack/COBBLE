@@ -33,8 +33,10 @@ stronger hardware does not create an inbound route.
 
 Backend state/actions are live. The hosting panel remains assigned to Vyom in
 `VYOM-HOSTING-UI-INTEGRATION.md`; it has not been integrated in this checkpoint.
-No mascot graphics or animations changed. Source version is 0.4.0. The old 0.2.0
-installer lacks this work; no new installer or public endpoint is published.
+No mascot graphics or animations changed. Source version is 0.4.0. A local 0.4.0
+development installer now includes the backend and passed packaged workflow,
+companion, shutdown, voice and relay checks; see `RELEASE-0.4.0.md`. The hosting
+panel remains pending. No installer or public endpoint is published externally.
 
 ## Verification
 
@@ -64,6 +66,6 @@ An unreachable network produces an honest blocked state with no external fallbac
 
 This is planned migration, not crash failover or a replicated quorum service.
 Offline pending invite holders may need a refreshed invite after an old endpoint
-closes. A new self-contained installer still needs packaging and clean-Windows
-verification after UI integration. Local tests do not establish internet load,
+closes. The local installer needs rebuilding after UI integration, plus clean-
+Windows install/upgrade/uninstall verification. Local tests do not establish internet load,
 external security review or universal NAT traversal.
