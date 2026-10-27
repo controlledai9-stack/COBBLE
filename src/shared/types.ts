@@ -404,7 +404,7 @@ export interface DesktopApi {
       | "status",
   ): Promise<{ visible: boolean; minimized: boolean }>;
   onChatWindowState?(
-    callback: (state: { minimized: boolean }) => void,
+    callback: (state: { visible?: boolean; minimized: boolean }) => void,
   ): () => void;
   onCompanion(callback: (mode: CompanionMode) => void): () => void;
   onNavigate(callback: (tab: Tab, startVoice: boolean) => void): () => void;

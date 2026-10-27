@@ -513,6 +513,18 @@ else {
             minimized: chatWindowMinimized,
           });
         });
+        chatWindow.on("resize", () => {
+          if (!chatWindowMinimized && chatWindow && !chatWindow.isDestroyed()) {
+            const b = chatWindow.getBounds();
+            if (b.height >= 400 && b.width >= 320) savedChatBounds = b;
+          }
+        });
+        chatWindow.on("move", () => {
+          if (!chatWindowMinimized && chatWindow && !chatWindow.isDestroyed()) {
+            const b = chatWindow.getBounds();
+            if (b.height >= 400 && b.width >= 320) savedChatBounds = b;
+          }
+        });
         chatWindow.on("closed", () => {
           chatWindow = null;
           chatWindowMinimized = false;
@@ -554,22 +566,42 @@ else {
           }
           return { visible: false, minimized: false };
         }
+        const broadcastChatState = (visible: boolean, minimized: boolean) => {
+          if (main && !main.isDestroyed()) {
+            main.webContents.send("cobble:chat-window-state", { visible, minimized });
+          }
+          if (chatWindow && !chatWindow.isDestroyed()) {
+            chatWindow.webContents.send("cobble:chat-window-state", { visible, minimized });
+          }
+        };
+        const restoreChatBounds = (targetWin: BrowserWindow) => {
+          targetWin.setMinimumSize(320, 400);
+          targetWin.setResizable(true);
+          const restoreB = {
+            width: Math.max(380, savedChatBounds.width),
+            height: Math.max(520, savedChatBounds.height),
+            x: savedChatBounds.x,
+            y: savedChatBounds.y,
+          };
+          targetWin.setBounds(restoreB);
+          chatWindowMinimized = false;
+          targetWin.webContents.send("cobble:chat-window-state", {
+            minimized: false,
+          });
+        };
         const win = getChatWindow();
         if (command === "show") {
           if (chatWindowMinimized) {
-            win.setMinimumSize(320, 400);
-            win.setResizable(true);
-            win.setBounds(savedChatBounds);
-            chatWindowMinimized = false;
-            win.webContents.send("cobble:chat-window-state", {
-              minimized: false,
-            });
+            restoreChatBounds(win);
           }
+          win.setAlwaysOnTop(true, "floating");
           win.show();
           win.focus();
+          broadcastChatState(true, false);
           return { visible: true, minimized: false };
         } else if (command === "hide") {
           win.hide();
+          broadcastChatState(false, chatWindowMinimized);
           return { visible: false, minimized: chatWindowMinimized };
         } else if (command === "toggle") {
           if (win.isVisible()) {
@@ -577,23 +609,21 @@ else {
             return { visible: false, minimized: chatWindowMinimized };
           } else {
             if (chatWindowMinimized) {
-              win.setMinimumSize(320, 400);
-              win.setResizable(true);
-              win.setBounds(savedChatBounds);
-              chatWindowMinimized = false;
-              win.webContents.send("cobble:chat-window-state", {
-                minimized: false,
-              });
+              restoreChatBounds(win);
             }
+            win.setAlwaysOnTop(true, "floating");
             win.show();
             win.focus();
+            broadcastChatState(true, false);
             return { visible: true, minimized: false };
           }
         } else if (command === "minimize") {
           if (!chatWindowMinimized) {
-            savedChatBounds = win.getBounds();
+            const curr = win.getBounds();
+            if (curr.height >= 400 && curr.width >= 320) savedChatBounds = curr;
+            chatWindowMinimized = true;
             const workArea = screen.getDisplayMatching(
-              win.getBounds(),
+              curr,
             ).workArea;
             win.setMinimumSize(0, 0);
             win.setResizable(false);
@@ -603,25 +633,22 @@ else {
               width: 270,
               height: 44,
             });
-            chatWindowMinimized = true;
             win.webContents.send("cobble:chat-window-state", {
               minimized: true,
             });
           }
+          win.setAlwaysOnTop(true, "floating");
           win.show();
+          broadcastChatState(true, true);
           return { visible: true, minimized: true };
         } else if (command === "restore") {
           if (chatWindowMinimized) {
-            win.setMinimumSize(320, 400);
-            win.setResizable(true);
-            win.setBounds(savedChatBounds);
-            chatWindowMinimized = false;
-            win.webContents.send("cobble:chat-window-state", {
-              minimized: false,
-            });
+            restoreChatBounds(win);
           }
+          win.setAlwaysOnTop(true, "floating");
           win.show();
           win.focus();
+          broadcastChatState(true, false);
           return { visible: true, minimized: false };
         } else if (command === "redirect") {
           if (!smoke) {
@@ -630,6 +657,7 @@ else {
           }
           main.webContents.send("cobble:navigate", "Chats", false);
           win.hide();
+          broadcastChatState(false, chatWindowMinimized);
           return { visible: false, minimized: chatWindowMinimized };
         } else if (command === "status") {
           return { visible: win.isVisible(), minimized: chatWindowMinimized };

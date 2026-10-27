@@ -109,16 +109,48 @@ function App() {
   >(null);
   const [floatingChat, setFloatingChat] = useState(false);
   const [floatingChatMinimized, setFloatingChatMinimized] = useState(false);
+  const [nativeChatOpen, setNativeChatOpen] = useState(false);
+
+  useEffect(() => {
+    const off = window.cobble?.onChatWindowState?.((value) => {
+      if (typeof value.visible === "boolean") {
+        setNativeChatOpen(value.visible);
+      }
+    });
+    void window.cobble
+      ?.chatWindow?.("status")
+      .then((val) => setNativeChatOpen(val.visible))
+      .catch(() => {});
+    return off;
+  }, []);
 
   const openMiniChatWindow = async () => {
     if (window.cobble?.chatWindow) {
       try {
-        await window.cobble.chatWindow("show");
+        const res = await window.cobble.chatWindow("show");
+        setNativeChatOpen(res.visible);
+        setFloatingChat(false);
         return;
-      } catch {}
+      } catch (e) {
+        console.error(e);
+      }
     }
     setFloatingChat(true);
     setFloatingChatMinimized(false);
+  };
+
+  const toggleMiniChatWindow = async () => {
+    if (window.cobble?.chatWindow) {
+      try {
+        const res = await window.cobble.chatWindow("toggle");
+        setNativeChatOpen(res.visible);
+        setFloatingChat(false);
+        return;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setFloatingChat((f) => !f);
   };
 
   const team = state?.teams.find((t) => t.id === state.activeTeamId);
@@ -316,8 +348,8 @@ function App() {
           <div className="topbar-actions">
             <button
               type="button"
-              className={`topbar-chat-btn ${floatingChat ? "active" : ""}`}
-              onClick={() => setFloatingChat((f) => !f)}
+              className={`topbar-chat-btn ${nativeChatOpen || floatingChat ? "active" : ""}`}
+              onClick={() => void toggleMiniChatWindow()}
               title="Toggle floating discussions window"
               aria-label="Floating discussions window"
             >
@@ -360,7 +392,7 @@ function App() {
             onError={setError}
             autoRecord={autoRecord}
             consumed={() => setAutoRecord(false)}
-            onOpenFloating={() => setFloatingChat(true)}
+            onOpenFloating={() => void openMiniChatWindow()}
           />
         ) : (
           <div className="page">
@@ -805,6 +837,7 @@ function App() {
             setTab("Chats");
             setFloatingChat(false);
           }}
+          onPopOut={() => void openMiniChatWindow()}
         />
       )}
     </div>
@@ -2156,6 +2189,7 @@ function FloatingChat({
   onToggleMinimize,
   onClose,
   onOpenFullChat,
+  onPopOut,
 }: {
   state: AppState;
   act: (a: Action) => Promise<boolean>;
@@ -2165,6 +2199,7 @@ function FloatingChat({
   onToggleMinimize: () => void;
   onClose: () => void;
   onOpenFullChat: () => void;
+  onPopOut?: () => void;
 }) {
   const [recipient, setRecipient] = useState("team");
   const [content, setContent] = useState("");
@@ -2347,13 +2382,23 @@ function FloatingChat({
           >
             <IconMinimize />
           </button>
+          {onPopOut && (
+            <button
+              type="button"
+              className="header-icon-btn"
+              onClick={onPopOut}
+              title="Pop out into desktop window outside Cobble"
+            >
+              <IconExternal />
+            </button>
+          )}
           <button
             type="button"
             className="header-icon-btn"
             onClick={onOpenFullChat}
             title="Open full view"
           >
-            <IconExternal />
+            <IconArrowRight />
           </button>
           <button
             type="button"

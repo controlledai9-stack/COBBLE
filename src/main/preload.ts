@@ -30,7 +30,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("cobble:companion", command, point),
   chatWindow: (command) => ipcRenderer.invoke("cobble:chat-window", command),
   onChatWindowState: (callback) => {
-    const listener = (_: unknown, state: { minimized: boolean }) =>
+    const listener = (_: unknown, state: { visible?: boolean; minimized: boolean }) =>
       callback(state);
     ipcRenderer.on("cobble:chat-window-state", listener);
     return () =>
