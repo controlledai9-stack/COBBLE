@@ -146,15 +146,20 @@ else {
         companionDrag.stop();
         machine.dragEnd();
         const bounds = companion.getBounds();
+        const display = screen.getDisplayMatching(bounds);
+        const clampedBounds = clampCompanionBounds(bounds, display.workArea);
+        if (bounds.x !== clampedBounds.x || bounds.y !== clampedBounds.y) {
+          companion.setBounds(clampedBounds);
+        }
         const collapsed = {
-          x: bounds.x + bounds.width - 160,
-          y: bounds.y + bounds.height - 110,
+          x: clampedBounds.x + clampedBounds.width - 160,
+          y: clampedBounds.y + clampedBounds.height - 110,
           width: 160,
           height: 110,
         };
         companionAnchor = clampCompanionBounds(
           collapsed,
-          screen.getDisplayMatching(collapsed).workArea,
+          display.workArea,
         );
         service.store.set("companionPosition", [
           companionAnchor.x,
@@ -474,12 +479,13 @@ else {
         const h = 520;
         const x = workArea.x + workArea.width - w - 24;
         const y = workArea.y + workArea.height - h - 24;
+        const initial = clampCompanionBounds({ x, y, width: w, height: h }, workArea);
 
         chatWindow = new BrowserWindow({
-          width: w,
-          height: h,
-          x,
-          y,
+          width: initial.width,
+          height: initial.height,
+          x: initial.x,
+          y: initial.y,
           frame: false,
           transparent: true,
           resizable: true,
@@ -495,7 +501,7 @@ else {
           },
         });
 
-        savedChatBounds = chatWindow.getBounds();
+        savedChatBounds = clampCompanionBounds(chatWindow.getBounds(), workArea);
 
         chatWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
         chatWindow.webContents.on("will-navigate", (event) =>
@@ -513,16 +519,56 @@ else {
             minimized: chatWindowMinimized,
           });
         });
+        let clampingChat = false;
+        const clampChatWindow = () => {
+          if (clampingChat || !chatWindow || chatWindow.isDestroyed()) return;
+          const b = chatWindow.getBounds();
+          const display = screen.getDisplayMatching(b);
+          const workArea = display.workArea;
+          if (chatWindowMinimized) {
+            const clampedPill = clampCompanionBounds(
+              { x: b.x, y: b.y, width: b.width, height: b.height },
+              workArea,
+            );
+            if (b.x !== clampedPill.x || b.y !== clampedPill.y) {
+              clampingChat = true;
+              try {
+                chatWindow.setBounds(clampedPill);
+              } finally {
+                clampingChat = false;
+              }
+            }
+          } else {
+            if (b.height >= 400 && b.width >= 320) {
+              const clamped = clampCompanionBounds(
+                { x: b.x, y: b.y, width: b.width, height: b.height },
+                workArea,
+              );
+              savedChatBounds = clamped;
+              if (b.x !== clamped.x || b.y !== clamped.y) {
+                clampingChat = true;
+                try {
+                  chatWindow.setBounds(clamped);
+                } finally {
+                  clampingChat = false;
+                }
+              }
+            }
+          }
+        };
+
+        chatWindow.on("move", clampChatWindow);
+        chatWindow.on("moved", clampChatWindow);
         chatWindow.on("resize", () => {
           if (!chatWindowMinimized && chatWindow && !chatWindow.isDestroyed()) {
             const b = chatWindow.getBounds();
-            if (b.height >= 400 && b.width >= 320) savedChatBounds = b;
-          }
-        });
-        chatWindow.on("move", () => {
-          if (!chatWindowMinimized && chatWindow && !chatWindow.isDestroyed()) {
-            const b = chatWindow.getBounds();
-            if (b.height >= 400 && b.width >= 320) savedChatBounds = b;
+            if (b.height >= 400 && b.width >= 320) {
+              const display = screen.getDisplayMatching(b);
+              savedChatBounds = clampCompanionBounds(
+                { x: b.x, y: b.y, width: b.width, height: b.height },
+                display.workArea,
+              );
+            }
           }
         });
         chatWindow.on("closed", () => {
@@ -577,12 +623,17 @@ else {
         const restoreChatBounds = (targetWin: BrowserWindow) => {
           targetWin.setMinimumSize(320, 400);
           targetWin.setResizable(true);
-          const restoreB = {
-            width: Math.max(380, savedChatBounds.width),
-            height: Math.max(520, savedChatBounds.height),
+          const targetW = Math.max(380, savedChatBounds.width);
+          const targetH = Math.max(520, savedChatBounds.height);
+          const rawBounds = {
+            width: targetW,
+            height: targetH,
             x: savedChatBounds.x,
             y: savedChatBounds.y,
           };
+          const display = screen.getDisplayMatching(rawBounds);
+          const restoreB = clampCompanionBounds(rawBounds, display.workArea);
+          savedChatBounds = restoreB;
           targetWin.setBounds(restoreB);
           chatWindowMinimized = false;
           targetWin.webContents.send("cobble:chat-window-state", {
@@ -593,6 +644,13 @@ else {
         if (command === "show") {
           if (chatWindowMinimized) {
             restoreChatBounds(win);
+          } else {
+            const curr = win.getBounds();
+            const display = screen.getDisplayMatching(curr);
+            const clamped = clampCompanionBounds(curr, display.workArea);
+            if (curr.x !== clamped.x || curr.y !== clamped.y) {
+              win.setBounds(clamped);
+            }
           }
           win.setAlwaysOnTop(true, "floating");
           win.show();
@@ -610,6 +668,13 @@ else {
           } else {
             if (chatWindowMinimized) {
               restoreChatBounds(win);
+            } else {
+              const curr = win.getBounds();
+              const display = screen.getDisplayMatching(curr);
+              const clamped = clampCompanionBounds(curr, display.workArea);
+              if (curr.x !== clamped.x || curr.y !== clamped.y) {
+                win.setBounds(clamped);
+              }
             }
             win.setAlwaysOnTop(true, "floating");
             win.show();
@@ -620,19 +685,26 @@ else {
         } else if (command === "minimize") {
           if (!chatWindowMinimized) {
             const curr = win.getBounds();
-            if (curr.height >= 400 && curr.width >= 320) savedChatBounds = curr;
+            if (curr.height >= 400 && curr.width >= 320) {
+              const display = screen.getDisplayMatching(curr);
+              savedChatBounds = clampCompanionBounds(curr, display.workArea);
+            }
             chatWindowMinimized = true;
             const workArea = screen.getDisplayMatching(
               curr,
             ).workArea;
             win.setMinimumSize(0, 0);
             win.setResizable(false);
-            win.setBounds({
-              x: workArea.x + workArea.width - 290,
-              y: workArea.y + workArea.height - 54,
-              width: 270,
-              height: 44,
-            });
+            const pillBounds = clampCompanionBounds(
+              {
+                x: workArea.x + workArea.width - 290,
+                y: workArea.y + workArea.height - 54,
+                width: 270,
+                height: 44,
+              },
+              workArea,
+            );
+            win.setBounds(pillBounds);
             win.webContents.send("cobble:chat-window-state", {
               minimized: true,
             });
@@ -736,7 +808,24 @@ else {
               screen.getCursorScreenPoint(),
               grab,
             );
-            if (next) companion.setBounds(next);
+            if (next) {
+              const display = screen.getDisplayMatching({
+                x: next.x,
+                y: next.y,
+                width: next.width ?? 160,
+                height: next.height ?? 110,
+              });
+              const clamped = clampCompanionBounds(
+                {
+                  x: next.x,
+                  y: next.y,
+                  width: next.width ?? 160,
+                  height: next.height ?? 110,
+                },
+                display.workArea,
+              );
+              companion.setBounds(clamped);
+            }
           } else if (command === "drag-move") {
             // Ignore late move messages after a release/cancel/blur.
           } else if (command === "drag-end") {
