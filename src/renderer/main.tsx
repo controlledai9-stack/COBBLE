@@ -348,16 +348,6 @@ function App() {
           <div className="topbar-actions">
             <button
               type="button"
-              className={`topbar-chat-btn ${nativeChatOpen || floatingChat ? "active" : ""}`}
-              onClick={() => void toggleMiniChatWindow()}
-              title="Toggle floating discussions window"
-              aria-label="Floating discussions window"
-            >
-              <IconChats />
-              <span>Chat Window</span>
-            </button>
-            <button
-              type="button"
               className="theme-toggle-btn"
               onClick={toggleTheme}
               title={
@@ -2023,6 +2013,18 @@ function Companion({
           </button>
           <button
             disabled={!state.activeTeamId}
+            onClick={() => {
+              void window.cobble.chatWindow?.("show");
+              setMenu(false);
+              void window.cobble.companion("pointer-off");
+            }}
+            title="Open floating discussions window"
+          >
+            <IconChats />
+            <span>Chat window</span>
+          </button>
+          <button
+            disabled={!state.activeTeamId}
             onClick={() => void window.cobble.open("Chats", true)}
           >
             <IconMic />
@@ -2055,7 +2057,12 @@ function Companion({
               <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
             </button>
           )}
-          <button onClick={() => void window.cobble.companion("hide")}>
+          <button
+            onClick={() => {
+              setMenu(false);
+              void window.cobble.companion("pointer-off");
+            }}
+          >
             <IconClose />
             <span>Hide controls</span>
           </button>
@@ -2704,7 +2711,77 @@ function StandaloneMiniChat({
   const [recipient, setRecipient] = useState("team");
   const [content, setContent] = useState("");
   const [minimized, setMinimized] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [voiceDraft, setVoiceDraft] = useState(false);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const stream = useRef<MediaStream | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const mounted = useRef(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(
+    () => () => {
+      mounted.current = false;
+      clearTimeout(timer.current);
+      if (recorder.current?.state === "recording") recorder.current.stop();
+      stream.current?.getTracks().forEach((track) => track.stop());
+    },
+    [],
+  );
+
+  const capture = async () => {
+    try {
+      if (recording) {
+        recorder.current?.stop();
+        return;
+      }
+      stream.current = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      if (!mounted.current) {
+        stream.current.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      const rec = new MediaRecorder(stream.current);
+      const chunks: Blob[] = [];
+      recorder.current = rec;
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+      rec.onstop = async () => {
+        clearTimeout(timer.current);
+        stream.current?.getTracks().forEach((t) => t.stop());
+        if (!mounted.current) return;
+        setRecording(false);
+        setTranscribing(true);
+        try {
+          const text = await window.cobble.transcribe(
+            await recordingToWav(
+              await new Blob(chunks, { type: rec.mimeType }).arrayBuffer(),
+            ),
+          );
+          if (!mounted.current) return;
+          const command = parseCommand(text, state.members);
+          setVoiceDraft(true);
+          setContent(command.content);
+          if (command.type === "broadcast") setRecipient("team");
+          else if (command.type === "dm" && command.recipientId)
+            setRecipient(command.recipientId);
+        } catch (e) {
+          onError(message(e));
+        } finally {
+          if (mounted.current) setTranscribing(false);
+        }
+      };
+      rec.start();
+      setRecording(true);
+      timer.current = setTimeout(() => rec.stop(), 60_000);
+    } catch (e) {
+      onError(message(e));
+      stream.current?.getTracks().forEach((t) => t.stop());
+    }
+  };
 
   useEffect(() => {
     const off = window.cobble.onChatWindowState?.((value) =>
@@ -2730,15 +2807,24 @@ function StandaloneMiniChat({
 
   const send = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (busy || !recipient || !content.trim() || !state.activeTeamId) return;
+    if (
+      busy ||
+      recording ||
+      transcribing ||
+      !recipient ||
+      !content.trim() ||
+      !state.activeTeamId
+    )
+      return;
     const ok = await act({
       type: "send",
       content,
       recipientId: recipient === "team" ? null : recipient,
-      sentVia: "text",
+      sentVia: voiceDraft ? "voice" : "text",
     });
     if (ok) {
       setContent("");
+      setVoiceDraft(false);
     }
   };
 
@@ -2892,7 +2978,10 @@ function StandaloneMiniChat({
                         : (state.members.find((u) => u.id === m.senderId)
                             ?.name ?? "Teammate")}
                     </span>
-                    <span className="time">{stamp(m.createdAt)}</span>
+                    <span className="time">
+                      {stamp(m.createdAt)}
+                      {m.sentVia === "voice" ? " · voice" : ""}
+                    </span>
                   </div>
                   <p>{m.content}</p>
                 </div>
@@ -2912,14 +3001,36 @@ function StandaloneMiniChat({
             type="text"
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder={`Message ${recipientName}…`}
-            disabled={!state.activeTeamId}
+            placeholder={
+              recording
+                ? "Listening…"
+                : transcribing
+                  ? "Transcribing voice…"
+                  : `Message ${recipientName}…`
+            }
+            disabled={!state.activeTeamId || recording || transcribing}
             maxLength={8000}
           />
           <button
+            type="button"
+            className={`mini-chat-voice-btn ${recording ? "recording" : ""}`}
+            disabled={transcribing || !state.activeTeamId}
+            onClick={() => void capture()}
+            title={
+              recording ? "Stop recording voice note" : "Record voice note"
+            }
+          >
+            {recording ? <IconStop /> : <IconMic />}
+          </button>
+          <button
             type="submit"
             disabled={
-              busy || !content.trim() || !recipient || !state.activeTeamId
+              busy ||
+              recording ||
+              transcribing ||
+              !content.trim() ||
+              !recipient ||
+              !state.activeTeamId
             }
             title="Send"
           >

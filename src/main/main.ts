@@ -695,7 +695,7 @@ else {
           } else if (command === "menu-open") {
             endCompanionDrag();
             const width = 340;
-            const height = 270;
+            const height = 350;
             const targetX = companionAnchor.x + 160 - width;
             const targetY = companionAnchor.y + 110 - height;
             const target = { x: targetX, y: targetY, width, height };

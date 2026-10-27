@@ -2977,6 +2977,40 @@ body:has(.mini-chat-host) {
   justify-content: center;
 }
 
+.mini-chat-composer button.mini-chat-voice-btn {
+  width: 34px;
+  padding: 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.mini-chat-composer button.mini-chat-voice-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+}
+
+.mini-chat-composer button.mini-chat-voice-btn.recording {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  border-color: #b91c1c !important;
+  animation: pulse 1s infinite;
+}
+
+.mini-chat-composer button.mini-chat-voice-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mini-chat-composer button.mini-chat-voice-btn svg,
+.mini-chat-composer button[type="submit"] svg {
+  width: 15px;
+  height: 15px;
+}
+
 .mini-chat-host.minimized {
   padding: 0;
   background: transparent;
