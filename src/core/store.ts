@@ -116,6 +116,52 @@ export class Store {
     if (!row) throw new Error("Team not found");
     return JSON.parse(row.data);
   }
+  deleteTeam(id: string) {
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM plan_versions WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM members WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM change_batches WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM activities WHERE team_id=?").run(id);
+      this.db
+        .prepare(
+          "DELETE FROM receipts WHERE message_id IN (SELECT id FROM messages WHERE team_id=?)",
+        )
+        .run(id);
+      this.db.prepare("DELETE FROM messages WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM invites WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM outbox WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM sync_log WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM notices WHERE team_id=?").run(id);
+      this.db.prepare("DELETE FROM teams WHERE id=?").run(id);
+      const activeId = this.setting<string | null>("activeTeamId", null);
+      if (activeId === id) {
+        const remaining = this.teams();
+        if (remaining.length > 0) {
+          this.set("activeTeamId", remaining[0].id);
+        } else {
+          this.db.prepare("DELETE FROM settings WHERE key='activeTeamId'").run();
+        }
+      }
+    });
+  }
+
+  deleteMessage(messageId: string, authorId: string): boolean {
+    const row = this.db
+      .prepare("SELECT data FROM messages WHERE id=?")
+      .get(messageId) as { data: string } | undefined;
+    if (!row) return false;
+    const msg = JSON.parse(row.data) as ChatMessage;
+    if (msg.senderId !== authorId) {
+      throw new Error("You can only delete messages written by yourself");
+    }
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM messages WHERE id=?").run(messageId);
+      this.db.prepare("DELETE FROM outbox WHERE id=?").run(messageId);
+      this.db.prepare("DELETE FROM receipts WHERE message_id=?").run(messageId);
+    });
+    return true;
+  }
+
   createTeam(name: string, plan: string, workspace: string): Team {
     const profile = this.profile();
     if (!profile) throw new Error("Set up your profile first");

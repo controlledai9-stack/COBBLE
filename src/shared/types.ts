@@ -266,6 +266,7 @@ export type Action =
       speak?: boolean;
     }
   | { type: "createTeam"; name: string; plan: string; workspace?: string }
+  | { type: "deleteTeam"; teamId: string }
   | { type: "selectTeam"; teamId: string }
   | {
       type: "updatePlan";
@@ -281,6 +282,7 @@ export type Action =
       content: string;
       sentVia: "text" | "voice";
     }
+  | { type: "deleteMessage"; messageId: string }
   | { type: "resolve"; activityId: string; resolution: "kept" | "dismissed" }
   | { type: "observe" }
   | { type: "host"; relayUrl?: string; publicAddress?: string }

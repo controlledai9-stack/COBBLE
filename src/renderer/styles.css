@@ -540,14 +540,98 @@ hr {
   margin: 18px 0 8px !important;
 }
 
-.workspace-select-wrapper select {
+.workspace-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
+}
+
+.workspace-select-wrapper select {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
   color: var(--text);
   border-radius: 7px;
   padding: 8px 10px;
+}
+
+.workspace-delete-icon-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  width: 33px;
+  height: 33px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.workspace-delete-icon-btn:hover {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.msg-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: all 0.15s ease;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.msg-delete-btn:hover {
+  opacity: 1;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.msg-delete-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.danger-zone {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.danger-btn {
+  background: #ef4444 !important;
+  color: #ffffff !important;
+  border: none !important;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  transition: background 0.15s ease;
+}
+
+.danger-btn:hover {
+  background: #dc2626 !important;
 }
 
 nav {

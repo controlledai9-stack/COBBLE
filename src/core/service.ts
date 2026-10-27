@@ -445,6 +445,17 @@ export class CobbleService extends EventEmitter {
         await this.monitor();
         break;
       }
+      case "deleteTeam": {
+        if (this.network.state.role !== "local") this.network.disconnect();
+        requiredText(action.teamId, "Team ID", 100);
+        this.store.deleteTeam(action.teamId);
+        const active = this.activeTeam();
+        if (active) {
+          await this.network.resume(active.id);
+        }
+        await this.monitor();
+        break;
+      }
       case "selectTeam":
         this.store.team(action.teamId);
         this.network.disconnect();
@@ -516,6 +527,14 @@ export class CobbleService extends EventEmitter {
           this.network.state.role === "client" || this.network.hosting.frozen,
         );
         await this.network.publish("chat", message);
+        break;
+      }
+      case "deleteMessage": {
+        const team = this.activeTeam();
+        const profile = this.store.profile();
+        if (!team || !profile) throw new Error("Select a team first");
+        requiredText(action.messageId, "Message ID", 100);
+        this.store.deleteMessage(action.messageId, profile.id);
         break;
       }
       case "resolve":

@@ -38,6 +38,7 @@ import {
   IconMoon,
   IconSettings,
   IconMinimize,
+  IconTrash,
 } from "./icons";
 import { PebbleRobot } from "./pebble";
 import { HostingPanel } from "./hosting-panel";
@@ -293,6 +294,25 @@ function App() {
                 </option>
               ))}
             </select>
+            {team && (
+              <button
+                type="button"
+                className="workspace-delete-icon-btn"
+                title={`Delete workspace "${team.name}"`}
+                aria-label={`Delete workspace ${team.name}`}
+                onClick={async () => {
+                  if (
+                    confirm(
+                      `Are you sure you want to delete workspace "${team.name}"? This removes its local plan, history, and discussions from this device.`
+                    )
+                  ) {
+                    await act({ type: "deleteTeam", teamId: team.id });
+                  }
+                }}
+              >
+                <IconTrash />
+              </button>
+            )}
           </div>
         </div>
         <nav>
@@ -1303,6 +1323,30 @@ function Teams({
                     </button>
                   </div>
                 )}
+                <hr />
+                <div className="danger-zone">
+                  <span className="eyebrow" style={{ color: "#ef4444" }}>DANGER ZONE</span>
+                  <p className="small muted">
+                    Deleting this workspace removes its discussions, plan, and local records from this device.
+                  </p>
+                  <button
+                    type="button"
+                    className="danger-btn"
+                    onClick={async () => {
+                      if (
+                        confirm(
+                          `Permanently delete workspace "${team.name}" from this device?`
+                        )
+                      ) {
+                        setModal(null);
+                        await act({ type: "deleteTeam", teamId: team.id });
+                      }
+                    }}
+                  >
+                    <IconTrash />
+                    <span>Delete Workspace</span>
+                  </button>
+                </div>
                 {team.ownerId === state.profile?.id && (
                   <div className="hosting">
                     <label>
@@ -1754,6 +1798,21 @@ function Chat({
                     <div className="bubble-meta">
                       <span className="bubble-author">{author}</span>
                       <span className="bubble-time">{stamp(m.createdAt)}</span>
+                      {isMine && (
+                        <button
+                          type="button"
+                          className="msg-delete-btn"
+                          title="Delete message"
+                          aria-label="Delete message"
+                          onClick={() => {
+                            if (confirm("Delete this message?")) {
+                              void act({ type: "deleteMessage", messageId: m.id });
+                            }
+                          }}
+                        >
+                          <IconTrash />
+                        </button>
+                      )}
                     </div>
                     <p>{m.content}</p>
                     <div className="bubble-status">
@@ -2440,6 +2499,21 @@ function FloatingChat({
                   <div className="float-meta">
                     <b>{author}</b>
                     <small>{stamp(m.createdAt)}</small>
+                    {isMine && (
+                      <button
+                        type="button"
+                        className="msg-delete-btn"
+                        title="Delete message"
+                        aria-label="Delete message"
+                        onClick={() => {
+                          if (confirm("Delete this message?")) {
+                            void act({ type: "deleteMessage", messageId: m.id });
+                          }
+                        }}
+                      >
+                        <IconTrash />
+                      </button>
+                    )}
                   </div>
                   <p>{m.content}</p>
                 </div>
@@ -2982,6 +3056,21 @@ function StandaloneMiniChat({
                       {stamp(m.createdAt)}
                       {m.sentVia === "voice" ? " · voice" : ""}
                     </span>
+                    {isMe && (
+                      <button
+                        type="button"
+                        className="msg-delete-btn"
+                        title="Delete message"
+                        aria-label="Delete message"
+                        onClick={() => {
+                          if (confirm("Delete this message?")) {
+                            void act({ type: "deleteMessage", messageId: m.id });
+                          }
+                        }}
+                      >
+                        <IconTrash />
+                      </button>
+                    )}
                   </div>
                   <p>{m.content}</p>
                 </div>
