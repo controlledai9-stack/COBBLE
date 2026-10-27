@@ -1,76 +1,122 @@
 <svg width="200" height="230" viewBox="0 0 200 230" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="pebCeramic" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="42%" stop-color="#F1F5F9"/>
-      <stop offset="78%" stop-color="#E2E8F0"/>
-      <stop offset="100%" stop-color="#CBD5E1"/>
+    <linearGradient id="pebGlassBody" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="16%" stop-color="#E0EEFF" stop-opacity="0.78"/>
+      <stop offset="48%" stop-color="#C7DDFF" stop-opacity="0.55"/>
+      <stop offset="80%" stop-color="#B4D0FE" stop-opacity="0.78"/>
+      <stop offset="100%" stop-color="#93A5F8" stop-opacity="0.92"/>
     </linearGradient>
-    <linearGradient id="pebOled" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0B0F19"/>
-      <stop offset="100%" stop-color="#020617"/>
+    <linearGradient id="pebIridescentRim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="28%" stop-color="#93C5FD"/>
+      <stop offset="60%" stop-color="#67E8F9"/>
+      <stop offset="82%" stop-color="#C084FC"/>
+      <stop offset="100%" stop-color="#F472B6"/>
     </linearGradient>
-    <linearGradient id="pebHand" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="70%" stop-color="#E2E8F0"/>
-      <stop offset="100%" stop-color="#94A3B8"/>
+    <linearGradient id="pebRingBack" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#A78BFA" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#93C5FD" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#DDD6FE" stop-opacity="0.45"/>
     </linearGradient>
-    <filter id="pebNeon" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="3.5" result="blur1"/>
-      <feGaussianBlur stdDeviation="1.5" result="blur2"/>
+    <linearGradient id="pebRingFront" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#EDE9FE" stop-opacity="0.95"/>
+      <stop offset="25%" stop-color="#C4B5FD" stop-opacity="0.88"/>
+      <stop offset="55%" stop-color="#A5F3FC" stop-opacity="0.92"/>
+      <stop offset="80%" stop-color="#DDD6FE" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#BAE6FD" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="pebRingGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="rgba(196, 181, 253, 0.7)"/>
+      <stop offset="50%" stop-color="rgba(165, 243, 252, 0.85)"/>
+      <stop offset="100%" stop-color="rgba(224, 231, 255, 0.6)"/>
+    </linearGradient>
+    <radialGradient id="pebNebulaCore" cx="48%" cy="46%" r="52%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="25%" stop-color="#DDD6FE" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#C4B5FD" stop-opacity="0.6"/>
+      <stop offset="75%" stop-color="#818CF8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#6366F1" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pebCrestHighlight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.88"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="pebGroundCaustic" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="rgba(147, 197, 253, 0.7)"/>
+      <stop offset="45%" stop-color="rgba(196, 181, 253, 0.35)"/>
+      <stop offset="75%" stop-color="rgba(165, 243, 252, 0.15)"/>
+      <stop offset="100%" stop-color="rgba(224, 231, 255, 0)"/>
+    </radialGradient>
+    <filter id="pebCyanGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.4" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.0" result="blur2"/>
       <feMerge>
         <feMergeNode in="blur1"/>
         <feMergeNode in="blur2"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
-    <radialGradient id="pebAura" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="rgba(56, 189, 248, 0.65)"/>
-      <stop offset="60%" stop-color="rgba(56, 189, 248, 0.2)"/>
-      <stop offset="100%" stop-color="rgba(56, 189, 248, 0)"/>
-    </radialGradient>
+    <filter id="pebSoftBlur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
   </defs>
 
-  <!-- LEVITATION HOVER AURA -->
-  <ellipse cx="100" cy="204" rx="42" ry="12" fill="url(#pebAura)"/>
-  <ellipse cx="100" cy="204" rx="24" ry="6" fill="#38BDF8" opacity="0.5" filter="url(#pebNeon)"/>
+  <!-- GROUND CAUSTIC GLOW -->
+  <ellipse cx="100" cy="208" rx="46" ry="11" fill="url(#pebGroundCaustic)"/>
+  <ellipse cx="100" cy="208" rx="26" ry="5.5" fill="#93C5FD" opacity="0.45" filter="url(#pebCyanGlow)"/>
 
-  <!-- FLOATING MAGNETIC HANDS -->
-  <g transform="rotate(8 34 120)">
-    <ellipse cx="34" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
-    <circle cx="34" cy="116" r="2.2" fill="#38BDF8" opacity="0.8"/>
-  </g>
-  <g transform="rotate(-8 166 120)">
-    <ellipse cx="166" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
-    <circle cx="166" cy="116" r="2.2" fill="#38BDF8" opacity="0.8"/>
+  <!-- BACK HALF OF ORBITAL RING -->
+  <g transform="rotate(-15 100 120)">
+    <path d="M 24 120 A 76 18 0 0 1 176 120" stroke="url(#pebRingGlow)" stroke-width="9" opacity="0.5" stroke-linecap="round"/>
+    <path d="M 24 120 A 76 18 0 0 1 176 120" stroke="url(#pebRingBack)" stroke-width="6" stroke-linecap="round"/>
   </g>
 
-  <!-- ANTENNA & 3D COBBLESTONE BLOCK -->
-  <path d="M 100 48 C 100 32, 106 24, 110 16" stroke="#94A3B8" stroke-width="3.2" stroke-linecap="round"/>
-  <circle cx="110" cy="16" r="4.5" fill="#38BDF8" filter="url(#pebNeon)"/>
-  <g transform="translate(104, -4) scale(0.85)">
-    <polygon points="12,0 24,6 12,12 0,6" fill="#94A3B8" stroke="#334155" stroke-width="0.8"/>
-    <polygon points="0,6 12,12 12,24 0,18" fill="#475569" stroke="#334155" stroke-width="0.8"/>
-    <polygon points="12,12 24,6 24,18 12,24" fill="#334155" stroke="#1E293B" stroke-width="0.8"/>
-    <rect x="3" y="9" width="3" height="3" fill="#64748B"/>
-    <rect x="15" y="14" width="3" height="3" fill="#1E293B"/>
+  <!-- GELATINOUS DROPLET BODY -->
+  <path d="M 100 48 C 128 48, 160 70, 162 108 C 164 138, 154 166, 134 172 C 118 177, 108 168, 100 168 C 92 168, 82 177, 66 172 C 46 166, 36 138, 38 108 C 40 70, 72 48, 100 48 Z" fill="url(#pebGlassBody)" stroke="url(#pebIridescentRim)" stroke-width="2.4"/>
+
+  <!-- INTERNAL COSMIC CORE & STAR PARTICLES -->
+  <circle cx="100" cy="114" r="35" fill="url(#pebNebulaCore)"/>
+  <circle cx="88" cy="108" r="1.3" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="114" cy="118" r="1.4" fill="#FFFFFF" opacity="0.85"/>
+  <circle cx="102" cy="130" r="1.1" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="94" cy="124" r="0.9" fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- CAUSTIC HIGHLIGHTS -->
+  <path d="M 74 58 C 86 52, 114 52, 126 58 C 114 55, 86 55, 74 58 Z" fill="url(#pebCrestHighlight)"/>
+  <path d="M 48 80 C 44 95, 48 116, 56 128 C 50 116, 48 95, 52 82 Z" fill="#FFFFFF" opacity="0.45"/>
+  <path d="M 152 80 C 156 95, 152 116, 144 128 C 150 116, 152 95, 148 82 Z" fill="#FFFFFF" opacity="0.45"/>
+  <path d="M 64 162 C 72 170, 92 170, 98 165" stroke="rgba(255,255,255,0.6)" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <path d="M 102 165 C 108 170, 128 170, 136 162" stroke="rgba(255,255,255,0.6)" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+
+  <!-- ROSY BLUSH CHEEKS -->
+  <circle cx="68" cy="112" r="7" fill="#F472B6" opacity="0.25" filter="url(#pebSoftBlur)"/>
+  <circle cx="132" cy="112" r="7" fill="#F472B6" opacity="0.25" filter="url(#pebSoftBlur)"/>
+
+  <!-- EYES WITH VERTICAL GLOWING SLITS -->
+  <rect x="78" y="86" width="12" height="22" rx="6" fill="#181B34"/>
+  <rect x="82.5" y="89" width="3" height="12" rx="1.5" fill="#67E8F9" filter="url(#pebCyanGlow)"/>
+  <rect x="83" y="90" width="2" height="10" rx="1" fill="#FFFFFF"/>
+  <circle cx="84" cy="88" r="1.3" fill="#FFFFFF"/>
+
+  <rect x="110" y="86" width="12" height="22" rx="6" fill="#181B34"/>
+  <rect x="114.5" y="89" width="3" height="12" rx="1.5" fill="#67E8F9" filter="url(#pebCyanGlow)"/>
+  <rect x="115" y="90" width="2" height="10" rx="1" fill="#FFFFFF"/>
+  <circle cx="116" cy="88" r="1.3" fill="#FFFFFF"/>
+
+  <!-- SMILE -->
+  <path d="M 96 114 C 98 117, 102 117, 104 114" stroke="#312E81" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+
+  <!-- FRONT HALF OF ORBITAL RING -->
+  <g transform="rotate(-15 100 120)">
+    <path d="M 176 120 A 76 18 0 0 1 24 120" stroke="url(#pebRingGlow)" stroke-width="10" opacity="0.5" stroke-linecap="round"/>
+    <path d="M 176 120 A 76 18 0 0 1 24 120" stroke="url(#pebRingFront)" stroke-width="6.5" stroke-linecap="round"/>
+    <path d="M 168 122 A 68 15 0 0 1 32 122" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>
   </g>
 
-  <!-- SMOOTH PEBBLE CHASSIS -->
-  <path d="M 100 45 C 142 45, 160 70, 160 114 C 160 156, 138 188, 100 188 C 62 188, 40 156, 40 114 C 40 70, 58 45, 100 45 Z" fill="url(#pebCeramic)" stroke="#94A3B8" stroke-width="2.4"/>
-  <path d="M 64 165 C 78 180, 122 180, 136 165 C 128 178, 72 178, 64 165 Z" fill="#94A3B8" opacity="0.35"/>
-
-  <!-- EMBEDDED OLED VISOR -->
-  <path d="M 100 64 C 130 64, 144 76, 144 104 C 144 128, 130 142, 100 142 C 70 142, 56 128, 56 104 C 56 76, 70 64, 100 64 Z" fill="url(#pebOled)" stroke="#1E293B" stroke-width="2"/>
-  <path d="M 72 73 C 86 68, 114 68, 128 73 C 120 78, 80 78, 72 73 Z" fill="white" opacity="0.16"/>
-  <circle cx="100" cy="166" r="4" fill="#0284C7" stroke="#38BDF8" stroke-width="1.4" filter="url(#pebNeon)"/>
-
-  <!-- EYES & MOUTH -->
-  <g filter="url(#pebNeon)">
-    <rect x="76" y="88" width="13" height="18" rx="6.5" fill="#38BDF8"/>
-    <circle cx="80.5" cy="92.5" r="2.4" fill="#FFFFFF"/>
-    <rect x="111" y="88" width="13" height="18" rx="6.5" fill="#38BDF8"/>
-    <circle cx="115.5" cy="92.5" r="2.4" fill="#FFFFFF"/>
-    <path d="M 96 118 C 98 122, 102 122, 104 118" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-  </g>
+  <!-- STAR SPARKLE & DROPLETS -->
+  <path d="M 170 56 Q 170 62 176 62 Q 170 62 170 68 Q 170 62 164 62 Q 170 62 170 56 Z" fill="#C4B5FD" opacity="0.85"/>
+  <circle cx="32" cy="78" r="3" fill="#BAE6FD" opacity="0.75"/>
+  <circle cx="166" cy="156" r="2.5" fill="#BAE6FD" opacity="0.75"/>
 </svg>

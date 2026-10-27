@@ -1,72 +1,113 @@
 <svg width="200" height="230" viewBox="0 0 200 230" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="pebCeramic" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="42%" stop-color="#F1F5F9"/>
-      <stop offset="78%" stop-color="#E2E8F0"/>
-      <stop offset="100%" stop-color="#CBD5E1"/>
+    <linearGradient id="pebGlassBody" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="16%" stop-color="#E0EEFF" stop-opacity="0.78"/>
+      <stop offset="48%" stop-color="#C7DDFF" stop-opacity="0.55"/>
+      <stop offset="80%" stop-color="#B4D0FE" stop-opacity="0.78"/>
+      <stop offset="100%" stop-color="#93A5F8" stop-opacity="0.92"/>
     </linearGradient>
-    <linearGradient id="pebOled" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0B0F19"/>
-      <stop offset="100%" stop-color="#020617"/>
+    <linearGradient id="pebIridescentRim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="28%" stop-color="#93C5FD"/>
+      <stop offset="60%" stop-color="#67E8F9"/>
+      <stop offset="82%" stop-color="#C084FC"/>
+      <stop offset="100%" stop-color="#F472B6"/>
     </linearGradient>
-    <linearGradient id="pebHand" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="70%" stop-color="#E2E8F0"/>
-      <stop offset="100%" stop-color="#94A3B8"/>
+    <linearGradient id="pebRingBack" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#A78BFA" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#93C5FD" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#DDD6FE" stop-opacity="0.45"/>
     </linearGradient>
-    <filter id="pebNeon" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="3.5" result="blur1"/>
-      <feGaussianBlur stdDeviation="1.5" result="blur2"/>
-      <feMerge>
-        <feMergeNode in="blur1"/>
-        <feMergeNode in="blur2"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <radialGradient id="pebAura" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="rgba(56, 189, 248, 0.4)"/>
-      <stop offset="60%" stop-color="rgba(56, 189, 248, 0.1)"/>
-      <stop offset="100%" stop-color="rgba(56, 189, 248, 0)"/>
+    <linearGradient id="pebRingFront" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#EDE9FE" stop-opacity="0.95"/>
+      <stop offset="25%" stop-color="#C4B5FD" stop-opacity="0.88"/>
+      <stop offset="55%" stop-color="#A5F3FC" stop-opacity="0.92"/>
+      <stop offset="80%" stop-color="#DDD6FE" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#BAE6FD" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="pebRingGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="rgba(196, 181, 253, 0.7)"/>
+      <stop offset="50%" stop-color="rgba(165, 243, 252, 0.85)"/>
+      <stop offset="100%" stop-color="rgba(224, 231, 255, 0.6)"/>
+    </linearGradient>
+    <radialGradient id="pebNebulaCore" cx="48%" cy="46%" r="52%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="25%" stop-color="#DDD6FE" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#C4B5FD" stop-opacity="0.6"/>
+      <stop offset="75%" stop-color="#818CF8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#6366F1" stop-opacity="0"/>
     </radialGradient>
+    <radialGradient id="pebGalaxySwirl" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFBEB" stop-opacity="0.92"/>
+      <stop offset="35%" stop-color="#FBCFE8" stop-opacity="0.75"/>
+      <stop offset="65%" stop-color="#C4B5FD" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#818CF8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pebCrestHighlight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.88"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="pebGroundCaustic" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="rgba(147, 197, 253, 0.55)"/>
+      <stop offset="50%" stop-color="rgba(196, 181, 253, 0.25)"/>
+      <stop offset="100%" stop-color="rgba(224, 231, 255, 0)"/>
+    </radialGradient>
+    <filter id="pebSoftBlur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
   </defs>
 
-  <!-- SOFT RESTING HOVER AURA -->
-  <ellipse cx="100" cy="204" rx="36" ry="10" fill="url(#pebAura)"/>
+  <!-- RESTING GROUND CAUSTIC GLOW -->
+  <ellipse cx="100" cy="208" rx="42" ry="9" fill="url(#pebGroundCaustic)"/>
 
-  <!-- HANDS TUCKED IN PEACEFULLY -->
-  <g transform="translate(6, 4) rotate(4 34 120)">
-    <ellipse cx="34" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
-    <circle cx="34" cy="116" r="2.2" fill="#38BDF8" opacity="0.6"/>
-  </g>
-  <g transform="translate(-6, 4) rotate(-4 166 120)">
-    <ellipse cx="166" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
-    <circle cx="166" cy="116" r="2.2" fill="#38BDF8" opacity="0.6"/>
+  <!-- BACK HALF OF ORBITAL RING -->
+  <g transform="rotate(-15 100 120)">
+    <path d="M 24 120 A 76 18 0 0 1 176 120" stroke="url(#pebRingGlow)" stroke-width="8" opacity="0.4" stroke-linecap="round"/>
+    <path d="M 24 120 A 76 18 0 0 1 176 120" stroke="url(#pebRingBack)" stroke-width="5.5" stroke-linecap="round"/>
   </g>
 
-  <!-- ANTENNA & 3D COBBLESTONE BLOCK -->
-  <path d="M 100 48 C 100 32, 106 24, 110 16" stroke="#94A3B8" stroke-width="3.2" stroke-linecap="round"/>
-  <circle cx="110" cy="16" r="4.5" fill="#38BDF8" opacity="0.8" filter="url(#pebNeon)"/>
-  <g transform="translate(104, -4) scale(0.85)">
-    <polygon points="12,0 24,6 12,12 0,6" fill="#94A3B8" stroke="#334155" stroke-width="0.8"/>
-    <polygon points="0,6 12,12 12,24 0,18" fill="#475569" stroke="#334155" stroke-width="0.8"/>
-    <polygon points="12,12 24,6 24,18 12,24" fill="#334155" stroke="#1E293B" stroke-width="0.8"/>
-    <rect x="3" y="9" width="3" height="3" fill="#64748B"/>
-    <rect x="15" y="14" width="3" height="3" fill="#1E293B"/>
+  <!-- GELATINOUS DROPLET BODY -->
+  <path d="M 100 48 C 128 48, 160 70, 162 108 C 164 138, 154 166, 134 172 C 118 177, 108 168, 100 168 C 92 168, 82 177, 66 172 C 46 166, 36 138, 38 108 C 40 70, 72 48, 100 48 Z" fill="url(#pebGlassBody)" stroke="url(#pebIridescentRim)" stroke-width="2.4"/>
+
+  <!-- INTERNAL COSMIC CORE & GALAXY NEBULA SWIRL -->
+  <circle cx="100" cy="114" r="35" fill="url(#pebNebulaCore)"/>
+  <ellipse cx="100" cy="116" rx="24" ry="10" fill="url(#pebGalaxySwirl)" transform="rotate(-20 100 116)" opacity="0.9"/>
+  <path d="M 85 119 C 90 124, 105 125, 114 118 C 120 113, 116 108, 108 107 C 98 106, 92 113, 97 118" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.85"/>
+
+  <!-- CAUSTIC HIGHLIGHTS -->
+  <path d="M 74 58 C 86 52, 114 52, 126 58 C 114 55, 86 55, 74 58 Z" fill="url(#pebCrestHighlight)"/>
+  <path d="M 48 80 C 44 95, 48 116, 56 128 C 50 116, 48 95, 52 82 Z" fill="#FFFFFF" opacity="0.45"/>
+  <path d="M 152 80 C 156 95, 152 116, 144 128 C 150 116, 152 95, 148 82 Z" fill="#FFFFFF" opacity="0.45"/>
+  <path d="M 64 162 C 72 170, 92 170, 98 165" stroke="rgba(255,255,255,0.6)" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <path d="M 102 165 C 108 170, 128 170, 136 162" stroke="rgba(255,255,255,0.6)" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+
+  <!-- SOFT SLEEP BLUSH CHEEKS -->
+  <circle cx="68" cy="112" r="7" fill="#F472B6" opacity="0.3" filter="url(#pebSoftBlur)"/>
+  <circle cx="132" cy="112" r="7" fill="#F472B6" opacity="0.3" filter="url(#pebSoftBlur)"/>
+
+  <!-- CLOSED SLEEPING EYES WITH CURVED LASHES -->
+  <path d="M 76 96 C 80 102, 90 102, 94 96" stroke="#1E1B4B" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+  <line x1="93" y1="96" x2="97" y2="92" stroke="#1E1B4B" stroke-width="2" stroke-linecap="round"/>
+  <line x1="95" y1="98" x2="99" y2="96" stroke="#1E1B4B" stroke-width="1.8" stroke-linecap="round"/>
+
+  <path d="M 106 96 C 110 102, 120 102, 124 96" stroke="#1E1B4B" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+  <line x1="123" y1="96" x2="127" y2="92" stroke="#1E1B4B" stroke-width="2" stroke-linecap="round"/>
+  <line x1="125" y1="98" x2="129" y2="96" stroke="#1E1B4B" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- PEACEFUL CONTENT SMILE -->
+  <path d="M 96 113 C 98 116.5, 102 116.5, 104 113" stroke="#312E81" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+
+  <!-- FRONT HALF OF ORBITAL RING -->
+  <g transform="rotate(-15 100 120)">
+    <path d="M 176 120 A 76 18 0 0 1 24 120" stroke="url(#pebRingGlow)" stroke-width="10" opacity="0.5" stroke-linecap="round"/>
+    <path d="M 176 120 A 76 18 0 0 1 24 120" stroke="url(#pebRingFront)" stroke-width="6.5" stroke-linecap="round"/>
+    <path d="M 168 122 A 68 15 0 0 1 32 122" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" opacity="0.85"/>
   </g>
 
-  <!-- SMOOTH PEBBLE CHASSIS -->
-  <path d="M 100 45 C 142 45, 160 70, 160 114 C 160 156, 138 188, 100 188 C 62 188, 40 156, 40 114 C 40 70, 58 45, 100 45 Z" fill="url(#pebCeramic)" stroke="#94A3B8" stroke-width="2.4"/>
-  <path d="M 64 165 C 78 180, 122 180, 136 165 C 128 178, 72 178, 64 165 Z" fill="#94A3B8" opacity="0.35"/>
-
-  <!-- EMBEDDED OLED VISOR -->
-  <path d="M 100 64 C 130 64, 144 76, 144 104 C 144 128, 130 142, 100 142 C 70 142, 56 128, 56 104 C 56 76, 70 64, 100 64 Z" fill="url(#pebOled)" stroke="#1E293B" stroke-width="2"/>
-  <circle cx="100" cy="166" r="4" fill="#0284C7" stroke="#38BDF8" stroke-width="1.4" opacity="0.6" filter="url(#pebNeon)"/>
-
-  <!-- SLEEPY HAPPY EYES & CONTENT SMILE -->
-  <g filter="url(#pebNeon)">
-    <path d="M 73 98 C 77 88, 89 88, 93 98" stroke="#38BDF8" stroke-width="3.6" stroke-linecap="round" fill="none"/>
-    <path d="M 107 98 C 111 88, 123 88, 127 98" stroke="#38BDF8" stroke-width="3.6" stroke-linecap="round" fill="none"/>
-    <path d="M 96 118 C 98 121, 102 121, 104 118" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" fill="none"/>
-  </g>
+  <!-- FLOATING CELESTIAL ZZZ -->
+  <text x="132" y="52" fill="#A78BFA" font-size="12" font-weight="bold" font-family="system-ui, sans-serif">z</text>
+  <text x="144" y="38" fill="#818CF8" font-size="15" font-weight="bold" font-family="system-ui, sans-serif">Z</text>
+  <path d="M 154 22 Q 154 26 158 26 Q 154 26 154 30 Q 154 26 150 26 Q 154 26 154 22 Z" fill="#FDE047" opacity="0.9"/>
 </svg>

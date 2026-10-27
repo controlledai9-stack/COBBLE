@@ -2040,47 +2040,57 @@ footer span:last-child {
   }
 }
 
-/* 2. Cute Flexible Robot Arms (Wave & Float) */
-.pebble-hand-left {
-  animation: hand-wave-left 3.2s ease-in-out infinite;
-  transform-origin: 68px 144px;
+/* 2. Planetary Orbital Ring Floating Precession */
+.pebble-orbital-ring-back,
+.pebble-orbital-ring-front {
+  animation: pebble-ring-precession 4.8s ease-in-out infinite;
+  transform-origin: 100px 120px;
 }
 
-.pebble-hand-right {
-  animation: hand-hover-right 3.2s ease-in-out infinite 0.3s;
-  transform-origin: 132px 144px;
-}
-
-@keyframes hand-wave-left {
+@keyframes pebble-ring-precession {
   0%,
   100% {
-    transform: rotate(0deg);
-  }
-  20% {
-    transform: rotate(14deg);
-  }
-  35% {
-    transform: rotate(-3deg);
+    transform: rotate(-15deg) translateY(0px);
   }
   50% {
-    transform: rotate(12deg);
-  }
-  65% {
-    transform: rotate(0deg);
+    transform: rotate(-10deg) translateY(-2px);
   }
 }
 
-@keyframes hand-hover-right {
+/* 3. Cosmic Core Nebula Pulse */
+.pebble-cosmic-core {
+  animation: pebble-core-pulse 3.8s ease-in-out infinite;
+  transform-origin: 100px 114px;
+}
+
+@keyframes pebble-core-pulse {
   0%,
   100% {
-    transform: translateY(0px) rotate(0deg);
+    opacity: 0.85;
+    transform: scale(1);
   }
   50% {
-    transform: translateY(2.5px) rotate(-5deg);
+    opacity: 1;
+    transform: scale(1.08);
   }
 }
 
-/* 3. Alive Eyes: Natural Blinking & Glancing Cycle */
+/* 4. Rotating Spiral Milky Way Swirl (Sleep Mode) */
+.pebble-galaxy-swirl {
+  animation: pebble-galaxy-spin 14s linear infinite;
+  transform-origin: 100px 116px;
+}
+
+@keyframes pebble-galaxy-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 5. Alive Eyes: Natural Blinking & Glancing Cycle */
 .pebble-eyes-alive {
   animation: pebble-eyes-cycle 5.4s ease-in-out infinite;
   transform-origin: 100px 97px;
@@ -2104,10 +2114,10 @@ footer span:last-child {
     transform: scaleY(1) translateX(0);
   }
   78% {
-    transform: scaleY(1) translateX(-3px);
+    transform: scaleY(1) translateX(-2.5px);
   }
   86% {
-    transform: scaleY(1) translateX(3px);
+    transform: scaleY(1) translateX(2.5px);
   }
   92%,
   100% {
@@ -2115,10 +2125,10 @@ footer span:last-child {
   }
 }
 
-/* 4. Glowing Amber Thruster Hover Plasma */
-.pebble-aura-group {
+/* 6. Glowing Ground Caustic Hover Pool */
+.pebble-ground-aura {
   animation: pebble-aura-pulse 3.6s ease-in-out infinite;
-  transform-origin: 100px 212px;
+  transform-origin: 100px 208px;
 }
 
 @keyframes pebble-aura-pulse {
@@ -2129,79 +2139,32 @@ footer span:last-child {
   }
   50% {
     opacity: 0.9;
-    transform: scale(1.15, 1.2);
+    transform: scale(1.12, 1.18);
   }
 }
 
-/* 5. Antenna Sway */
-.pebble-antenna-stem {
-  animation: pebble-antenna-sway 4s ease-in-out infinite;
-  transform-origin: 100px 38px;
+/* 7. Celestial Star Twinkle */
+.pebble-star-sparkle {
+  animation: pebble-star-twinkle 3.2s ease-in-out infinite;
+  transform-origin: 170px 62px;
 }
 
-@keyframes pebble-antenna-sway {
+@keyframes pebble-star-twinkle {
   0%,
   100% {
-    transform: rotate(0deg);
-  }
-  25% {
-    transform: rotate(5deg);
-  }
-  75% {
-    transform: rotate(-5deg);
-  }
-}
-
-/* 6. Legs Subtle Hover Drift */
-.pebble-leg-left {
-  animation: pebble-leg-left-drift 3.6s ease-in-out infinite;
-  transform-origin: 80px 174px;
-}
-
-.pebble-leg-right {
-  animation: pebble-leg-right-drift 3.6s ease-in-out infinite 0.2s;
-  transform-origin: 120px 174px;
-}
-
-@keyframes pebble-leg-left-drift {
-  0%,
-  100% {
-    transform: translateY(0) rotate(0deg);
+    opacity: 0.45;
+    transform: scale(0.85);
   }
   50% {
-    transform: translateY(1.5px) rotate(-2deg);
+    opacity: 1;
+    transform: scale(1.2) rotate(15deg);
   }
 }
 
-@keyframes pebble-leg-right-drift {
-  0%,
-  100% {
-    transform: translateY(0) rotate(0deg);
-  }
-  50% {
-    transform: translateY(1.5px) rotate(2deg);
-  }
-}
-
-/* 7. Dizzy Spiral Eyes for Dragging State */
-.pebble-spiral-eyes {
-  animation: pebble-spiral-spin 2.6s linear infinite;
-  transform-origin: 100px 96px;
-}
-
-@keyframes pebble-spiral-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* 8. Cute Idle Floating Zzz */
+/* 8. Cute Idle Floating Celestial Zzz */
 .pebble-zzz {
   animation: pebble-zzz-float 3.2s ease-in-out infinite;
-  transform-origin: 130px 45px;
+  transform-origin: 140px 45px;
 }
 
 @keyframes pebble-zzz-float {
@@ -2222,39 +2185,23 @@ footer span:last-child {
   transform: scale(0.96, 1.05) rotate(-3deg);
 }
 
-.mode-dragging .pebble-hand-left {
+.mode-dragging .pebble-orbital-ring-back,
+.mode-dragging .pebble-orbital-ring-front {
   animation: none !important;
-  transform: translateY(-12px) rotate(24deg);
+  transform: rotate(-22deg) scale(0.95);
   transition: transform 0.15s ease;
 }
 
-.mode-dragging .pebble-hand-right {
-  animation: none !important;
-  transform: translateY(-12px) rotate(-24deg);
-  transition: transform 0.15s ease;
-}
-
-.mode-dragging .pebble-leg-left {
-  animation: none !important;
-  transform: translateY(6px) rotate(-8deg);
-  transition: transform 0.2s ease;
-}
-
-.mode-dragging .pebble-leg-right {
-  animation: none !important;
-  transform: translateY(8px) rotate(10deg);
-  transition: transform 0.2s ease;
-}
-
-.mode-dragging .pebble-aura-group {
+.mode-dragging .pebble-ground-aura {
   animation: none !important;
   opacity: 0.2;
-  transform: scale(0.75);
+  transform: scale(0.72);
 }
 
 /* 10. Resting Idle State */
 .mode-idle .pebble-main-pod {
   animation: pebble-idle-breathe 4.6s ease-in-out infinite;
+  transform-origin: 100px 97px;
 }
 
 @keyframes pebble-idle-breathe {
@@ -2267,7 +2214,7 @@ footer span:last-child {
   }
 }
 
-.mode-idle .pebble-aura-group {
+.mode-idle .pebble-ground-aura {
   animation: pebble-idle-aura 4.6s ease-in-out infinite;
 }
 

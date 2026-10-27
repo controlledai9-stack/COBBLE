@@ -1,23 +1,51 @@
 <svg width="200" height="230" viewBox="0 0 200 230" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="pebCeramic" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="42%" stop-color="#F1F5F9"/>
-      <stop offset="78%" stop-color="#E2E8F0"/>
-      <stop offset="100%" stop-color="#CBD5E1"/>
+    <linearGradient id="pebGlassBody" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="16%" stop-color="#E0EEFF" stop-opacity="0.78"/>
+      <stop offset="48%" stop-color="#C7DDFF" stop-opacity="0.55"/>
+      <stop offset="80%" stop-color="#B4D0FE" stop-opacity="0.78"/>
+      <stop offset="100%" stop-color="#93A5F8" stop-opacity="0.92"/>
     </linearGradient>
-    <linearGradient id="pebOled" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0B0F19"/>
-      <stop offset="100%" stop-color="#020617"/>
+    <linearGradient id="pebIridescentRim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="28%" stop-color="#93C5FD"/>
+      <stop offset="60%" stop-color="#67E8F9"/>
+      <stop offset="82%" stop-color="#C084FC"/>
+      <stop offset="100%" stop-color="#F472B6"/>
     </linearGradient>
-    <linearGradient id="pebHand" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="70%" stop-color="#E2E8F0"/>
-      <stop offset="100%" stop-color="#94A3B8"/>
+    <linearGradient id="pebRingBack" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#A78BFA" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#93C5FD" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#DDD6FE" stop-opacity="0.45"/>
     </linearGradient>
-    <filter id="pebNeon" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="3.5" result="blur1"/>
-      <feGaussianBlur stdDeviation="1.5" result="blur2"/>
+    <linearGradient id="pebRingFront" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#EDE9FE" stop-opacity="0.95"/>
+      <stop offset="25%" stop-color="#C4B5FD" stop-opacity="0.88"/>
+      <stop offset="55%" stop-color="#A5F3FC" stop-opacity="0.92"/>
+      <stop offset="80%" stop-color="#DDD6FE" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#BAE6FD" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="pebRingGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="rgba(196, 181, 253, 0.7)"/>
+      <stop offset="50%" stop-color="rgba(165, 243, 252, 0.85)"/>
+      <stop offset="100%" stop-color="rgba(224, 231, 255, 0.6)"/>
+    </linearGradient>
+    <radialGradient id="pebNebulaCore" cx="48%" cy="46%" r="52%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="25%" stop-color="#DDD6FE" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#C4B5FD" stop-opacity="0.6"/>
+      <stop offset="75%" stop-color="#818CF8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#6366F1" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pebCrestHighlight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.88"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="pebCyanGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.4" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.0" result="blur2"/>
       <feMerge>
         <feMergeNode in="blur1"/>
         <feMergeNode in="blur2"/>
@@ -26,42 +54,40 @@
     </filter>
   </defs>
 
-  <!-- HANDS TRAILING UPWARD WHILE DRAGGED -->
-  <g transform="translate(0, -14) rotate(26 34 120)">
-    <ellipse cx="34" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
-    <circle cx="34" cy="116" r="2.2" fill="#38BDF8" opacity="0.8"/>
-  </g>
-  <g transform="translate(0, -14) rotate(-26 166 120)">
-    <ellipse cx="166" cy="120" rx="10" ry="16" fill="url(#pebHand)" stroke="#94A3B8" stroke-width="1.8"/>
-    <circle cx="166" cy="116" r="2.2" fill="#38BDF8" opacity="0.8"/>
+  <!-- BACK HALF OF ORBITAL RING TILTED -->
+  <g transform="rotate(-22 100 120)">
+    <path d="M 24 120 A 76 18 0 0 1 176 120" stroke="url(#pebRingGlow)" stroke-width="8" opacity="0.4" stroke-linecap="round"/>
+    <path d="M 24 120 A 76 18 0 0 1 176 120" stroke="url(#pebRingBack)" stroke-width="5.5" stroke-linecap="round"/>
   </g>
 
-  <!-- ANTENNA & 3D COBBLESTONE BLOCK -->
-  <path d="M 100 48 C 100 32, 106 24, 110 16" stroke="#94A3B8" stroke-width="3.2" stroke-linecap="round"/>
-  <circle cx="110" cy="16" r="4.5" fill="#38BDF8" filter="url(#pebNeon)"/>
-  <g transform="translate(104, -4) scale(0.85)">
-    <polygon points="12,0 24,6 12,12 0,6" fill="#94A3B8" stroke="#334155" stroke-width="0.8"/>
-    <polygon points="0,6 12,12 12,24 0,18" fill="#475569" stroke="#334155" stroke-width="0.8"/>
-    <polygon points="12,12 24,6 24,18 12,24" fill="#334155" stroke="#1E293B" stroke-width="0.8"/>
-    <rect x="3" y="9" width="3" height="3" fill="#64748B"/>
-    <rect x="15" y="14" width="3" height="3" fill="#1E293B"/>
-  </g>
+  <!-- ELASTIC FLUID DRAGGING BODY -->
+  <path d="M 100 36 C 124 36, 154 62, 152 104 C 150 148, 142 184, 126 194 C 112 202, 106 188, 100 188 C 94 188, 88 202, 74 194 C 58 184, 50 148, 48 104 C 46 62, 76 36, 100 36 Z" fill="url(#pebGlassBody)" stroke="url(#pebIridescentRim)" stroke-width="2.2"/>
 
-  <!-- BODY SLIGHTLY STRETCHED / TILTED -->
-  <g transform="scale(0.96, 1.04) rotate(-2 100 114)">
-    <path d="M 100 45 C 142 45, 160 70, 160 114 C 160 156, 138 188, 100 188 C 62 188, 40 156, 40 114 C 40 70, 58 45, 100 45 Z" fill="url(#pebCeramic)" stroke="#94A3B8" stroke-width="2.4"/>
-    <path d="M 64 165 C 78 180, 122 180, 136 165 C 128 178, 72 178, 64 165 Z" fill="#94A3B8" opacity="0.35"/>
+  <!-- TRAILING FLUID DROPLETS -->
+  <circle cx="42" cy="192" r="3" fill="url(#pebGlassBody)" stroke="#93C5FD" stroke-width="0.8"/>
+  <circle cx="158" cy="190" r="3.5" fill="url(#pebGlassBody)" stroke="#93C5FD" stroke-width="0.8"/>
+  <circle cx="100" cy="204" r="2.5" fill="url(#pebGlassBody)" stroke="#93C5FD" stroke-width="0.8"/>
 
-    <path d="M 100 64 C 130 64, 144 76, 144 104 C 144 128, 130 142, 100 142 C 70 142, 56 128, 56 104 C 56 76, 70 64, 100 64 Z" fill="url(#pebOled)" stroke="#1E293B" stroke-width="2"/>
-    <circle cx="100" cy="166" r="4" fill="#0284C7" stroke="#38BDF8" stroke-width="1.4" filter="url(#pebNeon)"/>
+  <!-- INTERNAL COSMIC CORE -->
+  <circle cx="100" cy="116" r="32" fill="url(#pebNebulaCore)"/>
 
-    <!-- SURPRISED DRAGGING EYES & 'o' MOUTH -->
-    <g filter="url(#pebNeon)">
-      <circle cx="82" cy="97" r="10" fill="#38BDF8"/>
-      <circle cx="84.5" cy="94" r="3.2" fill="#FFFFFF"/>
-      <circle cx="118" cy="97" r="10" fill="#38BDF8"/>
-      <circle cx="120.5" cy="94" r="3.2" fill="#FFFFFF"/>
-      <ellipse cx="100" cy="119" rx="4" ry="5.5" fill="#38BDF8" opacity="0.9"/>
-    </g>
+  <!-- CAUSTIC HIGHLIGHTS -->
+  <path d="M 78 48 C 88 42, 112 42, 122 48 C 112 45, 88 45, 78 48 Z" fill="url(#pebCrestHighlight)"/>
+
+  <!-- SURPRISED DRAGGING EYES & 'O' MOUTH -->
+  <rect x="77" y="82" width="14" height="24" rx="7" fill="#181B34"/>
+  <circle cx="84" cy="92" r="3.5" fill="#67E8F9" filter="url(#pebCyanGlow)"/>
+  <circle cx="84" cy="91" r="2" fill="#FFFFFF"/>
+
+  <rect x="109" y="82" width="14" height="24" rx="7" fill="#181B34"/>
+  <circle cx="116" cy="92" r="3.5" fill="#67E8F9" filter="url(#pebCyanGlow)"/>
+  <circle cx="116" cy="91" r="2" fill="#FFFFFF"/>
+
+  <ellipse cx="100" cy="116" rx="4" ry="5.5" fill="#1E1B4B"/>
+
+  <!-- FRONT HALF OF ORBITAL RING -->
+  <g transform="rotate(-22 100 120)">
+    <path d="M 176 120 A 76 18 0 0 1 24 120" stroke="url(#pebRingGlow)" stroke-width="9" opacity="0.45" stroke-linecap="round"/>
+    <path d="M 176 120 A 76 18 0 0 1 24 120" stroke="url(#pebRingFront)" stroke-width="6" stroke-linecap="round"/>
   </g>
 </svg>
