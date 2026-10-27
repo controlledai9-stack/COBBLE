@@ -348,9 +348,7 @@ export interface DesktopApi {
     sameDeviceOnly: true;
   } | null>;
   restoreBackupCopy(): Promise<{ path: string; offline: true } | null>;
-  maintenance(
-    days?: number,
-  ): Promise<{
+  maintenance(days?: number): Promise<{
     days: number;
     cutoff: string;
     databaseBytes: number;
@@ -396,8 +394,18 @@ export interface DesktopApi {
   applyRevert(activityId: string, token: string): Promise<void>;
   integrateMain(proposalId: string): Promise<void>;
   chatWindow?(
-    command: "show" | "hide" | "toggle" | "minimize" | "restore" | "redirect" | "status",
+    command:
+      | "show"
+      | "hide"
+      | "toggle"
+      | "minimize"
+      | "restore"
+      | "redirect"
+      | "status",
   ): Promise<{ visible: boolean; minimized: boolean }>;
+  onChatWindowState?(
+    callback: (state: { minimized: boolean }) => void,
+  ): () => void;
   onCompanion(callback: (mode: CompanionMode) => void): () => void;
   onNavigate(callback: (tab: Tab, startVoice: boolean) => void): () => void;
 }

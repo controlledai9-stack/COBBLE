@@ -1,14 +1,14 @@
 # Cobble
 
-A local-first desktop workspace for a team's plan, saved code changes, and conversations. Development source 0.4.1 adds refreshed-invitation recovery, improved conservative plan mapping, compatibility diagnostics, encrypted backup/offline recovery and local history maintenance to the existing safe-handover backend. See [backend delivery and UI contracts](docs/BACKEND-4-8-DELIVERY.md). The hosting panel remains assigned to Vyom in [the UI integration document](docs/VYOM-HOSTING-UI-INTEGRATION.md).
+A local-first desktop workspace for a team's plan, saved code changes, and conversations. Development source 0.4.2 integrates Vyom's refreshed themes, Discussions and mini-chat with the existing connection recovery, plan mapping, encrypted backup and safe-handover backend. See [backend delivery and UI contracts](docs/BACKEND-4-8-DELIVERY.md). The hosting panel is integrated in Workspace & Hosting; see [UI integration details](docs/UI-INTEGRATION-0.4.2.md).
 
 ## Install the app
 
-The current local Windows x64 installer is `release/Cobble-Setup-0.4.1-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products. The installer has not been published to GitHub; see [0.4.1 build evidence and checksum](docs/RELEASE-0.4.1.md).
+The current local Windows x64 installer is `release/Cobble-Setup-0.4.2-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products. The installer has not been published to GitHub; see [0.4.2 build evidence and checksum](docs/RELEASE-0.4.2.md).
 
 This is an unsigned development installer. A clean Windows VM installation and real multi-device testing remain release checks; building the installer is not evidence those checks passed.
 
-The older installers do not contain all current backend changes. Pulling Git source does not update an executable that was built earlier. Use the new 0.4.1 installer or rebuild current source, and confirm **Cobble 0.4.1** in the app window title or Profile settings. The hosting/settings panels remain pending even in this installer. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
+The older installers do not contain all current backend changes. Pulling Git source does not update an executable that was built earlier. Use the new 0.4.2 installer or rebuild current source, and confirm **Cobble 0.4.2** in the app window title or Profile settings. Hosting controls are available in Teams → Workspace & Hosting. Backup and maintenance settings presentation remains pending. Native dragging must be checked in the Windows Electron desktop window; a browser preview or headless/injected-input sandbox is a different test environment.
 
 ## Run from source (developers only)
 
@@ -58,7 +58,7 @@ Manual pairing is available under Connection diagnostics for development. The **
 
 The owner chooses **Host this team**, then shares the full HTTPS address (including the `#` fingerprint) and join code. The new member chooses **Join a team** and submits both. The owner accepts in **Invites**. The member then chooses their own local workspace folder. All devices need a reachable route to the host and an OS firewall rule allowing that host process. A short code alone cannot discover an internet host.
 
-Direct messages and targeted notices are filtered at the host before sync. The host can read messages; this build does not provide end-to-end encryption. Delivery receipts confirm receipt on a device, not that a person has read it. On host shutdown messages remain queued with retry backoff and jitter. Restarting hosting on the same device reuses its encrypted certificate and port. Per-team encrypted sessions survive switching teams. The hosting backend supports planned transfer to a substantially better reachable laptop with a durable old-host write fence; it does not provide crash failover. Owner management and hosting UI work remains separate from this backend.
+Direct messages and targeted notices are filtered at the host before sync. The host can read messages; this build does not provide end-to-end encryption. Delivery receipts confirm receipt on a device, not that a person has read it. On host shutdown messages remain queued with retry backoff and jitter. Restarting hosting on the same device reuses its encrypted certificate and port. Per-team encrypted sessions survive switching teams. The hosting backend supports planned transfer to a substantially better reachable laptop with a durable old-host write fence; it does not provide crash failover. The Teams hosting dialog presents initial hosting, candidacy, host evaluation and route diagnostics.
 
 ## Companion art
 
@@ -113,4 +113,4 @@ Still to validate/build: clean Windows installation, real microphone capture, re
 
 Architecture and implementation decisions are in [docs/architecture.md](docs/architecture.md). The product's target behavior is in [cobble-full-build-spec.md](cobble-full-build-spec.md).
 
-Current build evidence and installer checksum are in [docs/RELEASE-0.4.1.md](docs/RELEASE-0.4.1.md). The [0.4.0 manual walkthrough](docs/RELEASE-0.4.0.md) remains useful for unchanged core workflows; older reports are historical.
+Current build evidence and installer checksum are in [docs/RELEASE-0.4.2.md](docs/RELEASE-0.4.2.md). The [0.4.0 manual walkthrough](docs/RELEASE-0.4.0.md) remains useful for unchanged core workflows; older reports are historical.

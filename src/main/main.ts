@@ -171,8 +171,7 @@ else {
       const renderer = pathToFileURL(
         join(__dirname, "../renderer/index.html"),
       ).href;
-      const allWindows = [main, companion, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow] : [])];
-        for (const win of allWindows) {
+      for (const win of [main, companion]) {
         win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
         win.webContents.on("will-navigate", (event) => event.preventDefault());
         win.webContents.on("will-attach-webview", (event) =>
@@ -183,7 +182,13 @@ else {
         (webContents, permission, callback, details) =>
           callback(
             permission === "media" &&
-              [main.webContents, companion.webContents, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow.webContents] : [])].includes(webContents) &&
+              [
+                main.webContents,
+                companion.webContents,
+                ...(chatWindow && !chatWindow.isDestroyed()
+                  ? [chatWindow.webContents]
+                  : []),
+              ].includes(webContents) &&
               "mediaTypes" in details &&
               !!details.mediaTypes?.includes("audio") &&
               !details.mediaTypes.includes("video"),
@@ -191,7 +196,13 @@ else {
       );
       const allowed = (event: Electron.IpcMainInvokeEvent) => {
         if (
-          ![main.webContents, companion.webContents, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow.webContents] : [])].includes(event.sender) ||
+          ![
+            main.webContents,
+            companion.webContents,
+            ...(chatWindow && !chatWindow.isDestroyed()
+              ? [chatWindow.webContents]
+              : []),
+          ].includes(event.sender) ||
           event.senderFrame !== event.sender.mainFrame
         )
           throw new Error("Untrusted app frame");
@@ -454,7 +465,7 @@ else {
         main.webContents.send("cobble:navigate", tab, voice && tab === "Chats");
         machine.interact();
       });
-      
+
       const getChatWindow = () => {
         if (chatWindow && !chatWindow.isDestroyed()) return chatWindow;
         const primaryDisplay = screen.getPrimaryDisplay();
@@ -477,17 +488,35 @@ else {
           skipTaskbar: false,
           alwaysOnTop: true,
           show: false,
-          webPreferences: { ...options, backgroundThrottling: false },
+          webPreferences: {
+            ...options,
+            offscreen: false,
+            backgroundThrottling: false,
+          },
         });
 
         savedChatBounds = chatWindow.getBounds();
 
         chatWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-        chatWindow.webContents.on("will-navigate", (event) => event.preventDefault());
-        chatWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+        chatWindow.webContents.on("will-navigate", (event) =>
+          event.preventDefault(),
+        );
+        chatWindow.webContents.on("will-attach-webview", (event) =>
+          event.preventDefault(),
+        );
 
         const chatUrl = `${devUrl ?? renderer}?view=mini-chat`;
         void chatWindow.loadURL(chatUrl);
+        chatWindow.webContents.on("did-finish-load", () => {
+          chatWindow?.webContents.send("cobble:chat-window-state", {
+            visible: chatWindow.isVisible(),
+            minimized: chatWindowMinimized,
+          });
+        });
+        chatWindow.on("closed", () => {
+          chatWindow = null;
+          chatWindowMinimized = false;
+        });
 
         chatWindow.on("close", (event) => {
           if (!quitting && !shutdownComplete) {
@@ -500,13 +529,41 @@ else {
       };
 
       handle("chat-window", (_, command: string) => {
+        if (
+          ![
+            "show",
+            "hide",
+            "toggle",
+            "minimize",
+            "restore",
+            "redirect",
+            "status",
+          ].includes(command)
+        )
+          throw new Error("Unknown chat window command");
+        if (
+          (!chatWindow || chatWindow.isDestroyed()) &&
+          ["status", "hide", "redirect"].includes(command)
+        ) {
+          if (command === "redirect") {
+            if (!smoke) {
+              main.show();
+              main.focus();
+            }
+            main.webContents.send("cobble:navigate", "Chats", false);
+          }
+          return { visible: false, minimized: false };
+        }
         const win = getChatWindow();
         if (command === "show") {
           if (chatWindowMinimized) {
+            win.setMinimumSize(320, 400);
             win.setResizable(true);
             win.setBounds(savedChatBounds);
             chatWindowMinimized = false;
-            win.webContents.send("cobble:chat-window-state", { minimized: false });
+            win.webContents.send("cobble:chat-window-state", {
+              minimized: false,
+            });
           }
           win.show();
           win.focus();
@@ -520,10 +577,13 @@ else {
             return { visible: false, minimized: chatWindowMinimized };
           } else {
             if (chatWindowMinimized) {
+              win.setMinimumSize(320, 400);
               win.setResizable(true);
               win.setBounds(savedChatBounds);
               chatWindowMinimized = false;
-              win.webContents.send("cobble:chat-window-state", { minimized: false });
+              win.webContents.send("cobble:chat-window-state", {
+                minimized: false,
+              });
             }
             win.show();
             win.focus();
@@ -532,7 +592,10 @@ else {
         } else if (command === "minimize") {
           if (!chatWindowMinimized) {
             savedChatBounds = win.getBounds();
-            const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
+            const workArea = screen.getDisplayMatching(
+              win.getBounds(),
+            ).workArea;
+            win.setMinimumSize(0, 0);
             win.setResizable(false);
             win.setBounds({
               x: workArea.x + workArea.width - 290,
@@ -541,16 +604,23 @@ else {
               height: 44,
             });
             chatWindowMinimized = true;
-            win.webContents.send("cobble:chat-window-state", { minimized: true });
+            win.webContents.send("cobble:chat-window-state", {
+              minimized: true,
+            });
           }
+          win.show();
           return { visible: true, minimized: true };
         } else if (command === "restore") {
           if (chatWindowMinimized) {
+            win.setMinimumSize(320, 400);
             win.setResizable(true);
             win.setBounds(savedChatBounds);
             chatWindowMinimized = false;
-            win.webContents.send("cobble:chat-window-state", { minimized: false });
+            win.webContents.send("cobble:chat-window-state", {
+              minimized: false,
+            });
           }
+          win.show();
           win.focus();
           return { visible: true, minimized: false };
         } else if (command === "redirect") {
@@ -567,7 +637,8 @@ else {
         throw new Error("Unknown chat window command");
       });
 
-      handle("companion",
+      handle(
+        "companion",
         (_, command: string, point?: { x: number; y: number }) => {
           // Renderer hit points are local CSS coordinates, never screen deltas.
           // Convert page zoom to the DIP coordinates used by Electron windows.
@@ -662,7 +733,11 @@ else {
         void syncPairing().catch((error) =>
           console.error("IDE pairing refresh failed", error),
         );
-        for (const win of [main, companion, ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow] : [])])
+        for (const win of [
+          main,
+          companion,
+          ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow] : []),
+        ])
           if (!win.isDestroyed()) win.webContents.send("cobble:changed", state);
       });
       service.on("diagnostic", (message) => console.error("[Cobble]", message));
@@ -777,7 +852,7 @@ app.on("before-quit", (event) => {
   clearInterval(ideTimer);
   voiceShutdown.abort();
   ideShutdown.abort();
-  for (const window of [main, companion]) {
+  for (const window of [main, companion, chatWindow]) {
     if (window && !window.isDestroyed()) window.hide();
   }
   if (tray && !tray.isDestroyed()) tray.destroy();

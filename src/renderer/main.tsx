@@ -40,7 +40,10 @@ import {
   IconMinimize,
 } from "./icons";
 import { PebbleRobot } from "./pebble";
+import { HostingPanel } from "./hosting-panel";
+import { ModalShell } from "./modal-shell";
 import "./styles.css";
+import "./hosting-panel.css";
 declare global {
   interface Window {
     cobble: DesktopApi;
@@ -77,7 +80,10 @@ function App() {
 
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === "cobble-theme" && (e.newValue === "light" || e.newValue === "dark")) {
+      if (
+        e.key === "cobble-theme" &&
+        (e.newValue === "light" || e.newValue === "dark")
+      ) {
         setTheme(e.newValue);
       }
     };
@@ -98,7 +104,9 @@ function App() {
   const [revertPreview, setRevertPreview] = useState<RevertPreview | null>(
     null,
   );
-  const [teamModal, setTeamModal] = useState<"workspace" | "apps" | "create" | "join" | null>(null);
+  const [teamModal, setTeamModal] = useState<
+    "workspace" | "apps" | "create" | "join" | null
+  >(null);
   const [floatingChat, setFloatingChat] = useState(false);
   const [floatingChatMinimized, setFloatingChatMinimized] = useState(false);
 
@@ -119,7 +127,9 @@ function App() {
   const isMiniChat =
     new URLSearchParams(location.search).get("view") === "mini-chat";
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
-  const [workspaceModalMode, setWorkspaceModalMode] = useState<"create" | "join">("create");
+  const [workspaceModalMode, setWorkspaceModalMode] = useState<
+    "create" | "join"
+  >("create");
   const act = async (action: Action): Promise<boolean> => {
     setError("");
     setBusy(true);
@@ -157,8 +167,28 @@ function App() {
   }, []);
   if (!state)
     return <div className="loading">{error || "Opening your workspace…"}</div>;
-  if (companion) return <Companion state={state} act={act} error={error} theme={theme} onToggleTheme={toggleTheme} />;
-  if (isMiniChat && state) return <StandaloneMiniChat state={state} act={act} busy={busy} onError={setError} theme={theme} />;
+  if (companion)
+    return (
+      <Companion
+        state={state}
+        act={act}
+        error={error}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
+    );
+  if (isMiniChat && state)
+    return (
+      <StandaloneMiniChat
+        key={state.activeTeamId ?? "none"}
+        state={state}
+        act={act}
+        busy={busy}
+        onError={setError}
+        error={error}
+        theme={theme}
+      />
+    );
   if (!state.profile)
     return (
       <div className="welcome">
@@ -245,7 +275,7 @@ function App() {
             >
               {icon}
               <span>{label}</span>
-              {item === "Teams" &&
+              {item === "Invites" &&
                 state.invites.some((i) => i.state === "pending") && (
                   <b className="dot" />
                 )}
@@ -255,7 +285,9 @@ function App() {
         <div className="sidebar-bottom">
           <button
             type="button"
-            className={tab === "Profile" ? "profile-mini selected" : "profile-mini"}
+            className={
+              tab === "Profile" ? "profile-mini selected" : "profile-mini"
+            }
             onClick={() => {
               setTab("Profile");
               setError("");
@@ -263,7 +295,9 @@ function App() {
             aria-label="Profile and Settings"
           >
             <span className="avatar">
-              {state.profile.avatar || state.profile.name[0]?.toUpperCase() || "●"}
+              {state.profile.avatar ||
+                state.profile.name[0]?.toUpperCase() ||
+                "●"}
             </span>
             <div className="profile-mini-details">
               <span className="profile-mini-name">{state.profile.name}</span>
@@ -319,6 +353,7 @@ function App() {
 
         {tab === "Chats" ? (
           <Chat
+            key={state.activeTeamId ?? "none"}
             state={state}
             act={act}
             busy={busy}
@@ -393,359 +428,359 @@ function App() {
               </div>
             )}
             {tab === "Home" && (
-            <>
-              <div className="status-grid">
-                <Status
-                  label="WORKSPACE"
-                  value={
-                    ideConnected(state)
-                      ? "Connected"
-                      : state.ide.state === "lost"
-                        ? "Connection lost"
-                        : "Not paired"
-                  }
-                  detail={state.ide.editor ?? "Connect your editor in Teams"}
-                />
-                <Status
-                  label="SAVED CHANGES"
-                  value={
-                    state.paused
-                      ? "Paused"
-                      : state.watching
-                        ? "Watching"
+              <>
+                <div className="status-grid">
+                  <Status
+                    label="WORKSPACE"
+                    value={
+                      ideConnected(state)
+                        ? "Connected"
+                        : state.ide.state === "lost"
+                          ? "Connection lost"
+                          : "Not paired"
+                    }
+                    detail={state.ide.editor ?? "Connect your editor in Teams"}
+                  />
+                  <Status
+                    label="SAVED CHANGES"
+                    value={
+                      state.paused
+                        ? "Paused"
+                        : state.watching
+                          ? "Watching"
+                          : team?.workspace
+                            ? "Folder unavailable"
+                            : "Waiting for a folder"
+                    }
+                    detail={
+                      ideConnected(state)
+                        ? "IDE and folder linked"
                         : team?.workspace
-                          ? "Folder unavailable"
-                          : "Waiting for a folder"
-                  }
-                  detail={
-                    ideConnected(state)
-                      ? "IDE and folder linked"
-                      : team?.workspace
-                        ? "Folder watcher only"
-                        : "Choose a workspace in Teams"
-                  }
-                />
-                <Status
-                  label="TEAM SYNC"
-                  value={
-                    state.network.role === "local"
-                      ? "Local only"
-                      : state.network.role === "host"
-                        ? "Hosting"
-                        : "Client"
-                  }
-                  detail={state.network.state}
-                />
-              </div>
-              <section className="panel">
-                <div className="section-title">
-                  <h2>Recent Activity</h2>
-                  <div className="inline">
-                    <button
-                      className="text-button"
-                      disabled={busy || !team?.workspace}
-                      onClick={() => void act({ type: "observe" })}
-                    >
-                      Scan workspace
-                    </button>
-                    <button
-                      className="text-button"
-                      onClick={async () => {
-                        try {
-                          const text = await window.cobble.report();
-                          download("cobble-session.md", text);
-                        } catch (e) {
-                          setError(message(e));
-                        }
-                      }}
-                    >
-                      <span>Export summary</span>
-                      <IconExternal />
-                    </button>
-                  </div>
+                          ? "Folder watcher only"
+                          : "Choose a workspace in Teams"
+                    }
+                  />
+                  <Status
+                    label="TEAM SYNC"
+                    value={
+                      state.network.role === "local"
+                        ? "Local only"
+                        : state.network.role === "host"
+                          ? "Hosting"
+                          : "Client"
+                    }
+                    detail={state.network.state}
+                  />
                 </div>
-                {!state.activities.length ? (
-                  <div className="empty">
-                    <span className="empty-mark">
-                      <IconEmpty />
-                    </span>
-                    <h3>No recent activity</h3>
-                    <p>
-                      {team
-                        ? "Saved file modifications and agent updates will stream here in real time."
-                        : "Select or create a workspace to begin tracking."}
-                    </p>
-                  </div>
-                ) : (
-                  <div>
-                    {state.activities.map((a) => (
-                      <article
-                        className={`activity ${a.alert ? "needs-review" : ""}`}
-                        key={a.id}
+                <section className="panel">
+                  <div className="section-title">
+                    <h2>Recent Activity</h2>
+                    <div className="inline">
+                      <button
+                        className="text-button"
+                        disabled={busy || !team?.workspace}
+                        onClick={() => void act({ type: "observe" })}
                       >
-                        <span className="activity-icon">
-                          {a.classification === "extra" ? (
-                            <IconAlert />
-                          ) : (
-                            <IconActivity />
-                          )}
-                        </span>
-                        <div>
-                          <h3>
-                            {a.authorName} saved {a.paths.length}{" "}
-                            {a.paths.length === 1 ? "file" : "files"}
-                            <small>{stamp(a.createdAt)}</small>
-                          </h3>
-                          <p>{a.explanation}</p>
-                          {a.agentExplanation && (
-                            <p className="small">
-                              Change summary: {a.agentExplanation}
-                            </p>
-                          )}
-                          <div className="chips">
-                            <span>
-                              {a.resolution ??
-                                (a.classification === "extra"
-                                  ? "Scope conflict"
-                                  : "Recorded quietly")}
-                            </span>
-                            <span>Plan v{a.planVersion}</span>
-                          </div>
-                          <details>
-                            <summary>View files and plan references</summary>
-                            <pre>{a.paths.join("\n")}</pre>
-                            {a.planItemIds.map((id) => (
-                              <blockquote key={id}>
-                                {team?.items.find((i) => i.id === id)?.text ??
-                                  "See the referenced historical plan version."}
-                              </blockquote>
-                            ))}
-                          </details>
-                          {a.alert && a.authorId === state.profile?.id && (
-                            <div className="inline">
-                              <button
-                                disabled={busy}
-                                onClick={() =>
-                                  void act({
-                                    type: "resolve",
-                                    activityId: a.id,
-                                    resolution: "kept",
-                                  })
-                                }
-                              >
-                                Keep this change
-                              </button>
-                              <button
-                                className="secondary"
-                                onClick={async () => {
-                                  try {
-                                    setRevertPreview(
-                                      await window.cobble.previewRevert(a.id),
-                                    );
-                                  } catch (error) {
-                                    setError(message(error));
-                                  }
-                                }}
-                              >
-                                Review revert
-                              </button>
-                              <button
-                                className="text-button"
-                                onClick={() =>
-                                  void act({
-                                    type: "resolve",
-                                    activityId: a.id,
-                                    resolution: "dismissed",
-                                  })
-                                }
-                              >
-                                Dismiss
-                              </button>
+                        Scan workspace
+                      </button>
+                      <button
+                        className="text-button"
+                        onClick={async () => {
+                          try {
+                            const text = await window.cobble.report();
+                            download("cobble-session.md", text);
+                          } catch (e) {
+                            setError(message(e));
+                          }
+                        }}
+                      >
+                        <span>Export summary</span>
+                        <IconExternal />
+                      </button>
+                    </div>
+                  </div>
+                  {!state.activities.length ? (
+                    <div className="empty">
+                      <span className="empty-mark">
+                        <IconEmpty />
+                      </span>
+                      <h3>No recent activity</h3>
+                      <p>
+                        {team
+                          ? "Saved file modifications and agent updates will stream here in real time."
+                          : "Select or create a workspace to begin tracking."}
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      {state.activities.map((a) => (
+                        <article
+                          className={`activity ${a.alert ? "needs-review" : ""}`}
+                          key={a.id}
+                        >
+                          <span className="activity-icon">
+                            {a.classification === "extra" ? (
+                              <IconAlert />
+                            ) : (
+                              <IconActivity />
+                            )}
+                          </span>
+                          <div>
+                            <h3>
+                              {a.authorName} saved {a.paths.length}{" "}
+                              {a.paths.length === 1 ? "file" : "files"}
+                              <small>{stamp(a.createdAt)}</small>
+                            </h3>
+                            <p>{a.explanation}</p>
+                            {a.agentExplanation && (
+                              <p className="small">
+                                Change summary: {a.agentExplanation}
+                              </p>
+                            )}
+                            <div className="chips">
+                              <span>
+                                {a.resolution ??
+                                  (a.classification === "extra"
+                                    ? "Scope conflict"
+                                    : "Recorded quietly")}
+                              </span>
+                              <span>Plan v{a.planVersion}</span>
                             </div>
-                          )}
-                        </div>
-                      </article>
+                            <details>
+                              <summary>View files and plan references</summary>
+                              <pre>{a.paths.join("\n")}</pre>
+                              {a.planItemIds.map((id) => (
+                                <blockquote key={id}>
+                                  {team?.items.find((i) => i.id === id)?.text ??
+                                    "See the referenced historical plan version."}
+                                </blockquote>
+                              ))}
+                            </details>
+                            {a.alert && a.authorId === state.profile?.id && (
+                              <div className="inline">
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void act({
+                                      type: "resolve",
+                                      activityId: a.id,
+                                      resolution: "kept",
+                                    })
+                                  }
+                                >
+                                  Keep this change
+                                </button>
+                                <button
+                                  className="secondary"
+                                  onClick={async () => {
+                                    try {
+                                      setRevertPreview(
+                                        await window.cobble.previewRevert(a.id),
+                                      );
+                                    } catch (error) {
+                                      setError(message(error));
+                                    }
+                                  }}
+                                >
+                                  Review revert
+                                </button>
+                                <button
+                                  className="text-button"
+                                  onClick={() =>
+                                    void act({
+                                      type: "resolve",
+                                      activityId: a.id,
+                                      resolution: "dismissed",
+                                    })
+                                  }
+                                >
+                                  Dismiss
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+                <div className="bottom-grid">
+                  <section className="panel">
+                    <span className="eyebrow">OUR DIRECTION</span>
+                    <h2>
+                      {team
+                        ? `${team.items.length} pieces. One shared plan.`
+                        : "Every good build starts somewhere."}
+                    </h2>
+                    <p>
+                      {team?.items[0]?.title ??
+                        "Add the goals, features, and boundaries your team is building toward."}
+                    </p>
+                    <button
+                      className="text-button"
+                      onClick={() => setTab("Teams")}
+                    >
+                      <span>View core plan</span>
+                      <IconArrowRight />
+                    </button>
+                  </section>
+                  <section className="panel">
+                    <span className="eyebrow">OBSERVATION COVERAGE</span>
+                    {state.coverage.map((c) => (
+                      <p className="small" key={c}>
+                        {c}
+                      </p>
                     ))}
+                    <button
+                      className="text-button"
+                      onClick={() =>
+                        void act({ type: "pause", paused: !state.paused })
+                      }
+                    >
+                      {state.paused ? "Resume watching" : "Pause watching"}
+                    </button>
+                  </section>
+                </div>
+                {/* Collaboration panel moved to Teams */}
+              </>
+            )}
+            {revertPreview && (
+              <RevertDialog
+                preview={revertPreview}
+                close={() => setRevertPreview(null)}
+                onError={setError}
+              />
+            )}
+            {tab === "Teams" && (
+              <Teams
+                state={state}
+                act={act}
+                busy={busy}
+                onError={setError}
+                notice={setNotice}
+                externalModal={teamModal}
+                onClearModal={() => setTeamModal(null)}
+              />
+            )}
+            {tab === "Invites" && (
+              <section className="panel">
+                <h2>Join requests</h2>
+                {state.invites.length ? (
+                  state.invites.map((i) => (
+                    <div className="request" key={i.id}>
+                      <span className="avatar">{i.name[0]}</span>
+                      <div>
+                        <h3>{i.name}</h3>
+                        <small>
+                          Device {i.deviceId.slice(0, 8)} · {i.state}
+                        </small>
+                      </div>
+                      {i.state === "pending" && (
+                        <div className="inline">
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              void act({
+                                type: "decideJoin",
+                                requestId: i.id,
+                                accept: true,
+                              })
+                            }
+                          >
+                            Accept
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() =>
+                              void act({
+                                type: "decideJoin",
+                                requestId: i.id,
+                                accept: false,
+                              })
+                            }
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty">
+                    <h3>No requests yet.</h3>
+                    <p>
+                      Host your team and share its connection details to invite
+                      people.
+                    </p>
                   </div>
                 )}
               </section>
+            )}
+            {tab === "Profile" && (
               <div className="bottom-grid">
                 <section className="panel">
-                  <span className="eyebrow">OUR DIRECTION</span>
-                  <h2>
-                    {team
-                      ? `${team.items.length} pieces. One shared plan.`
-                      : "Every good build starts somewhere."}
-                  </h2>
-                  <p>
-                    {team?.items[0]?.title ??
-                      "Add the goals, features, and boundaries your team is building toward."}
-                  </p>
-                  <button
-                    className="text-button"
-                    onClick={() => setTab("Teams")}
-                  >
-                    <span>View core plan</span>
-                    <IconArrowRight />
-                  </button>
+                  <h2>Your profile</h2>
+                  <ProfileForm state={state} act={act} busy={busy} />
+                  <p className="small">Device ID · {state.profile.id}</p>
+                  <label>
+                    Theme appearance
+                    <select
+                      value={theme}
+                      onChange={(e) =>
+                        setTheme(e.target.value as "light" | "dark")
+                      }
+                    >
+                      <option value="light">Light Mode (Clean White)</option>
+                      <option value="dark">Dark Mode (True Black)</option>
+                    </select>
+                  </label>
+                  <label>
+                    Availability
+                    <select
+                      value={state.profile.availability}
+                      onChange={(e) =>
+                        void act({
+                          type: "availability",
+                          value: e.target.value as any,
+                        })
+                      }
+                    >
+                      <option value="available">Available</option>
+                      <option value="focused">Focused</option>
+                      <option value="away">Away</option>
+                    </select>
+                  </label>
                 </section>
                 <section className="panel">
-                  <span className="eyebrow">OBSERVATION COVERAGE</span>
-                  {state.coverage.map((c) => (
-                    <p className="small" key={c}>
-                      {c}
-                    </p>
-                  ))}
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      void act({ type: "pause", paused: !state.paused })
-                    }
-                  >
-                    {state.paused ? "Resume watching" : "Pause watching"}
-                  </button>
+                  <span className="eyebrow">COMPANION ART</span>
+                  <h2>Ready for its own personality.</h2>
+                  <p>
+                    The normal, idle, and dragging poses have code hooks. Your
+                    artist's assets can be added later without changing the app
+                    logic.
+                  </p>
+                  <p className="small">
+                    Idle controls dock to the nearest screen edge after 45
+                    seconds. Editor-window anchoring is not enabled yet.
+                  </p>
+                  <h3>Local voice</h3>
+                  <p className="small">
+                    Cobble includes its own offline voice engine and speech
+                    model. Recording starts only when you press the mic, and
+                    every transcript is previewed before sending.
+                  </p>
                 </section>
               </div>
-              {/* Collaboration panel moved to Teams */}
-            </>
-          )}
-          {revertPreview && (
-            <RevertDialog
-              preview={revertPreview}
-              close={() => setRevertPreview(null)}
-              onError={setError}
-            />
-          )}
-          {tab === "Teams" && (
-            <Teams
-              state={state}
-              act={act}
-              busy={busy}
-              onError={setError}
-              notice={setNotice}
-              externalModal={teamModal}
-              onClearModal={() => setTeamModal(null)}
-            />
-          )}
-          {tab === "Invites" && (
-            <section className="panel">
-              <h2>Join requests</h2>
-              {state.invites.length ? (
-                state.invites.map((i) => (
-                  <div className="request" key={i.id}>
-                    <span className="avatar">{i.name[0]}</span>
-                    <div>
-                      <h3>{i.name}</h3>
-                      <small>
-                        Device {i.deviceId.slice(0, 8)} · {i.state}
-                      </small>
-                    </div>
-                    {i.state === "pending" && (
-                      <div className="inline">
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            void act({
-                              type: "decideJoin",
-                              requestId: i.id,
-                              accept: true,
-                            })
-                          }
-                        >
-                          Accept
-                        </button>
-                        <button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() =>
-                            void act({
-                              type: "decideJoin",
-                              requestId: i.id,
-                              accept: false,
-                            })
-                          }
-                        >
-                          Decline
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <div className="empty">
-                  <h3>No requests yet.</h3>
-                  <p>
-                    Host your team and share its connection details to invite
-                    people.
-                  </p>
-                </div>
-              )}
-            </section>
-          )}
-          {tab === "Profile" && (
-            <div className="bottom-grid">
-              <section className="panel">
-                <h2>Your profile</h2>
-                <ProfileForm state={state} act={act} busy={busy} />
-                <p className="small">Device ID · {state.profile.id}</p>
-                <label>
-                  Theme appearance
-                  <select
-                    value={theme}
-                    onChange={(e) =>
-                      setTheme(e.target.value as "light" | "dark")
-                    }
-                  >
-                    <option value="light">Light Mode (Clean White)</option>
-                    <option value="dark">Dark Mode (True Black)</option>
-                  </select>
-                </label>
-                <label>
-                  Availability
-                  <select
-                    value={state.profile.availability}
-                    onChange={(e) =>
-                      void act({
-                        type: "availability",
-                        value: e.target.value as any,
-                      })
-                    }
-                  >
-                    <option value="available">Available</option>
-                    <option value="focused">Focused</option>
-                    <option value="away">Away</option>
-                  </select>
-                </label>
-              </section>
-              <section className="panel">
-                <span className="eyebrow">COMPANION ART</span>
-                <h2>Ready for its own personality.</h2>
-                <p>
-                  The normal, idle, and dragging poses have code hooks. Your
-                  artist's assets can be added later without changing the app
-                  logic.
-                </p>
-                <p className="small">
-                  Idle controls dock to the nearest screen edge after 45
-                  seconds. Editor-window anchoring is not enabled yet.
-                </p>
-                <h3>Local voice</h3>
-                <p className="small">
-                  Cobble includes its own offline voice engine and speech model.
-                  Recording starts only when you press the mic, and every
-                  transcript is previewed before sending.
-                </p>
-              </section>
-            </div>
-          )}
-          <footer>
-            COBBLE <span>Made for the things we build together.</span>
-            <span>Local first · v{appVersion}</span>
-          </footer>
-        </div>
-      )}
+            )}
+            <footer>
+              COBBLE <span>Made for the things we build together.</span>
+              <span>Local first · v{appVersion}</span>
+            </footer>
+          </div>
+        )}
       </main>
-      
+
       <WorkspaceModal
         isOpen={workspaceModalOpen}
         onClose={() => setWorkspaceModalOpen(false)}
@@ -758,6 +793,7 @@ function App() {
 
       {floatingChat && (
         <FloatingChat
+          key={state.activeTeamId ?? "none"}
           state={state}
           act={act}
           busy={busy}
@@ -998,8 +1034,10 @@ function Teams({
   onClearModal?: () => void;
 }) {
   const team = state.teams.find((t) => t.id === state.activeTeamId);
-  const [localModal, setLocalModal] = useState<"workspace" | "apps" | "create" | "join" | null>(null);
-  const modal = externalModal !== undefined ? externalModal : localModal;
+  const [localModal, setLocalModal] = useState<
+    "workspace" | "apps" | "create" | "join" | null
+  >(null);
+  const modal = externalModal ?? localModal;
   const setModal = (m: "workspace" | "apps" | "create" | "join" | null) => {
     setLocalModal(m);
     if (m === null && onClearModal) onClearModal();
@@ -1015,7 +1053,9 @@ function Teams({
   const [edit, setEdit] = useState(false);
   const [editPlan, setEditPlan] = useState("");
   const [pair, setPair] = useState("");
-  const [hostMode, setHostMode] = useState<"direct" | "internet" | "lan">("direct");
+  const [hostMode, setHostMode] = useState<"direct" | "internet" | "lan">(
+    "direct",
+  );
   const [publicAddress, setPublicAddress] = useState("");
   const [relayUrl, setRelayUrl] = useState(state.network.relayUrl ?? "");
 
@@ -1034,11 +1074,22 @@ function Teams({
       {!team && (
         <>
           <div className="inline section-actions">
-            <button onClick={() => { setCreate(true); setJoin(false); }}>
+            <button
+              onClick={() => {
+                setCreate(true);
+                setJoin(false);
+              }}
+            >
               <IconPlus />
               <span>Create workspace</span>
             </button>
-            <button className="secondary" onClick={() => { setJoin(true); setCreate(false); }}>
+            <button
+              className="secondary"
+              onClick={() => {
+                setJoin(true);
+                setCreate(false);
+              }}
+            >
               Join existing team
             </button>
           </div>
@@ -1086,7 +1137,9 @@ function Teams({
                       className="secondary"
                       onClick={async () => {
                         try {
-                          setWorkspace((await window.cobble.chooseWorkspace()) ?? "");
+                          setWorkspace(
+                            (await window.cobble.chooseWorkspace()) ?? "",
+                          );
                         } catch (e) {
                           onError(message(e));
                         }
@@ -1096,7 +1149,8 @@ function Teams({
                     </button>
                   </div>
                   <span className="small muted">
-                    Select the folder containing your code. Cobble detects editor apps separately.
+                    Select the folder containing your code. Cobble detects
+                    editor apps separately.
                   </span>
                 </label>
                 <button disabled={busy || !name.trim() || !plan.trim()}>
@@ -1143,10 +1197,215 @@ function Teams({
 
       {team && (
         <>
+          {modal === "workspace" && (
+            <ModalShell
+              title="Workspace & Hosting"
+              onClose={() => setModal(null)}
+            >
+              <section className="panel">
+                <div className="section-title">
+                  <div>
+                    <span className="eyebrow">CURRENT TEAM</span>
+                    <h2>{team.name}</h2>
+                  </div>
+                  <span className="tag">{state.members.length} / 8 people</span>
+                </div>
+                <div className="members">
+                  {state.members.map((m) => (
+                    <div key={m.id}>
+                      <span className="avatar">{m.name[0]}</span>
+                      <span>
+                        {m.name}
+                        <small>
+                          {m.role} · {m.availability}
+                        </small>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <hr />
+                <label>
+                  Watched workspace
+                  <div className="inline">
+                    <input
+                      value={team.workspace}
+                      readOnly
+                      placeholder="Choose your local project folder"
+                    />
+                    <button
+                      className="secondary"
+                      onClick={() =>
+                        void window.cobble
+                          .bindWorkspace()
+                          .catch((e) => onError(message(e)))
+                      }
+                    >
+                      Choose folder
+                    </button>
+                  </div>
+                </label>
+                <details>
+                  <summary>Connection diagnostics</summary>
+                  <button
+                    className="text-button"
+                    onClick={async () => {
+                      try {
+                        setPair(JSON.stringify(await window.cobble.pairing()));
+                      } catch (error) {
+                        onError(message(error));
+                      }
+                    }}
+                  >
+                    Show manual pairing details
+                  </button>
+                </details>
+                {pair && (
+                  <div className="pairing">
+                    <p>
+                      In the Cobble Workspace extension, run{" "}
+                      <strong>Cobble: Pair Workspace</strong> and paste these
+                      details. This secret is for this device only.
+                    </p>
+                    <textarea readOnly value={pair} rows={3} />
+                    <button
+                      className="secondary"
+                      onClick={() =>
+                        void window.cobble
+                          .copyPairing()
+                          .then(() => notice("Pairing details copied."))
+                          .catch((error) => onError(message(error)))
+                      }
+                    >
+                      Copy pairing details
+                    </button>
+                  </div>
+                )}
+                {team.ownerId === state.profile?.id && (
+                  <div className="hosting">
+                    <label>
+                      Connect your team
+                      <select
+                        value={hostMode}
+                        onChange={(e) =>
+                          setHostMode(
+                            e.target.value as "direct" | "internet" | "lan",
+                          )
+                        }
+                      >
+                        <option value="direct">
+                          Internet · reachable teammate laptop
+                        </option>
+                        <option value="internet">
+                          Internet · teammate-hosted relay
+                        </option>
+                        <option value="lan">Local network · same LAN</option>
+                      </select>
+                    </label>
+                    {hostMode === "direct" && (
+                      <>
+                        <label>
+                          Reachable address of this laptop
+                          <input
+                            type="url"
+                            value={publicAddress}
+                            onChange={(e) => setPublicAddress(e.target.value)}
+                            placeholder="https://your-reachable-address:port"
+                          />
+                        </label>
+                        <p className="small muted">
+                          Enter an address and port teammates can reach. Cobble
+                          cannot bypass a blocked router or ISP and will not use
+                          an external fallback. A local/private address alone
+                          does not establish cross-city connectivity.
+                        </p>
+                      </>
+                    )}
+                    {hostMode === "internet" && (
+                      <>
+                        <label>
+                          Team relay URL
+                          <input
+                            type="url"
+                            value={relayUrl}
+                            onChange={(e) => setRelayUrl(e.target.value)}
+                            placeholder="HTTPS relay address from a teammate"
+                          />
+                        </label>
+                        <p className="small muted">
+                          No public relay is configured by default. A teammate
+                          must run a reachable Cobble relay. Teammates need only
+                          Cobble; keep this host app open while collaborating.
+                        </p>
+                      </>
+                    )}
+                    <button
+                      disabled={
+                        busy ||
+                        state.hosting.fenced ||
+                        state.network.role === "client" ||
+                        (hostMode === "internet" && !relayUrl.trim()) ||
+                        (hostMode === "direct" && !publicAddress.trim())
+                      }
+                      onClick={() =>
+                        void act({
+                          type: "host",
+                          ...(hostMode === "internet"
+                            ? { relayUrl: relayUrl.trim() }
+                            : {}),
+                          ...(hostMode === "direct"
+                            ? { publicAddress: publicAddress.trim() }
+                            : {}),
+                        })
+                      }
+                    >
+                      {hostMode !== "lan" ? "Host online" : "Host on LAN"}
+                    </button>
+                    {state.network.role !== "local" && (
+                      <>
+                        <label>
+                          Share this address
+                          <textarea
+                            readOnly
+                            rows={2}
+                            value={state.network.address}
+                          />
+                        </label>
+                        <label>
+                          Join code
+                          <input readOnly value={team.code} />
+                        </label>
+                        <small>
+                          {state.network.transport === "internet"
+                            ? "Share the complete invitation and join code. This teammate host and any teammate relay must stay online."
+                            : "Members need a reachable LAN route to this device."}
+                        </small>
+                      </>
+                    )}
+                  </div>
+                )}
+              </section>{" "}
+              <HostingPanel key={team.id} state={state} act={act} busy={busy} />
+            </ModalShell>
+          )}
+          {modal === "apps" && (
+            <ModalShell
+              title="Connected IDEs & Agents"
+              onClose={() => setModal(null)}
+            >
+              <IdeConnections state={state} notice={notice} />
+              <AgentConnections
+                state={state}
+                onError={onError}
+                notice={notice}
+              />
+            </ModalShell>
+          )}
           <section className="panel plan-hero-card">
             <div className="plan-toolbar">
               <div className="plan-toolbar-left">
-                <span className="eyebrow">VERSION {team.version} · ACTIVE DIRECTION</span>
+                <span className="eyebrow">
+                  VERSION {team.version} · ACTIVE DIRECTION
+                </span>
                 <h2>The core plan</h2>
               </div>
               <div className="plan-toolbar-actions">
@@ -1167,17 +1426,15 @@ function Teams({
                 >
                   Workspace & Hosting
                 </button>
-                <button
-                  className="secondary"
-                  onClick={() => setModal("apps")}
-                >
+                <button className="secondary" onClick={() => setModal("apps")}>
                   Connected IDEs & Agents
                 </button>
               </div>
             </div>
             <div className="plan-meta-row">
               <span className="plan-meta-item">
-                <strong>Project folder:</strong> {team.workspace ? team.workspace.split(/[/\\]/).pop() : "None"}
+                <strong>Project folder:</strong>{" "}
+                {team.workspace ? team.workspace.split(/[/\\]/).pop() : "None"}
               </span>
               <span className="plan-meta-item">
                 <strong>Milestones:</strong> {team.items.length} pieces
@@ -1191,7 +1448,9 @@ function Teams({
                   ? (state.ide.connections ?? [])
                       .map((c) => `${c.editor}${c.focused ? " (focused)" : ""}`)
                       .join(", ")
-                  : (state.ide.editor ? state.ide.editor : "Waiting for editor confirmation")}
+                  : state.ide.editor
+                    ? state.ide.editor
+                    : "Waiting for editor confirmation"}
               </span>
             </div>
             {edit ? (
@@ -1357,7 +1616,15 @@ function Chat({
   }, [messages.length]);
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!recipient) return;
+    if (
+      busy ||
+      recording ||
+      transcribing ||
+      !recipient ||
+      !content.trim() ||
+      !state.activeTeamId
+    )
+      return;
     const saved = await act({
       type: "send",
       content,
@@ -1448,7 +1715,8 @@ function Chat({
               const isMine = m.senderId === state.profile?.id;
               const author = isMine
                 ? "You"
-                : state.members.find((p) => p.id === m.senderId)?.name ?? "Teammate";
+                : (state.members.find((p) => p.id === m.senderId)?.name ??
+                  "Teammate");
               return (
                 <div
                   className={isMine ? "bubble-row mine" : "bubble-row"}
@@ -1480,7 +1748,9 @@ function Chat({
                   </div>
                   {isMine && (
                     <span className="avatar chat-avatar mine">
-                      {state.profile?.avatar || state.profile?.name?.[0]?.toUpperCase() || "●"}
+                      {state.profile?.avatar ||
+                        state.profile?.name?.[0]?.toUpperCase() ||
+                        "●"}
                     </span>
                   )}
                 </div>
@@ -1904,6 +2174,17 @@ function FloatingChat({
   const stream = useRef<MediaStream | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const mounted = useRef(true);
+  const [voiceDraft, setVoiceDraft] = useState(false);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+      clearTimeout(timer.current);
+      if (recorder.current?.state === "recording") recorder.current.stop();
+      stream.current?.getTracks().forEach((track) => track.stop());
+    },
+    [],
+  );
 
   const messages = state.messages.filter((m) =>
     recipient === "team"
@@ -1924,7 +2205,13 @@ function FloatingChat({
         recorder.current?.stop();
         return;
       }
-      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.current = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      if (!mounted.current) {
+        stream.current.getTracks().forEach((track) => track.stop());
+        return;
+      }
       const rec = new MediaRecorder(stream.current);
       const chunks: Blob[] = [];
       recorder.current = rec;
@@ -1934,6 +2221,7 @@ function FloatingChat({
       rec.onstop = async () => {
         clearTimeout(timer.current);
         stream.current?.getTracks().forEach((t) => t.stop());
+        if (!mounted.current) return;
         setRecording(false);
         setTranscribing(true);
         try {
@@ -1942,14 +2230,18 @@ function FloatingChat({
               await new Blob(chunks, { type: rec.mimeType }).arrayBuffer(),
             ),
           );
+          if (!mounted.current) return;
           const command = parseCommand(text, state.members);
+          setVoiceDraft(true);
           setContent(command.content);
           if (command.type === "broadcast") setRecipient("team");
-          else if (command.type === "dm" && command.recipientId) setRecipient(command.recipientId);
+          else if (command.type === "dm" && command.recipientId)
+            setRecipient(command.recipientId);
+          else setRecipient("");
         } catch (e) {
           onError(message(e));
         } finally {
-          setTranscribing(false);
+          if (mounted.current) setTranscribing(false);
         }
       };
       rec.start();
@@ -1963,22 +2255,31 @@ function FloatingChat({
 
   const send = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!recipient || !content.trim() || !state.activeTeamId) return;
+    if (
+      busy ||
+      recording ||
+      transcribing ||
+      !recipient ||
+      !content.trim() ||
+      !state.activeTeamId
+    )
+      return;
     const ok = await act({
       type: "send",
       content,
       recipientId: recipient === "team" ? null : recipient,
-      sentVia: "text",
+      sentVia: voiceDraft ? "voice" : "text",
     });
     if (ok) {
       setContent("");
+      setVoiceDraft(false);
     }
   };
 
   const recipientName =
     recipient === "team"
       ? "Everyone"
-      : state.members.find((m) => m.id === recipient)?.name ?? "Direct";
+      : (state.members.find((m) => m.id === recipient)?.name ?? "Direct");
 
   if (minimized) {
     return (
@@ -2009,7 +2310,11 @@ function FloatingChat({
   }
 
   return (
-    <div className="floating-chat-window" role="dialog" aria-label="Floating discussions window">
+    <div
+      className="floating-chat-window"
+      role="dialog"
+      aria-label="Floating discussions window"
+    >
       <div className="floating-chat-header">
         <div className="floating-chat-header-left">
           <IconChats />
@@ -2020,6 +2325,9 @@ function FloatingChat({
             onChange={(e) => setRecipient(e.target.value)}
             aria-label="Floating chat recipient"
           >
+            <option value="" disabled>
+              Choose a recipient
+            </option>
             <option value="team">Everyone</option>
             {state.members
               .filter((m) => m.id !== state.profile?.id)
@@ -2067,11 +2375,14 @@ function FloatingChat({
             const isMine = m.senderId === state.profile?.id;
             const author = isMine
               ? "You"
-              : state.members.find((p) => p.id === m.senderId)?.name ?? "Teammate";
+              : (state.members.find((p) => p.id === m.senderId)?.name ??
+                "Teammate");
             return (
               <div
                 key={m.id}
-                className={isMine ? "float-bubble-row mine" : "float-bubble-row"}
+                className={
+                  isMine ? "float-bubble-row mine" : "float-bubble-row"
+                }
               >
                 <div className={isMine ? "float-bubble mine" : "float-bubble"}>
                   <div className="float-meta">
@@ -2112,7 +2423,14 @@ function FloatingChat({
         <button
           type="submit"
           className="composer-send-btn"
-          disabled={busy || !content.trim() || !recipient || !state.activeTeamId}
+          disabled={
+            busy ||
+            recording ||
+            transcribing ||
+            !content.trim() ||
+            !recipient ||
+            !state.activeTeamId
+          }
           title="Send"
         >
           <IconSend />
@@ -2121,7 +2439,6 @@ function FloatingChat({
     </div>
   );
 }
-
 
 function WorkspaceModal({
   isOpen,
@@ -2158,7 +2475,7 @@ function WorkspaceModal({
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !plan.trim()) return;
+    if (busy || !name.trim() || !plan.trim()) return;
     setBusy(true);
     try {
       const ok = await act({ type: "createTeam", name, plan, workspace });
@@ -2178,7 +2495,7 @@ function WorkspaceModal({
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!address.trim() || !code.trim()) return;
+    if (busy || !address.trim() || !code.trim()) return;
     setBusy(true);
     try {
       const ok = await act({ type: "join", address, code });
@@ -2196,147 +2513,131 @@ function WorkspaceModal({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal-card workspace-setup-modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Workspace Setup"
-      >
-        <div className="modal-header">
-          <div className="modal-title-group">
-            <span className="eyebrow">WORKSPACE MANAGEMENT</span>
-            <h2>Create or Join Workspace</h2>
-          </div>
-          <button
-            type="button"
-            className="modal-close-btn"
-            onClick={onClose}
-            title="Close"
-          >
-            <IconClose />
-          </button>
-        </div>
-
-        <div className="modal-tabs">
-          <button
-            type="button"
-            className={mode === "create" ? "modal-tab active" : "modal-tab"}
-            onClick={() => setMode("create")}
-          >
-            <IconPlus />
-            <span>Create New Workspace</span>
-          </button>
-          <button
-            type="button"
-            className={mode === "join" ? "modal-tab active" : "modal-tab"}
-            onClick={() => setMode("join")}
-          >
-            <IconExternal />
-            <span>Join Existing Team</span>
-          </button>
-        </div>
-
-        {mode === "create" ? (
-          <form onSubmit={handleCreate} className="modal-form">
-            <label>
-              Team or workspace name
-              <input
-                required
-                maxLength={100}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Core Engine"
-                autoFocus
-              />
-            </label>
-            <label>
-              Starting plan <span className="muted">required</span>
-              <textarea
-                required
-                rows={6}
-                maxLength={100000}
-                value={plan}
-                onChange={(e) => setPlan(e.target.value)}
-                placeholder={"What are we building?\nWhich features do we need?\nWhat should stay out of scope?\n\nFor an explicit folder boundary: Do not modify `legacy/`"}
-              />
-            </label>
-            <label>
-              Project folder
-              <div className="inline folder-picker-row">
-                <input
-                  readOnly
-                  value={workspace}
-                  placeholder="Choose the project folder"
-                />
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={async () => {
-                    try {
-                      setWorkspace((await window.cobble.chooseWorkspace()) ?? "");
-                    } catch (e) {
-                      onError(message(e));
-                    }
-                  }}
-                >
-                  Choose folder…
-                </button>
-              </div>
-              <span className="small muted">
-                Select the folder containing your code repository.
-              </span>
-            </label>
-            <div className="modal-actions">
-              <button type="button" className="secondary" onClick={onClose}>
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={busy || !name.trim() || !plan.trim()}
-              >
-                <span>Create Workspace</span>
-                <IconArrowRight />
-              </button>
-            </div>
-          </form>
-        ) : (
-          <form onSubmit={handleJoin} className="modal-form">
-            <label>
-              Internet invitation or LAN address
-              <input
-                required
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="https://192.168.x.x:port/#fingerprint or relay URL"
-                autoFocus
-              />
-            </label>
-            <label>
-              Join code
-              <input
-                required
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="e.g. CB-94F02A"
-              />
-            </label>
-            <div className="modal-actions">
-              <button type="button" className="secondary" onClick={onClose}>
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={busy || !address.trim() || !code.trim()}
-              >
-                <span>Request to Join</span>
-                <IconArrowRight />
-              </button>
-            </div>
-          </form>
-        )}
+    <ModalShell
+      title="Create or Join Workspace"
+      onClose={onClose}
+      className="workspace-setup-modal"
+    >
+      <div className="modal-tabs">
+        <button
+          type="button"
+          className={mode === "create" ? "modal-tab active" : "modal-tab"}
+          onClick={() => setMode("create")}
+        >
+          <IconPlus />
+          <span>Create New Workspace</span>
+        </button>
+        <button
+          type="button"
+          className={mode === "join" ? "modal-tab active" : "modal-tab"}
+          onClick={() => setMode("join")}
+        >
+          <IconExternal />
+          <span>Join Existing Team</span>
+        </button>
       </div>
-    </div>
+
+      {mode === "create" ? (
+        <form onSubmit={handleCreate} className="modal-form">
+          <label>
+            Team or workspace name
+            <input
+              required
+              maxLength={100}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Core Engine"
+              autoFocus
+            />
+          </label>
+          <label>
+            Starting plan <span className="muted">required</span>
+            <textarea
+              required
+              rows={6}
+              maxLength={100000}
+              value={plan}
+              onChange={(e) => setPlan(e.target.value)}
+              placeholder={
+                "What are we building?\nWhich features do we need?\nWhat should stay out of scope?\n\nFor an explicit folder boundary: Do not modify `legacy/`"
+              }
+            />
+          </label>
+          <label>
+            Project folder
+            <div className="inline folder-picker-row">
+              <input
+                readOnly
+                value={workspace}
+                placeholder="Choose the project folder"
+              />
+              <button
+                type="button"
+                className="secondary"
+                onClick={async () => {
+                  try {
+                    setWorkspace((await window.cobble.chooseWorkspace()) ?? "");
+                  } catch (e) {
+                    onError(message(e));
+                  }
+                }}
+              >
+                Choose folder…
+              </button>
+            </div>
+            <span className="small muted">
+              Select the folder containing your code repository.
+            </span>
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !name.trim() || !plan.trim()}
+            >
+              <span>Create Workspace</span>
+              <IconArrowRight />
+            </button>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={handleJoin} className="modal-form">
+          <label>
+            Internet invitation or LAN address
+            <input
+              required
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="https://192.168.x.x:port/#fingerprint or relay URL"
+              autoFocus
+            />
+          </label>
+          <label>
+            Join code
+            <input
+              required
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="e.g. CB-94F02A"
+            />
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !address.trim() || !code.trim()}
+            >
+              <span>Request to Join</span>
+              <IconArrowRight />
+            </button>
+          </div>
+        </form>
+      )}
+    </ModalShell>
   );
 }
 
@@ -2345,18 +2646,31 @@ function StandaloneMiniChat({
   act,
   busy,
   onError,
+  error,
   theme,
 }: {
   state: AppState;
   act: (a: Action) => Promise<boolean>;
   busy: boolean;
   onError: (s: string) => void;
+  error: string;
   theme: "light" | "dark";
 }) {
   const [recipient, setRecipient] = useState("team");
   const [content, setContent] = useState("");
   const [minimized, setMinimized] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const off = window.cobble.onChatWindowState?.((value) =>
+      setMinimized(value.minimized),
+    );
+    void window.cobble
+      .chatWindow?.("status")
+      .then((value) => setMinimized(value.minimized))
+      .catch((e) => onError(message(e)));
+    return off;
+  }, []);
 
   const messages = state.messages.filter((m) =>
     recipient === "team"
@@ -2371,7 +2685,7 @@ function StandaloneMiniChat({
 
   const send = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!recipient || !content.trim() || !state.activeTeamId) return;
+    if (busy || !recipient || !content.trim() || !state.activeTeamId) return;
     const ok = await act({
       type: "send",
       content,
@@ -2386,26 +2700,28 @@ function StandaloneMiniChat({
   const recipientName =
     recipient === "team"
       ? "Everyone"
-      : state.members.find((m) => m.id === recipient)?.name ?? "Direct";
+      : (state.members.find((m) => m.id === recipient)?.name ?? "Direct");
 
   const handleMinimize = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     try {
       if (window.cobble?.chatWindow) {
-        await window.cobble.chatWindow("minimize");
+        setMinimized((await window.cobble.chatWindow("minimize")).minimized);
       }
-    } catch {}
-    setMinimized(true);
+    } catch (e) {
+      onError(message(e));
+    }
   };
 
   const handleRestore = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     try {
       if (window.cobble?.chatWindow) {
-        await window.cobble.chatWindow("restore");
+        setMinimized((await window.cobble.chatWindow("restore")).minimized);
       }
-    } catch {}
-    setMinimized(false);
+    } catch (e) {
+      onError(message(e));
+    }
   };
 
   const handleRedirect = async (e?: React.MouseEvent) => {
@@ -2434,6 +2750,12 @@ function StandaloneMiniChat({
           onClick={handleRestore}
           role="button"
           tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              void handleRestore();
+            }
+          }}
           title="Click to restore discussions window"
         >
           <span className="pill-dot" />
@@ -2519,7 +2841,12 @@ function StandaloneMiniChat({
                   className={`mini-chat-bubble ${isMe ? "me" : "other"}`}
                 >
                   <div className="bubble-header">
-                    <span className="sender">{isMe ? "You" : (state.members.find((u) => u.id === m.senderId)?.name ?? "Teammate")}</span>
+                    <span className="sender">
+                      {isMe
+                        ? "You"
+                        : (state.members.find((u) => u.id === m.senderId)
+                            ?.name ?? "Teammate")}
+                    </span>
                     <span className="time">{stamp(m.createdAt)}</span>
                   </div>
                   <p>{m.content}</p>
@@ -2530,6 +2857,11 @@ function StandaloneMiniChat({
           <div ref={messagesEndRef} />
         </div>
 
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
         <form onSubmit={send} className="mini-chat-composer">
           <input
             type="text"
@@ -2541,7 +2873,9 @@ function StandaloneMiniChat({
           />
           <button
             type="submit"
-            disabled={busy || !content.trim() || !recipient || !state.activeTeamId}
+            disabled={
+              busy || !content.trim() || !recipient || !state.activeTeamId
+            }
             title="Send"
           >
             <IconSend />

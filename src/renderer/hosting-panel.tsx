@@ -5,7 +5,6 @@ import type {
   HostingCandidate,
   HostingState,
 } from "../shared/types";
-import "./hosting-panel.css";
 
 export interface HostingPanelProps {
   state: AppState;
@@ -19,7 +18,7 @@ export function HostingPanel({
   busy,
 }: HostingPanelProps): React.JSX.Element {
   const hosting: HostingState | undefined = state.hosting;
-  const team = state.teams.find((t) => t.id === state.activeTeamId) ?? state.teams[0];
+  const team = state.teams.find((t) => t.id === state.activeTeamId);
   const profile = state.profile;
 
   // Local form state for candidacy configuration
@@ -65,17 +64,27 @@ export function HostingPanel({
           aria-live="polite"
         >
           <div className="cobble-hosting-notice-icon" aria-hidden="true">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
           </div>
           <div className="cobble-hosting-notice-content">
-            <h3 className="cobble-hosting-notice-title">Hosting Subsystem Unavailable</h3>
+            <h3 className="cobble-hosting-notice-title">
+              Hosting Subsystem Unavailable
+            </h3>
             <p className="cobble-hosting-muted">
-              Live host migration is not active on this backend version or network configuration.
-              Teammate connections and local collaboration remain functional.
+              Live host migration is not active on this backend version or
+              network configuration. Teammate connections and local
+              collaboration remain functional.
             </p>
           </div>
         </div>
@@ -84,7 +93,9 @@ export function HostingPanel({
   }
 
   const isManager = Boolean(team && profile && team.ownerId === profile.id);
-  const isCurrentHost = Boolean(hosting.hostId && profile && hosting.hostId === profile.id);
+  const isCurrentHost = Boolean(
+    hosting.hostId && profile && hosting.hostId === profile.id,
+  );
   const managerMember = team
     ? state.members.find((m) => m.id === team.ownerId)
     : undefined;
@@ -103,7 +114,7 @@ export function HostingPanel({
       : isCurrentHost
         ? `${profile?.name || "This Laptop"} (You)`
         : hosting.hostId
-    : "Local Creator (Initial Host)";
+    : "No host running";
 
   const isTransitioning =
     hosting.phase === "preparing" || hosting.phase === "committing";
@@ -111,11 +122,20 @@ export function HostingPanel({
 
   // Disable candidacy configuration when busy, fenced, transitioning, or if actively hosting
   const isCandidacyDisabled =
-    busy || isSaving || isFenced || isTransitioning || (isCurrentHost && hosting.phase === "hosting");
+    busy ||
+    isSaving ||
+    isFenced ||
+    isTransitioning ||
+    (isCurrentHost && hosting.phase === "hosting");
 
   // Disable automatic evaluation button when busy, fenced, transitioning, or already evaluating
   const isEvalDisabled =
-    busy || isEvaluating || isFenced || isTransitioning || hosting.phase === "evaluating";
+    busy ||
+    isEvaluating ||
+    isFenced ||
+    isTransitioning ||
+    hosting.phase === "evaluating" ||
+    state.network.role === "local";
 
   const handleSaveCandidacy = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,7 +153,7 @@ export function HostingPanel({
         setFeedback({
           type: "success",
           message: allowDevice
-            ? "Candidacy settings saved. This laptop is now eligible to host."
+            ? "Settings saved. This laptop can be considered after capacity and reachability checks."
             : "Candidacy settings saved. This laptop has opted out of hosting.",
         });
       } else {
@@ -161,7 +181,8 @@ export function HostingPanel({
       if (success) {
         setFeedback({
           type: "info",
-          message: "Host evaluation initiated. Probing candidates across peers.",
+          message:
+            "Host evaluation initiated. Probing candidates across peers.",
         });
       } else {
         setFeedback({
@@ -183,21 +204,53 @@ export function HostingPanel({
   const getPhaseMeta = (phase: HostingState["phase"]) => {
     switch (phase) {
       case "local":
-        return { label: "Local Authority", tone: "neutral", desc: "Running on initial session host" };
+        return {
+          label: "Local only",
+          tone: "neutral",
+          desc: "Start team hosting before evaluating candidates",
+        };
       case "collecting":
-        return { label: "Collecting Reports", tone: "info", desc: "Gathering peer capacity hints" };
+        return {
+          label: "Collecting Reports",
+          tone: "info",
+          desc: "Gathering peer capacity hints",
+        };
       case "evaluating":
-        return { label: "Evaluating Candidates", tone: "warning", desc: "Ranking verified peer nodes" };
+        return {
+          label: "Evaluating Candidates",
+          tone: "warning",
+          desc: "Ranking verified peer nodes",
+        };
       case "preparing":
-        return { label: "Preparing Transfer", tone: "active", desc: "Transferring state snapshot" };
+        return {
+          label: "Preparing Transfer",
+          tone: "active",
+          desc: "Transferring state snapshot",
+        };
       case "committing":
-        return { label: "Committing Route", tone: "active", desc: "Verifying peer acknowledgements" };
+        return {
+          label: "Committing Route",
+          tone: "active",
+          desc: "Verifying peer acknowledgements",
+        };
       case "hosting":
-        return { label: "Delegated Host", tone: "success", desc: "This device is serving team traffic" };
+        return {
+          label: "Team host",
+          tone: "success",
+          desc: "This device is serving team traffic",
+        };
       case "following":
-        return { label: "Connected Client", tone: "info", desc: "Following authoritative peer host" };
+        return {
+          label: "Following host",
+          tone: "info",
+          desc: "Connection status is shown by the backend",
+        };
       case "blocked":
-        return { label: "Migration Blocked", tone: "danger", desc: "Handover halted or on hold" };
+        return {
+          label: "Migration Blocked",
+          tone: "danger",
+          desc: "Handover halted or on hold",
+        };
       default:
         return { label: phase, tone: "neutral", desc: "Unknown state" };
     }
@@ -214,14 +267,19 @@ export function HostingPanel({
       <header className="cobble-hosting-header">
         <div className="cobble-hosting-title-group">
           <div className="cobble-hosting-badge-row">
-            <span className="cobble-hosting-pill cobble-pill-blueprint">Decentralized Relay</span>
-            <span className={`cobble-hosting-pill cobble-pill-${phaseMeta.tone}`}>
+            <span className="cobble-hosting-pill cobble-pill-blueprint">
+              Decentralized Relay
+            </span>
+            <span
+              className={`cobble-hosting-pill cobble-pill-${phaseMeta.tone}`}
+            >
               {phaseMeta.label}
             </span>
           </div>
           <h2 id="hosting-panel-title">Team Hosting & Relays</h2>
           <p className="cobble-hosting-subtitle">
-            Dynamic host election based on hardware capacity and verified HTTPS reachability.
+            Dynamic host election based on hardware capacity and verified HTTPS
+            reachability.
           </p>
         </div>
       </header>
@@ -236,19 +294,28 @@ export function HostingPanel({
               <span className="cobble-tag cobble-tag-amber">This Device</span>
             )}
           </div>
-          <div className="cobble-authority-name" title={hosting.hostId || undefined}>
+          <div
+            className="cobble-authority-name"
+            title={hosting.hostId || undefined}
+          >
             {hostDisplayName}
           </div>
           <div className="cobble-authority-details">
             <span className="cobble-detail-item">
-              <strong className="cobble-detail-label">Epoch:</strong> #{hosting.epoch}
+              <strong className="cobble-detail-label">Epoch:</strong> #
+              {hosting.epoch}
             </span>
             <span className="cobble-detail-item">
               <strong className="cobble-detail-label">Endpoint:</strong>{" "}
-              {hosting.advertisedAddress ? (
-                <code>{hosting.advertisedAddress}</code>
+              {team?.hosting?.address || state.network.address ? (
+                <code>
+                  {
+                    new URL(team?.hosting?.address || state.network.address!)
+                      .origin
+                  }
+                </code>
               ) : (
-                <span className="cobble-muted">LAN Discovery</span>
+                <span className="cobble-muted">No active endpoint</span>
               )}
             </span>
           </div>
@@ -271,11 +338,14 @@ export function HostingPanel({
           </div>
           <div className="cobble-authority-details">
             <span className="cobble-detail-item">
-              <strong className="cobble-detail-label">Authority:</strong> Git Integrator & Membership
+              <strong className="cobble-detail-label">Authority:</strong> Git
+              Integrator & Membership
             </span>
             <span className="cobble-detail-item">
               <strong className="cobble-detail-label">Role:</strong>{" "}
-              {isCurrentHost ? "Manager & Host" : "Manager (Client Node)"}
+              {team?.ownerId === hosting.hostId
+                ? "Manager & Host"
+                : "Manager (Client Node)"}
             </span>
           </div>
           <p className="cobble-authority-footnote">
@@ -292,15 +362,23 @@ export function HostingPanel({
           aria-live="assertive"
         >
           <div className="cobble-alert-icon" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
           <div className="cobble-alert-body">
             <strong>Shared writes temporarily queued (Fenced)</strong>
             <p>
-              Hosting election or failover state is fenced. Edits and votes are queued safely
-              in local memory and will be sent automatically once hosting stabilizes.
+              Hosting election or failover state is fenced. Edits and votes are
+              queued safely in local storage and retried when the acknowledged
+              host is reachable.
             </p>
           </div>
         </div>
@@ -323,8 +401,8 @@ export function HostingPanel({
                 : "Committing host migration: awaiting peer route acknowledgements"}
             </strong>
             <p>
-              Please keep Cobble open and connected. No shared edits will be lost.
-              (State transfer does not use fake timers or forced resets).
+              Please keep Cobble open and connected. No shared edits will be
+              lost. (State transfer does not use fake timers or forced resets).
             </p>
           </div>
         </div>
@@ -344,8 +422,7 @@ export function HostingPanel({
           <span className="cobble-status-epoch">Epoch #{hosting.epoch}</span>
         </div>
         <p className="cobble-status-reason">
-          <strong>Backend Status:</strong>{" "}
-          {hosting.reason || phaseMeta.desc}
+          <strong>Backend Status:</strong> {hosting.reason || phaseMeta.desc}
         </p>
       </div>
 
@@ -382,24 +459,30 @@ export function HostingPanel({
               Local Laptop Candidacy Settings
             </legend>
             <p className="cobble-card-desc">
-              Opting in makes this computer eligible to host the team if the team manager
-              initiates host evaluation.
+              Opting in makes this computer eligible to host the team if the
+              team manager initiates host evaluation.
             </p>
 
             {/* Trust and Resource Disclosure Banner */}
             <div className="cobble-disclosure-box">
               <div className="cobble-disclosure-item">
-                <span className="cobble-disclosure-icon" aria-hidden="true">⚡</span>
+                <span className="cobble-disclosure-icon" aria-hidden="true">
+                  ⚡
+                </span>
                 <p>
-                  <strong>Resource use:</strong> Hosting uses local memory and CPU threads to maintain
-                  peer sockets and broadcast plan updates.
+                  <strong>Resource use:</strong> Hosting uses local memory and
+                  CPU threads to maintain peer sockets and broadcast plan
+                  updates.
                 </p>
               </div>
               <div className="cobble-disclosure-item">
-                <span className="cobble-disclosure-icon" aria-hidden="true">🔒</span>
+                <span className="cobble-disclosure-icon" aria-hidden="true">
+                  🔒
+                </span>
                 <p>
-                  <strong>Security & Privacy:</strong> The host laptop relays team traffic and private team
-                  messages. Only opt in on a trusted, secure device.
+                  <strong>Security & Privacy:</strong> The host laptop relays
+                  team traffic and private team messages. Only opt in on a
+                  trusted, secure device.
                 </p>
               </div>
             </div>
@@ -416,7 +499,8 @@ export function HostingPanel({
                 <span className="cobble-checkbox-text">
                   <strong>Allow this laptop to host</strong>
                   <small className="cobble-muted">
-                    Report hardware capacity hints and participate in candidate elections.
+                    Report hardware capacity hints and participate in candidate
+                    elections.
                   </small>
                 </span>
               </label>
@@ -441,17 +525,19 @@ export function HostingPanel({
                 aria-describedby="address-help-text"
               />
               <p id="address-help-text" className="cobble-input-hint">
-                Leave blank for automatic local area network (LAN) discovery. For remote
-                or cross-network teammates, provide a reachable certificate-pinned HTTPS origin.
-                Cobble does not rely on third-party cloud fallbacks.
+                Leave blank for automatic local area network (LAN) discovery.
+                For remote or cross-network teammates, provide a reachable
+                certificate-pinned HTTPS origin. Cobble does not rely on
+                third-party cloud fallbacks.
               </p>
             </div>
 
             {/* Active Host Guard Notice */}
             {isCurrentHost && hosting.phase === "hosting" && (
               <p className="cobble-host-locked-note">
-                ⓘ This laptop is currently the authoritative host. Candidacy settings cannot
-                be altered until hosting is delegated to another teammate.
+                ⓘ This laptop is currently the authoritative host. Candidacy
+                settings cannot be altered until hosting is delegated to another
+                teammate.
               </p>
             )}
 
@@ -480,15 +566,18 @@ export function HostingPanel({
               Automatic Host Evaluation
             </h3>
             {isManager ? (
-              <span className="cobble-tag cobble-tag-amber">Manager Control</span>
+              <span className="cobble-tag cobble-tag-amber">
+                Manager Control
+              </span>
             ) : (
               <span className="cobble-tag cobble-tag-muted">Manager Only</span>
             )}
           </div>
           <p className="cobble-card-desc">
-            The team manager initiates evaluation when all teammates are online. The backend
-            probes candidate hardware metrics and verified HTTPS reachability, migrating to
-            a candidate only if it improves capacity score by ≥20%.
+            The team manager initiates evaluation when all teammates are online.
+            The backend probes candidate hardware metrics and verified HTTPS
+            reachability, migrating to a candidate only if it improves capacity
+            score by ≥20%.
           </p>
         </div>
 
@@ -501,22 +590,22 @@ export function HostingPanel({
               disabled={isEvalDisabled}
               aria-describedby="eval-rules-desc"
             >
-              {isEvaluating ? (
-                "Evaluating Candidates..."
-              ) : (
-                "Team ready — choose host automatically"
-              )}
+              {isEvaluating
+                ? "Evaluating Candidates..."
+                : "Team ready — choose host automatically"}
             </button>
             <p id="eval-rules-desc" className="cobble-manager-rules-text">
-              Requires all approved teammates to be online for fresh probes and route
-              acknowledgements. A 5-minute cooldown is enforced between transfers.
+              Requires all approved teammates to be online for fresh probes and
+              route acknowledgements. A 5-minute cooldown is enforced between
+              transfers.
             </p>
           </div>
         ) : (
           <div className="cobble-manager-restricted-box">
             <p className="cobble-muted">
-              Only team manager <strong>{managerName}</strong> can initiate automatic host evaluation.
-              Your laptop will report its capacity hints automatically if opted in.
+              Only team manager <strong>{managerName}</strong> can initiate
+              automatic host evaluation. Your laptop will report its capacity
+              hints automatically if opted in.
             </p>
           </div>
         )}
@@ -532,16 +621,17 @@ export function HostingPanel({
             Reported Candidate Laptops ({hosting.candidates.length})
           </h3>
           <p className="cobble-card-desc">
-            Capacity summaries and peer-verified reachability. Transfers are handled automatically
-            by the ranking backend; manual forced transfers are not supported.
+            Capacity summaries and peer-verified reachability. Transfers are
+            handled automatically by the ranking backend; manual forced
+            transfers are not supported.
           </p>
         </div>
 
         {hosting.candidates.length === 0 ? (
           <div className="cobble-candidates-empty">
             <p className="cobble-muted">
-              No teammate candidates have reported capacity yet.
-              Teammates must opt in and be connected to the team session.
+              No teammate candidates have reported capacity yet. Teammates must
+              opt in and be connected to the team session.
             </p>
           </div>
         ) : (
@@ -551,15 +641,18 @@ export function HostingPanel({
               const isCandidateCurrentHost = c.memberId === hosting.hostId;
               const freeGb = (c.freeMemoryMB / 1024).toFixed(1);
               const totalGb = (c.memoryMB / 1024).toFixed(1);
-              const memoryPercent = c.memoryMB > 0
-                ? Math.round((c.freeMemoryMB / c.memoryMB) * 100)
-                : 0;
+              const memoryPercent =
+                c.memoryMB > 0
+                  ? Math.round((c.freeMemoryMB / c.memoryMB) * 100)
+                  : 0;
 
               return (
                 <article
                   key={c.memberId}
                   className={`cobble-candidate-item ${
-                    isCandidateCurrentHost ? "cobble-candidate-current-host" : ""
+                    isCandidateCurrentHost
+                      ? "cobble-candidate-current-host"
+                      : ""
                   }`}
                   role="listitem"
                 >
@@ -578,7 +671,9 @@ export function HostingPanel({
                       )}
                     </div>
                     <div className="cobble-candidate-score-badge">
-                      <span className="cobble-candidate-score-label">Score</span>
+                      <span className="cobble-candidate-score-label">
+                        Score
+                      </span>
                       <span className="cobble-candidate-score-val">
                         {c.score > 0 ? c.score.toFixed(1) : "0"}
                       </span>
@@ -587,15 +682,22 @@ export function HostingPanel({
 
                   {/* Hardware & Capacity Summary */}
                   <div className="cobble-candidate-specs">
-                    <div className="cobble-spec-chip" title="Logical CPU threads">
-                      <span className="cobble-spec-icon" aria-hidden="true">⚙</span>
+                    <div
+                      className="cobble-spec-chip"
+                      title="Logical CPU threads"
+                    >
+                      <span className="cobble-spec-icon" aria-hidden="true">
+                        ⚙
+                      </span>
                       <span>{c.cpuThreads} Threads</span>
                     </div>
                     <div
                       className="cobble-spec-chip"
                       title={`${c.freeMemoryMB} MB free of ${c.memoryMB} MB total`}
                     >
-                      <span className="cobble-spec-icon" aria-hidden="true">💾</span>
+                      <span className="cobble-spec-icon" aria-hidden="true">
+                        💾
+                      </span>
                       <span>
                         {freeGb} GB Free / {totalGb} GB ({memoryPercent}%)
                       </span>
@@ -622,7 +724,9 @@ export function HostingPanel({
 
                   {/* Backend Assessment Reason */}
                   <div className="cobble-candidate-reason">
-                    <span className="cobble-reason-label">Backend Evaluation:</span>
+                    <span className="cobble-reason-label">
+                      Backend Evaluation:
+                    </span>
                     <span className="cobble-reason-text">
                       {c.reason || "Awaiting verification report."}
                     </span>
@@ -662,22 +766,30 @@ export function HostingPanel({
             <dd>{hosting.automatic ? "Enabled" : "Manual / On Demand"}</dd>
 
             <dt>Fencing Lock</dt>
-            <dd>{hosting.fenced ? "Active (Writes Queued)" : "None (Clear)"}</dd>
+            <dd>
+              {hosting.fenced ? "Active (Writes Queued)" : "None (Clear)"}
+            </dd>
 
             <dt>Host Member ID</dt>
-            <dd><code>{hosting.hostId || "null (Initial creator)"}</code></dd>
+            <dd>
+              <code>{hosting.hostId || "null (Initial creator)"}</code>
+            </dd>
 
             <dt>Advertised Address</dt>
             <dd>
-              <code>{hosting.advertisedAddress || "None (LAN auto-discovery)"}</code>
+              <code>
+                {hosting.advertisedAddress || "None (LAN auto-discovery)"}
+              </code>
             </dd>
 
             <dt>Active Team ID</dt>
-            <dd><code>{state.activeTeamId || "None"}</code></dd>
+            <dd>
+              <code>{state.activeTeamId || "None"}</code>
+            </dd>
           </dl>
           <p className="cobble-diagnostics-disclaimer">
-            Sensitive security tokens, shared credentials, and private keys are withheld
-            from diagnostic presentation.
+            Sensitive security tokens, shared credentials, and private keys are
+            withheld from diagnostic presentation.
           </p>
         </div>
       </details>

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { app, type BrowserWindow, type Tray } from "electron";
+import { app, BrowserWindow, type Tray } from "electron";
 import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,6 +31,14 @@ export async function runShutdownSmoke(
   service.store.set("shutdown-check", runId);
   assert.ok(existsSync(pairingPath));
   const bridgePort = service.bridge.port;
+  await main.webContents.executeJavaScript("window.cobble.chatWindow('show')");
+  const miniChat = BrowserWindow.getAllWindows().find(
+    (win) => win !== main && win !== companion,
+  );
+  assert.ok(
+    miniChat,
+    "native mini-chat must exist during shutdown verification",
+  );
 
   if (scenario === "main-close-with-voice") {
     const wav = encodeMonoWav(new Float32Array(16000 * 30));
@@ -68,6 +76,11 @@ export async function runShutdownSmoke(
       assert.equal(closeCalls, 1, "services must close exactly once");
       assert.equal(main.isDestroyed(), true, "main window must close");
       assert.equal(companion.isDestroyed(), true, "Pebble must close too");
+      assert.equal(
+        miniChat.isDestroyed(),
+        true,
+        "native mini-chat must close too",
+      );
       assert.equal(tray.isDestroyed(), true, "tray icon must be destroyed");
       assert.equal(
         existsSync(pairingPath),

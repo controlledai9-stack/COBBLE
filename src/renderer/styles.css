@@ -1,6 +1,10 @@
 :root {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "Cascadia Code", "Segoe UI Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI",
+    system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "Cascadia Code", "Segoe UI Mono", "SF Mono", Menlo, Monaco, Consolas,
+    monospace;
 }
 
 :root,
@@ -9,185 +13,187 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  color: #0F172A;
-  background: #FFFFFF;
+  color: #0f172a;
+  background: #ffffff;
   font-synthesis: none;
   font-size: 14px;
 
   /* LIGHT MODE (Clean Crisp White Base) */
-  --bg: #FFFFFF;
-  --bg-main: #FFFFFF;
-  --surface: #FFFFFF;
-  --surface-hover: #F4F4F5;
-  --surface-elevated: #FFFFFF;
-  --sidebar-bg: #F8FAFC;
-  --topbar-bg: #FFFFFF;
-  --card-bg: #FFFFFF;
+  --bg: #ffffff;
+  --bg-main: #ffffff;
+  --surface: #ffffff;
+  --surface-hover: #f4f4f5;
+  --surface-elevated: #ffffff;
+  --sidebar-bg: #f8fafc;
+  --topbar-bg: #ffffff;
+  --card-bg: #ffffff;
 
-  --input-bg: #FFFFFF;
-  --input-border: #CBD5E1;
-  --secondary-bg: #F8FAFC;
-  --secondary-border: #CBD5E1;
-  --secondary-hover: #F1F5F9;
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+  --secondary-bg: #f8fafc;
+  --secondary-border: #cbd5e1;
+  --secondary-hover: #f1f5f9;
 
-  --border: #E2E8F0;
-  --border-subtle: #F1F5F9;
-  --border-hover: #94A3B8;
-  --border-focus: #2563EB;
+  --border: #e2e8f0;
+  --border-subtle: #f1f5f9;
+  --border-hover: #94a3b8;
+  --border-focus: #2563eb;
 
-  --text: #0F172A;
-  --text-muted: #64748B;
-  --text-dim: #94A3B8;
-  --muted: #64748B;
-  --soft: #F8FAFC;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --text-dim: #94a3b8;
+  --muted: #64748b;
+  --soft: #f8fafc;
 
-  --accent: #2563EB;
-  --accent-hover: #1D4ED8;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
   --accent-glow: transparent;
 
   /* Button Aesthetics: Clean Dark Charcoal, ZERO YELLOW GLOW */
-  --btn-primary-bg: #0F172A;
-  --btn-primary-text: #FFFFFF;
-  --btn-primary-hover: #1E293B;
+  --btn-primary-bg: #0f172a;
+  --btn-primary-text: #ffffff;
+  --btn-primary-hover: #1e293b;
   --btn-primary-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
   --btn-primary-hover-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 
   /* Nav Tabs */
-  --nav-button-color: #64748B;
-  --nav-button-hover-bg: #F1F5F9;
-  --nav-button-hover-color: #0F172A;
-  --nav-button-selected-bg: #E2E8F0;
-  --nav-button-selected-color: #0F172A;
-  --nav-button-selected-border: #CBD5E1;
+  --nav-button-color: #64748b;
+  --nav-button-hover-bg: #f1f5f9;
+  --nav-button-hover-color: #0f172a;
+  --nav-button-selected-bg: #e2e8f0;
+  --nav-button-selected-color: #0f172a;
+  --nav-button-selected-border: #cbd5e1;
 
   /* Companion & Dropdowns */
-  --dropdown-bg: #FFFFFF;
-  --dropdown-border: #E2E8F0;
-  --dropdown-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --dropdown-bg: #ffffff;
+  --dropdown-border: #e2e8f0;
+  --dropdown-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
   --companion-bubble-bg: rgba(255, 255, 255, 0.98);
-  --companion-bubble-text: #0F172A;
-  --companion-bubble-border: #CBD5E1;
+  --companion-bubble-text: #0f172a;
+  --companion-bubble-border: #cbd5e1;
   --companion-bubble-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 
   /* Chat Bubbles */
-  --bubble-other-bg: #F1F5F9;
-  --bubble-other-border: #E2E8F0;
-  --bubble-other-text: #0F172A;
-  --bubble-mine-bg: #0F172A;
-  --bubble-mine-border: #0F172A;
-  --bubble-mine-text: #FFFFFF;
+  --bubble-other-bg: #f1f5f9;
+  --bubble-other-border: #e2e8f0;
+  --bubble-other-text: #0f172a;
+  --bubble-mine-bg: #0f172a;
+  --bubble-mine-border: #0f172a;
+  --bubble-mine-text: #ffffff;
 
   /* Utilities */
-  --empty-mark-bg: #F1F5F9;
-  --empty-mark-color: #64748B;
-  --activity-icon-bg: #F1F5F9;
-  --activity-icon-border: #E2E8F0;
-  --activity-icon-color: #64748B;
-  --avatar-bg: #F1F5F9;
-  --avatar-border: #CBD5E1;
-  --avatar-text: #0F172A;
-  --code-bg: #F8FAFC;
-  --code-border: #E2E8F0;
+  --empty-mark-bg: #f1f5f9;
+  --empty-mark-color: #64748b;
+  --activity-icon-bg: #f1f5f9;
+  --activity-icon-border: #e2e8f0;
+  --activity-icon-color: #64748b;
+  --avatar-bg: #f1f5f9;
+  --avatar-border: #cbd5e1;
+  --avatar-text: #0f172a;
+  --code-bg: #f8fafc;
+  --code-border: #e2e8f0;
   --code-text: #334155;
 
-  --mint: #10B981;
-  --danger: #EF4444;
-  --danger-surface: #FEF2F2;
-  --danger-border: #FCA5A5;
-  --notice-bg: #EFF6FF;
-  --notice-border: #BFDBFE;
-  --notice-color: #1E40AF;
-  --success: #10B981;
+  --mint: #10b981;
+  --danger: #ef4444;
+  --danger-surface: #fef2f2;
+  --danger-border: #fca5a5;
+  --notice-bg: #eff6ff;
+  --notice-border: #bfdbfe;
+  --notice-color: #1e40af;
+  --success: #10b981;
 }
 
 [data-theme="dark"] {
-  color: #F4F4F5;
+  color: #f4f4f5;
   background: #000000;
 
   /* DARK MODE (Pitch / True Black, Zero Navy Blue) */
   --bg: #000000;
   --bg-main: #050505;
-  --surface: #0E0E0E;
+  --surface: #0e0e0e;
   --surface-hover: #171717;
   --surface-elevated: #141414;
   --sidebar-bg: #080808;
   --topbar-bg: #080808;
-  --card-bg: #0E0E0E;
+  --card-bg: #0e0e0e;
 
   --input-bg: #121212;
   --input-border: #262626;
   --secondary-bg: #171717;
-  --secondary-border: #2E2E2E;
+  --secondary-border: #2e2e2e;
   --secondary-hover: #222222;
 
   --border: #262626;
   --border-subtle: #171717;
   --border-hover: #383838;
-  --border-focus: #3B82F6;
+  --border-focus: #3b82f6;
 
-  --text: #F4F4F5;
-  --text-muted: #A1A1AA;
-  --text-dim: #71717A;
-  --muted: #A1A1AA;
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
+  --muted: #a1a1aa;
   --soft: #141414;
 
-  --accent: #3B82F6;
-  --accent-hover: #60A5FA;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
   --accent-glow: transparent;
 
   /* Button Aesthetics: Crisp Solid Light Button, ZERO YELLOW GLOW */
-  --btn-primary-bg: #EDEDED;
-  --btn-primary-text: #09090B;
-  --btn-primary-hover: #FFFFFF;
+  --btn-primary-bg: #ededed;
+  --btn-primary-text: #09090b;
+  --btn-primary-hover: #ffffff;
   --btn-primary-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   --btn-primary-hover-shadow: 0 2px 8px rgba(255, 255, 255, 0.15);
 
   /* Nav Tabs */
-  --nav-button-color: #A1A1AA;
+  --nav-button-color: #a1a1aa;
   --nav-button-hover-bg: #171717;
-  --nav-button-hover-color: #FFFFFF;
+  --nav-button-hover-color: #ffffff;
   --nav-button-selected-bg: #222222;
-  --nav-button-selected-color: #FFFFFF;
+  --nav-button-selected-color: #ffffff;
   --nav-button-selected-border: #333333;
 
   /* Companion & Dropdowns */
-  --dropdown-bg: #0D0D0D;
+  --dropdown-bg: #0d0d0d;
   --dropdown-border: #262626;
-  --dropdown-shadow: 0 12px 36px rgba(0, 0, 0, 0.9), 0 0 1px rgba(255, 255, 255, 0.1);
+  --dropdown-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.9), 0 0 1px rgba(255, 255, 255, 0.1);
   --companion-bubble-bg: rgba(18, 18, 18, 0.95);
-  --companion-bubble-text: #F4F4F5;
-  --companion-bubble-border: #2E2E2E;
+  --companion-bubble-text: #f4f4f5;
+  --companion-bubble-border: #2e2e2e;
   --companion-bubble-shadow: 0 4px 18px rgba(0, 0, 0, 0.8);
 
   /* Chat Bubbles */
   --bubble-other-bg: #161616;
   --bubble-other-border: #262626;
-  --bubble-other-text: #F4F4F5;
+  --bubble-other-text: #f4f4f5;
   --bubble-mine-bg: #262626;
   --bubble-mine-border: #383838;
-  --bubble-mine-text: #FFFFFF;
+  --bubble-mine-text: #ffffff;
 
   /* Utilities */
   --empty-mark-bg: #171717;
-  --empty-mark-color: #A1A1AA;
+  --empty-mark-color: #a1a1aa;
   --activity-icon-bg: #171717;
   --activity-icon-border: #262626;
-  --activity-icon-color: #A1A1AA;
-  --avatar-bg: #1A1A1A;
-  --avatar-border: #2E2E2E;
-  --avatar-text: #F4F4F5;
-  --code-bg: #0A0A0A;
+  --activity-icon-color: #a1a1aa;
+  --avatar-bg: #1a1a1a;
+  --avatar-border: #2e2e2e;
+  --avatar-text: #f4f4f5;
+  --code-bg: #0a0a0a;
   --code-border: #222222;
-  --code-text: #A1A1AA;
+  --code-text: #a1a1aa;
 
-  --mint: #10B981;
-  --danger: #EF4444;
-  --danger-surface: #2A1317;
-  --danger-border: #4A1D24;
-  --notice-bg: #0E1B2B;
-  --notice-border: #1A314D;
-  --notice-color: #93C5FD;
-  --success: #10B981;
+  --mint: #10b981;
+  --danger: #ef4444;
+  --danger-surface: #2a1317;
+  --danger-border: #4a1d24;
+  --notice-bg: #0e1b2b;
+  --notice-border: #1a314d;
+  --notice-color: #93c5fd;
+  --success: #10b981;
 }
 
 * {
@@ -216,7 +222,9 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 h1,
@@ -378,7 +386,9 @@ select {
   color: var(--text);
   padding: 10px 13px;
   font-size: 13px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 input:focus,
@@ -460,7 +470,9 @@ hr {
   bottom: 0;
   width: 235px;
   z-index: 10;
-  transition: background-color 0.2s ease, border-color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .wordmark {
@@ -673,7 +685,9 @@ nav {
   color: var(--text-dim);
   opacity: 0.6;
   flex-shrink: 0;
-  transition: opacity 0.15s ease, transform 0.2s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.2s ease;
 }
 
 .profile-mini:hover .profile-mini-gear {
@@ -702,7 +716,9 @@ nav {
   font-size: 12px;
   color: var(--muted);
   background: var(--topbar-bg);
-  transition: background-color 0.2s ease, border-color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .connection {
@@ -921,7 +937,7 @@ nav {
 .needs-review .activity-icon {
   background: rgba(234, 179, 8, 0.1);
   border-color: rgba(234, 179, 8, 0.3);
-  color: #D97706;
+  color: #d97706;
 }
 
 .chips {
@@ -942,7 +958,7 @@ nav {
 }
 
 .needs-review .chips > span:first-child {
-  color: #B45309;
+  color: #b45309;
   background: rgba(234, 179, 8, 0.1);
   border-color: rgba(234, 179, 8, 0.25);
 }
@@ -966,7 +982,13 @@ summary:hover {
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font:
+    11px/1.7 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
   color: var(--code-text);
   background: var(--code-bg);
   padding: 14px;
@@ -1297,7 +1319,7 @@ blockquote {
 }
 
 [data-theme="dark"] .bubble.mine .bubble-author {
-  color: #EDEDED;
+  color: #ededed;
 }
 
 .bubble-time {
@@ -1310,7 +1332,7 @@ blockquote {
 }
 
 [data-theme="dark"] .bubble.mine .bubble-time {
-  color: #9CA3AF;
+  color: #9ca3af;
 }
 
 .bubble p {
@@ -1341,7 +1363,7 @@ blockquote {
 }
 
 [data-theme="dark"] .bubble.mine .bubble-status small {
-  color: #9CA3AF;
+  color: #9ca3af;
 }
 
 .composer {
@@ -1422,7 +1444,7 @@ blockquote {
 }
 
 .recording {
-  background: #DC2626 !important;
+  background: #dc2626 !important;
   color: white !important;
 }
 
@@ -1471,7 +1493,9 @@ blockquote {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.22),
+    0 2px 8px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1612,7 +1636,7 @@ blockquote {
 }
 
 [data-theme="dark"] .float-bubble.mine .float-meta b {
-  color: #EDEDED;
+  color: #ededed;
 }
 
 .float-meta small {
@@ -1625,7 +1649,7 @@ blockquote {
 }
 
 [data-theme="dark"] .float-bubble.mine .float-meta small {
-  color: #9CA3AF;
+  color: #9ca3af;
 }
 
 .float-bubble p {
@@ -1659,7 +1683,9 @@ blockquote {
   color: var(--text);
 }
 
-.composer-icon-btn, .recording-btn, .composer-send-btn {
+.composer-icon-btn,
+.recording-btn,
+.composer-send-btn {
   padding: 7px 10px;
   border-radius: 7px;
   box-shadow: none;
@@ -1681,7 +1707,7 @@ blockquote {
 }
 
 .recording-btn {
-  background: #DC2626 !important;
+  background: #dc2626 !important;
   color: white !important;
   border: none;
   animation: pulse 1s infinite;
@@ -1728,7 +1754,7 @@ blockquote {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #10B981;
+  background: #10b981;
 }
 
 .pill-text {
@@ -1852,7 +1878,6 @@ footer span:last-child {
   overflow: hidden !important;
 }
 
-
 .companion-placeholder,
 .companion-placeholder:focus,
 .companion-placeholder:focus-visible,
@@ -1891,7 +1916,9 @@ footer span:last-child {
   pointer-events: none;
   user-select: none;
   filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.7));
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.25s ease;
+  transition:
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 0.25s ease;
 }
 
 .companion-placeholder:hover .pebble-companion-root {
@@ -1910,7 +1937,6 @@ footer span:last-child {
   overflow: visible;
 }
 
-
 /* 1. Main Pod Organic Hover Physics */
 .pebble-main-pod {
   animation: pebble-pod-float 3.6s ease-in-out infinite;
@@ -1918,7 +1944,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-pod-float {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
   25% {
@@ -1941,7 +1968,8 @@ footer span:last-child {
 }
 
 @keyframes hand-wave-left {
-  0%, 100% {
+  0%,
+  100% {
     transform: rotate(0deg);
   }
   20% {
@@ -1959,7 +1987,8 @@ footer span:last-child {
 }
 
 @keyframes hand-hover-right {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
   }
   50% {
@@ -1974,7 +2003,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-eyes-cycle {
-  0%, 65% {
+  0%,
+  65% {
     transform: scaleY(1) translateX(0);
   }
   67% {
@@ -1995,7 +2025,8 @@ footer span:last-child {
   86% {
     transform: scaleY(1) translateX(3px);
   }
-  92%, 100% {
+  92%,
+  100% {
     transform: scaleY(1) translateX(0);
   }
 }
@@ -2007,7 +2038,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-aura-pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.55;
     transform: scale(1);
   }
@@ -2024,7 +2056,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-antenna-sway {
-  0%, 100% {
+  0%,
+  100% {
     transform: rotate(0deg);
   }
   25% {
@@ -2047,7 +2080,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-leg-left-drift {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0) rotate(0deg);
   }
   50% {
@@ -2056,7 +2090,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-leg-right-drift {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0) rotate(0deg);
   }
   50% {
@@ -2086,7 +2121,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-zzz-float {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.35;
     transform: translateY(0px) scale(0.9);
   }
@@ -2138,7 +2174,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-idle-breathe {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(2px) scale(1);
   }
   50% {
@@ -2151,7 +2188,8 @@ footer span:last-child {
 }
 
 @keyframes pebble-idle-aura {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.35;
     transform: scale(0.9);
   }
@@ -2160,7 +2198,6 @@ footer span:last-child {
     transform: scale(1.08);
   }
 }
-
 
 .companion-bubble {
   background: var(--companion-bubble-bg);
@@ -2334,7 +2371,6 @@ body:has(.companion-host)::-webkit-scrollbar,
   }
 }
 
-
 /* ==========================================================================
    CLEAN FIELDSET & MODALS (FIX FOR THE 3RD IMAGE & POPUP WORKFLOW)
    ========================================================================== */
@@ -2441,8 +2477,12 @@ legend {
 }
 
 @keyframes modal-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes modal-slide-up {
@@ -2577,7 +2617,6 @@ legend {
   color: var(--text-dim);
 }
 
-
 /* ==========================================================================
    WORKSPACE SETUP MODAL
    ========================================================================== */
@@ -2594,8 +2633,12 @@ legend {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .modal-card.workspace-setup-modal {
@@ -2838,8 +2881,8 @@ body:has(.mini-chat-host) {
 }
 
 .mini-chat-ctrl-btn.close-btn:hover {
-  background: #EF4444;
-  color: #FFFFFF;
+  background: #ef4444;
+  color: #ffffff;
 }
 
 .mini-chat-messages {
@@ -2960,10 +3003,11 @@ body:has(.mini-chat-host) {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #10B981;
+  background: #10b981;
 }
 
 .mini-chat-pill .pill-text {
+  -webkit-app-region: no-drag;
   font-size: 12px;
   font-weight: 500;
   color: var(--text);
@@ -2991,6 +3035,28 @@ body:has(.mini-chat-host) {
   align-items: center;
 }
 
+.workspace-connection-modal {
+  max-width: 960px;
+  max-height: 88vh;
+  overflow-y: auto;
+  width: min(960px, calc(100vw - 40px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
+}
+.workspace-connection-modal > .modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+.workspace-connection-modal .cobble-hosting-panel {
+  scroll-margin-top: 72px;
+}
+
 .mini-chat-pill .pill-close-btn:hover {
-  color: #EF4444;
+  color: #ef4444;
 }

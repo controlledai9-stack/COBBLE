@@ -1,5 +1,5 @@
 import type { BrowserWindow } from "electron";
-import { app } from "electron";
+import { app, BrowserWindow as ElectronWindow } from "electron";
 import type { CobbleService } from "../core/service";
 import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -52,6 +52,21 @@ export async function runSmoke(
   );
   const root = join(process.cwd(), ".cobble");
   await mkdir(root, { recursive: true });
+  const screenshot = async (win: BrowserWindow, name: string) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const frame = await win.webContents.capturePage();
+        if (frame.isEmpty()) throw new Error("Empty compositor frame");
+        await writeFile(join(root, name), frame.toPNG());
+        return;
+      } catch (error) {
+        if (attempt === 2)
+          throw new Error(`Screenshot ${name} failed: ${String(error)}`);
+        win.webContents.invalidate();
+      }
+    }
+  };
   const workspace = await mkdtemp(join(tmpdir(), "cobble-desktop-smoke-"));
   const git = async (...args: string[]) =>
     (
@@ -256,10 +271,7 @@ export async function runSmoke(
     'document.body.innerText.includes("Verified project connections:") && document.body.innerText.includes("Second IDE")',
   );
   assert.equal(service.bridge.current.connections?.length, 2);
-  await writeFile(
-    join(root, "smoke-ides.png"),
-    (await main.webContents.capturePage()).toPNG(),
-  );
+  await screenshot(main, "smoke-ides.png");
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[0].click()`,
   );
@@ -283,19 +295,155 @@ export async function runSmoke(
     false,
   );
   await new Promise((resolve) => setTimeout(resolve, 300));
-  await writeFile(
-    join(root, "smoke-home.png"),
-    (await main.webContents.capturePage()).toPNG(),
-  );
+  await screenshot(main, "smoke-home.png");
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[2].click()`,
   );
   await wait('!!document.querySelector(".plan-items")');
   await new Promise((resolve) => setTimeout(resolve, 300));
-  await writeFile(
-    join(root, "smoke-plan.png"),
-    (await main.webContents.capturePage()).toPNG(),
+  await screenshot(main, "smoke-plan.png");
+  await main.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Workspace & Hosting').click()`,
   );
+  await wait('!!document.querySelector("[role=dialog] .cobble-hosting-panel")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.cobble-hosting-panel button')).find(b=>b.textContent.includes('Team ready')).disabled`,
+    ),
+    true,
+  );
+  await main.webContents.executeJavaScript(
+    `(() => {const element=Array.from(document.querySelectorAll('[role=dialog] label')).find(l=>l.textContent.includes('Connect your team')).querySelector('select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,'lan');element.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+  );
+  await wait(
+    `Array.from(document.querySelectorAll('button')).some(b=>b.textContent.trim()==='Host on LAN')`,
+  );
+  await main.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Host on LAN').click()`,
+  );
+  await wait(`window.cobble.state().then(s=>s.network.role==='host')`);
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.cobble-hosting-panel').scrollIntoView({block:'start'})`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await screenshot(main, "smoke-hosting-light.png");
+  await main.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+  );
+  await wait('!document.querySelector("[role=dialog]")');
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.sidebar-action-btn').focus(); document.querySelector('.sidebar-action-btn').click()`,
+  );
+  await wait('!!document.querySelector(".workspace-setup-modal")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `document.querySelector('.workspace-setup-modal textarea[required]').checkValidity()`,
+    ),
+    false,
+  );
+  await main.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+  );
+  await wait('!document.querySelector("[role=dialog]")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `document.activeElement.matches('.sidebar-action-btn')`,
+    ),
+    true,
+  );
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.theme-toggle-btn').click()`,
+  );
+  await wait(`document.documentElement.dataset.theme==='dark'`);
+  await main.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Workspace & Hosting').click()`,
+  );
+  await wait('!!document.querySelector("[role=dialog] .cobble-hosting-panel")');
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.cobble-hosting-panel').scrollIntoView({block:'start'})`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await screenshot(main, "smoke-hosting-dark.png");
+  await main.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+  );
+  await wait('!document.querySelector("[role=dialog]")');
+  const beforeChat = ElectronWindow.getAllWindows().length;
+  assert.equal(
+    (
+      await main.webContents.executeJavaScript(
+        `window.cobble.chatWindow('status')`,
+      )
+    ).visible,
+    false,
+  );
+  assert.equal(
+    ElectronWindow.getAllWindows().length,
+    beforeChat,
+    "status must not allocate a window",
+  );
+  await main.webContents.executeJavaScript(`window.cobble.chatWindow('show')`);
+  const mini =
+    ElectronWindow.getAllWindows().find((win) =>
+      win.webContents.getURL().includes("view=mini-chat"),
+    ) ??
+    ElectronWindow.getAllWindows().find(
+      (win) => win !== main && win !== companion,
+    )!;
+  const waitMini = async (condition: string) => {
+    const start = Date.now();
+    while (!(await mini.webContents.executeJavaScript(condition))) {
+      if (Date.now() - start > 8000)
+        throw new Error(`Mini chat wait failed: ${condition}`);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+  };
+  await waitMini('!!document.querySelector(".mini-chat-composer")');
+  await mini.webContents.executeJavaScript(
+    `(()=>{const input=document.querySelector('.mini-chat-composer input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Native mini-chat delivery');input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await mini.webContents.executeJavaScript(
+    `document.querySelector('.mini-chat-composer').requestSubmit()`,
+  );
+  await wait(
+    `window.cobble.state().then(s=>s.messages.some(m=>m.content==='Native mini-chat delivery'))`,
+  );
+  await mini.webContents.executeJavaScript(
+    `window.cobble.chatWindow('minimize')`,
+  );
+  await waitMini('!!document.querySelector(".mini-chat-host.minimized")');
+  assert.ok(
+    Math.abs(mini.getBounds().height - 44) <= 1,
+    "minimized pill must respect DPI rounding, rather than the expanded minimum height",
+  );
+  await main.webContents.executeJavaScript(`window.cobble.chatWindow('hide')`);
+  await main.webContents.executeJavaScript(`window.cobble.chatWindow('show')`);
+  await waitMini('!!document.querySelector(".mini-chat-composer")');
+  assert.ok(mini.getBounds().height >= 400);
+  await screenshot(mini, "smoke-mini-chat.png");
+  await mini.webContents.executeJavaScript(
+    `window.cobble.chatWindow('redirect')`,
+  );
+  await wait('!!document.querySelector(".chat-panel")');
+  assert.equal(mini.isVisible(), false);
+  const originalSize = main.getSize();
+  main.setSize(850, 620);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      "document.documentElement.scrollWidth > innerWidth",
+    ),
+    false,
+    "minimum supported window must not overflow horizontally",
+  );
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `document.querySelector('.composer').getBoundingClientRect().right <= innerWidth`,
+    ),
+    true,
+  );
+  main.setSize(originalSize[0], originalSize[1]);
   const maintenance = await main.webContents.executeJavaScript(
     "window.cobble.maintenance()",
   );
@@ -343,6 +491,6 @@ export async function runSmoke(
     );
   }
   console.log(
-    "COBBLE_SMOKE_OK: profile, plan, work areas, completion, votes, actual Git merge, chat, saved diff, revert preview, IDE auth, companion poses, screenshots",
+    "COBBLE_SMOKE_OK: profile, plan, work areas, completion, votes, Git merge, chat, saved diff/revert, IDE auth, poses, hosting dialog, themes, native mini-chat and secure backup",
   );
 }

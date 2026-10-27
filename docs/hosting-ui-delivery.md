@@ -108,3 +108,7 @@ The UI adheres strictly to modern web accessibility principles (WCAG 2.1 AA):
   <HostingPanel state={state} act={act} busy={busy} />
   ```
 - No changes were made to existing files (`main.tsx`, `styles.css`, shared types, backend, or tests). Presentation boundary is completely isolated and verified.
+
+## Integrated in 0.4.2
+
+The component is now mounted in the Teams Workspace & Hosting dialog. Integration also restores initial hosting controls and validates manager/fencing gates, current-host endpoints and theme contrast. The upstream commit included broader UI/window changes beyond the isolated component described above. See [integration evidence](UI-INTEGRATION-0.4.2.md).

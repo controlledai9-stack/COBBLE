@@ -28,8 +28,14 @@ const api: DesktopApi = {
   open: (tab, voice) => ipcRenderer.invoke("cobble:open", tab, voice),
   companion: (command, point) =>
     ipcRenderer.invoke("cobble:companion", command, point),
-  chatWindow: (command) =>
-    ipcRenderer.invoke("cobble:chat-window", command),
+  chatWindow: (command) => ipcRenderer.invoke("cobble:chat-window", command),
+  onChatWindowState: (callback) => {
+    const listener = (_: unknown, state: { minimized: boolean }) =>
+      callback(state);
+    ipcRenderer.on("cobble:chat-window-state", listener);
+    return () =>
+      ipcRenderer.removeListener("cobble:chat-window-state", listener);
+  },
   onChange: (callback) => {
     const listener = (_: unknown, state: any) => callback(state);
     ipcRenderer.on("cobble:changed", listener);
