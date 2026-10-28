@@ -86,7 +86,11 @@ test(
         }
       });
       await peers[1].resume(team.id);
-      assert.equal(posts[0], "/chat");
+      // Hosting heartbeats run independently; compare queued application work.
+      assert.equal(
+        posts.find((path) => path === "/chat" || path === "/receipts"),
+        "/chat",
+      );
       assert.ok(
         stores[0].db
           .prepare("SELECT 1 FROM messages WHERE id='new-work'")

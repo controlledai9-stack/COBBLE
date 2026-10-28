@@ -244,13 +244,16 @@ test("kept changes are deduplicated; restart baseline detects edits made while s
   }
 });
 
-
 test("deleting messages authored by user and deleting workspaces", async () => {
   const dir = await mkdtemp(join(tmpdir(), "cobble-del-"));
   const file = join(dir, "cobble.sqlite");
   const service = new CobbleService(file);
   try {
-    await service.action({ type: "profile", name: "Alice", email: "alice@example.com" });
+    await service.action({
+      type: "profile",
+      name: "Alice",
+      email: "alice@example.com",
+    });
     await service.action({
       type: "createTeam",
       name: "Workspace A",
@@ -295,5 +298,45 @@ test("deleting messages authored by user and deleting workspaces", async () => {
   } finally {
     await service.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("local deletion validates the selected team and preserves unrelated hosting", async () => {
+  const service = new CobbleService(":memory:");
+  try {
+    service.store.saveProfile("Alice", "");
+    const oldTeam = service.store.createTeam("Old", "Build old", "");
+    await service.action({
+      type: "send",
+      recipientId: null,
+      content: "Old message",
+      sentVia: "text",
+    });
+    const oldMessage = service.state().messages[0];
+    const active = service.store.createTeam("Current", "Build current", "");
+    await service.action({ type: "host" });
+    const address = service.network.state.address;
+    await assert.rejects(
+      service.action({ type: "deleteTeam", teamId: "missing" }),
+      /Team not found/,
+    );
+    await assert.rejects(
+      service.action({ type: "deleteMessage", messageId: oldMessage.id }),
+      /selected workspace/,
+    );
+    await service.action({ type: "deleteTeam", teamId: oldTeam.id });
+    assert.equal(service.state().activeTeamId, active.id);
+    assert.equal(service.network.state.role, "host");
+    assert.equal(service.network.state.address, address);
+    const lock = service as unknown as { integrating: boolean };
+    lock.integrating = true;
+    await assert.rejects(
+      service.action({ type: "deleteTeam", teamId: active.id }),
+      /approved main integration/,
+    );
+    lock.integrating = false;
+    assert.equal(service.store.team(active.id).id, active.id);
+  } finally {
+    await service.close();
   }
 });

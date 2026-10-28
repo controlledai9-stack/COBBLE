@@ -1,0 +1,218 @@
+{
+  "version": "3.1",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "fps": 24,
+  "alpha": true,
+  "provenance": "Adapted from the three user-supplied Google-generated videos: foreground matting, framing, selected cuts, looping and mirrored left drag. No new video model generation.",
+  "states": {
+    "idle": {
+      "id": "idle",
+      "source": "rest",
+      "start": 0,
+      "end": 60,
+      "loop": true,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM (1).mp4",
+      "sourceFrameRange": [
+        0,
+        59
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 4.916666666666667,
+      "frameCount": 118,
+      "webm": "animations/idle.webm",
+      "webp": "animations/idle.webp",
+      "lite": "lite/idle.webp",
+      "still": "stills/idle.png",
+      "endPoster": "posters/idle-end.png",
+      "loopMethod": "forward-reverse, endpoints not repeated",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "doze-off": {
+      "id": "doze-off",
+      "source": "rest",
+      "start": 60,
+      "end": 155,
+      "loop": false,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM (1).mp4",
+      "sourceFrameRange": [
+        60,
+        154
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 3.9583333333333335,
+      "frameCount": 95,
+      "webm": "animations/doze-off.webm",
+      "webp": "animations/doze-off.webp",
+      "lite": "lite/doze-off.webp",
+      "still": "stills/doze-off.png",
+      "endPoster": "posters/doze-off-end.png",
+      "loopMethod": "one-shot, hold final frame",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "sleep": {
+      "id": "sleep",
+      "source": "rest",
+      "start": 155,
+      "end": 227,
+      "loop": true,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM (1).mp4",
+      "sourceFrameRange": [
+        155,
+        226
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 5.916666666666667,
+      "frameCount": 142,
+      "webm": "animations/sleep.webm",
+      "webp": "animations/sleep.webp",
+      "lite": "lite/sleep.webp",
+      "still": "stills/sleep.png",
+      "endPoster": "posters/sleep-end.png",
+      "alphaRepair": "Optical-flow aligned temporal alpha guides preserve the white ring glow and lower body.",
+      "loopMethod": "forward-reverse, endpoints not repeated",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "curious-bounce": {
+      "id": "curious-bounce",
+      "source": "curious",
+      "start": 0,
+      "end": 88,
+      "loop": false,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM (2).mp4",
+      "sourceFrameRange": [
+        0,
+        87
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 3.6666666666666665,
+      "frameCount": 88,
+      "webm": "animations/curious-bounce.webm",
+      "webp": "animations/curious-bounce.webp",
+      "lite": "lite/curious-bounce.webp",
+      "still": "stills/curious-bounce.png",
+      "endPoster": "posters/curious-bounce-end.png",
+      "loopMethod": "one-shot, hold final frame",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "drag-right": {
+      "id": "drag-right",
+      "source": "liquid",
+      "start": 35,
+      "end": 48,
+      "loop": true,
+      "track": true,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM.mp4",
+      "sourceFrameRange": [
+        35,
+        47
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 1.0,
+      "frameCount": 24,
+      "webm": "animations/drag-right.webm",
+      "webp": "animations/drag-right.webp",
+      "lite": "lite/drag-right.webp",
+      "still": "stills/drag-right.png",
+      "endPoster": "posters/drag-right-end.png",
+      "loopMethod": "forward-reverse, endpoints not repeated",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "drag-left": {
+      "id": "drag-left",
+      "source": "liquid",
+      "start": 35,
+      "end": 48,
+      "loop": true,
+      "track": true,
+      "mirror": true,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM.mp4",
+      "sourceFrameRange": [
+        35,
+        47
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 1.0,
+      "frameCount": 24,
+      "webm": "animations/drag-left.webm",
+      "webp": "animations/drag-left.webp",
+      "lite": "lite/drag-left.webp",
+      "still": "stills/drag-left.png",
+      "endPoster": "posters/drag-left-end.png",
+      "loopMethod": "forward-reverse, endpoints not repeated",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "elastic-swoop": {
+      "id": "elastic-swoop",
+      "source": "liquid",
+      "start": 88,
+      "end": 137,
+      "loop": false,
+      "track": true,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM.mp4",
+      "sourceFrameRange": [
+        88,
+        136
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 2.0416666666666665,
+      "frameCount": 49,
+      "webm": "animations/elastic-swoop.webm",
+      "webp": "animations/elastic-swoop.webp",
+      "lite": "lite/elastic-swoop.webp",
+      "still": "stills/elastic-swoop.png",
+      "endPoster": "posters/elastic-swoop-end.png",
+      "loopMethod": "one-shot, hold final frame",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "release-settle": {
+      "id": "release-settle",
+      "source": "liquid",
+      "start": 207,
+      "end": 242,
+      "loop": false,
+      "track": true,
+      "sourceFile": "WhatsApp Video 2026-10-26 at 5.07.29 PM.mp4",
+      "sourceFrameRange": [
+        207,
+        239
+      ],
+      "sourceFps": 24,
+      "durationSeconds": 1.375,
+      "frameCount": 33,
+      "webm": "animations/release-settle.webm",
+      "webp": "animations/release-settle.webp",
+      "lite": "lite/release-settle.webp",
+      "still": "stills/release-settle.png",
+      "endPoster": "posters/release-settle-end.png",
+      "loopMethod": "one-shot, hold final frame",
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    }
+  }
+}

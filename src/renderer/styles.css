@@ -2021,6 +2021,36 @@ footer span:last-child {
   overflow: visible;
 }
 
+/* Reference media owns its motion; the native window owns pointer tracking. */
+.companion-placeholder .pebble-motion,
+.companion-placeholder:hover .pebble-motion,
+.companion-placeholder:active .pebble-motion {
+  width: 110px;
+  height: 100px;
+  position: relative;
+  transform: none;
+  transition: none;
+  filter: none;
+}
+.pebble-motion .pebble-grab-plane {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+.companion-placeholder .pebble-motion .pebble-main-pod {
+  animation: none;
+  transform: none;
+}
+.pebble-motion-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
 /* 1. Main Pod Organic Hover Physics */
 .pebble-main-pod {
   animation: pebble-pod-float 3.6s ease-in-out infinite;

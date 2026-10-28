@@ -1,5 +1,7 @@
 # Cobble
 
+Latest source (28 October): Vyom's newer UI/window changes and the supplied Pebble reference animations are integrated. See [playback mapping and local testing](docs/PEBBLE-REFERENCE-INTEGRATION.md). The 0.4.2 installer below predates this source update; use `npm run dev` to test the latest UI.
+
 A local-first desktop workspace for a team's plan, saved code changes, and conversations. Development source 0.4.2 integrates Vyom's refreshed themes, Discussions and mini-chat with the existing connection recovery, plan mapping, encrypted backup and safe-handover backend. See [backend delivery and UI contracts](docs/BACKEND-4-8-DELIVERY.md). The hosting panel is integrated in Workspace & Hosting; see [UI integration details](docs/UI-INTEGRATION-0.4.2.md).
 
 ## Install the app

@@ -40,7 +40,7 @@ import {
   IconMinimize,
   IconTrash,
 } from "./icons";
-import { PebbleRobot } from "./pebble";
+import { PebbleAnimation } from "./pebble-animation";
 import { HostingPanel } from "./hosting-panel";
 import { ModalShell } from "./modal-shell";
 import "./styles.css";
@@ -303,7 +303,7 @@ function App() {
                 onClick={async () => {
                   if (
                     confirm(
-                      `Are you sure you want to delete workspace "${team.name}"? This removes its local plan, history, and discussions from this device.`
+                      `Are you sure you want to delete workspace "${team.name}"? This removes its local plan, history, and discussions from this device. If this device hosts the team, connected teammates will disconnect.`,
                     )
                   ) {
                     await act({ type: "deleteTeam", teamId: team.id });
@@ -1325,9 +1325,12 @@ function Teams({
                 )}
                 <hr />
                 <div className="danger-zone">
-                  <span className="eyebrow" style={{ color: "#ef4444" }}>DANGER ZONE</span>
+                  <span className="eyebrow" style={{ color: "#ef4444" }}>
+                    DANGER ZONE
+                  </span>
                   <p className="small muted">
-                    Deleting this workspace removes its discussions, plan, and local records from this device.
+                    Deleting this workspace removes its discussions, plan, and
+                    local records from this device.
                   </p>
                   <button
                     type="button"
@@ -1335,7 +1338,7 @@ function Teams({
                     onClick={async () => {
                       if (
                         confirm(
-                          `Permanently delete workspace "${team.name}" from this device?`
+                          `Permanently delete workspace "${team.name}" from this device? Hosting on this device will stop.`,
                         )
                       ) {
                         setModal(null);
@@ -1802,11 +1805,18 @@ function Chat({
                         <button
                           type="button"
                           className="msg-delete-btn"
-                          title="Delete message"
-                          aria-label="Delete message"
+                          title="Delete local message copy"
+                          aria-label="Delete local message copy"
                           onClick={() => {
-                            if (confirm("Delete this message?")) {
-                              void act({ type: "deleteMessage", messageId: m.id });
+                            if (
+                              confirm(
+                                "Remove this message from this device? Copies already delivered to teammates are unchanged, and synchronization may restore this copy.",
+                              )
+                            ) {
+                              void act({
+                                type: "deleteMessage",
+                                messageId: m.id,
+                              });
                             }
                           }}
                         >
@@ -1955,6 +1965,7 @@ function Companion({
   onToggleTheme?: () => void;
 }) {
   const [mode, setMode] = useState<CompanionMode>("normal");
+  const [dragDirection, setDragDirection] = useState<"left" | "right">("right");
   const [menu, setMenu] = useState(false);
   const [art, setArt] = useState<Partial<Record<CompanionMode, string>>>({});
   const [bubbleText, setBubbleText] = useState<string | null>(null);
@@ -2172,6 +2183,8 @@ function Companion({
           }
           const dx = e.screenX - origin.current.x;
           const dy = e.screenY - origin.current.y;
+          if (dx > 8) setDragDirection("right");
+          else if (dx < -8) setDragDirection("left");
           if (!drag.current && Math.hypot(dx, dy) > 3) {
             drag.current = true;
             setMode("dragging");
@@ -2221,7 +2234,11 @@ function Companion({
           }
         }}
       >
-        <PebbleRobot mode={mode} />
+        <PebbleAnimation
+          mode={mode}
+          direction={dragDirection}
+          attention={state.notifications?.[0]?.id}
+        />
       </button>
     </div>
   );
@@ -2503,11 +2520,18 @@ function FloatingChat({
                       <button
                         type="button"
                         className="msg-delete-btn"
-                        title="Delete message"
-                        aria-label="Delete message"
+                        title="Delete local message copy"
+                        aria-label="Delete local message copy"
                         onClick={() => {
-                          if (confirm("Delete this message?")) {
-                            void act({ type: "deleteMessage", messageId: m.id });
+                          if (
+                            confirm(
+                              "Remove this message from this device? Copies already delivered to teammates are unchanged, and synchronization may restore this copy.",
+                            )
+                          ) {
+                            void act({
+                              type: "deleteMessage",
+                              messageId: m.id,
+                            });
                           }
                         }}
                       >
@@ -3060,11 +3084,18 @@ function StandaloneMiniChat({
                       <button
                         type="button"
                         className="msg-delete-btn"
-                        title="Delete message"
-                        aria-label="Delete message"
+                        title="Delete local message copy"
+                        aria-label="Delete local message copy"
                         onClick={() => {
-                          if (confirm("Delete this message?")) {
-                            void act({ type: "deleteMessage", messageId: m.id });
+                          if (
+                            confirm(
+                              "Remove this message from this device? Copies already delivered to teammates are unchanged, and synchronization may restore this copy.",
+                            )
+                          ) {
+                            void act({
+                              type: "deleteMessage",
+                              messageId: m.id,
+                            });
                           }
                         }}
                       >

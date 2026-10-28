@@ -376,6 +376,7 @@ export class CobbleService extends EventEmitter {
     if (
       this.network.hosting.frozen &&
       [
+        "deleteTeam",
         "createTeam",
         "selectTeam",
         "join",
@@ -397,6 +398,7 @@ export class CobbleService extends EventEmitter {
     if (
       this.integrating &&
       [
+        "deleteTeam",
         "createTeam",
         "selectTeam",
         "join",
@@ -446,14 +448,16 @@ export class CobbleService extends EventEmitter {
         break;
       }
       case "deleteTeam": {
-        if (this.network.state.role !== "local") this.network.disconnect();
         requiredText(action.teamId, "Team ID", 100);
+        this.store.team(action.teamId);
+        const deletingActive = beforeTeam?.id === action.teamId;
+        if (deletingActive) this.network.disconnect();
         this.store.deleteTeam(action.teamId);
         const active = this.activeTeam();
-        if (active) {
+        if (deletingActive && active) {
           await this.network.resume(active.id);
         }
-        await this.monitor();
+        if (deletingActive) await this.monitor();
         break;
       }
       case "selectTeam":
@@ -534,7 +538,7 @@ export class CobbleService extends EventEmitter {
         const profile = this.store.profile();
         if (!team || !profile) throw new Error("Select a team first");
         requiredText(action.messageId, "Message ID", 100);
-        this.store.deleteMessage(action.messageId, profile.id);
+        this.store.deleteMessage(action.messageId, profile.id, team.id);
         break;
       }
       case "resolve":

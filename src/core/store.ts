@@ -139,18 +139,23 @@ export class Store {
         if (remaining.length > 0) {
           this.set("activeTeamId", remaining[0].id);
         } else {
-          this.db.prepare("DELETE FROM settings WHERE key='activeTeamId'").run();
+          this.db
+            .prepare("DELETE FROM settings WHERE key='activeTeamId'")
+            .run();
         }
       }
     });
   }
 
-  deleteMessage(messageId: string, authorId: string): boolean {
+  deleteMessage(messageId: string, authorId: string, teamId?: string): boolean {
     const row = this.db
       .prepare("SELECT data FROM messages WHERE id=?")
       .get(messageId) as { data: string } | undefined;
     if (!row) return false;
     const msg = JSON.parse(row.data) as ChatMessage;
+    if (teamId && msg.teamId !== teamId) {
+      throw new Error("Message does not belong to the selected workspace");
+    }
     if (msg.senderId !== authorId) {
       throw new Error("You can only delete messages written by yourself");
     }

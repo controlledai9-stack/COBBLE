@@ -18,6 +18,14 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
   screen.getCursorScreenPoint = () => ({ ...cursor });
   try {
     await settle();
+    await js(`new Promise((resolve, reject) => {
+      const video = document.querySelector('.pebble-motion video');
+      if (!video) return reject(new Error('Reference Pebble video is missing'));
+      const timer = setTimeout(() => reject(new Error('Pebble video did not decode')), 8000);
+      const ready = () => { clearTimeout(timer); resolve(true); };
+      if (video.readyState >= 2 && video.videoWidth === 512) ready();
+      else video.addEventListener('loadeddata', ready, { once:true });
+    })`);
     await command("menu-close");
     const menuAnchor = companion.getPosition();
     for (let i = 0; i < 12; i++) {
