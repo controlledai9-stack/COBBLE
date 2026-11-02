@@ -157,10 +157,7 @@ else {
           width: 160,
           height: 110,
         };
-        companionAnchor = clampCompanionBounds(
-          collapsed,
-          display.workArea,
-        );
+        companionAnchor = clampCompanionBounds(collapsed, display.workArea);
         service.store.set("companionPosition", [
           companionAnchor.x,
           companionAnchor.y,
@@ -375,6 +372,7 @@ else {
         ideTimer.unref();
       }
       handle("report", () => service.report());
+      handle("search-plan", (_, query: string) => service.searchPlan(query));
       handle("install-agent", async (_, agent: string, remove = false) => {
         if (
           !["claude", "cursor"].includes(agent) ||
@@ -479,7 +477,10 @@ else {
         const h = 520;
         const x = workArea.x + workArea.width - w - 24;
         const y = workArea.y + workArea.height - h - 24;
-        const initial = clampCompanionBounds({ x, y, width: w, height: h }, workArea);
+        const initial = clampCompanionBounds(
+          { x, y, width: w, height: h },
+          workArea,
+        );
 
         chatWindow = new BrowserWindow({
           width: initial.width,
@@ -501,7 +502,10 @@ else {
           },
         });
 
-        savedChatBounds = clampCompanionBounds(chatWindow.getBounds(), workArea);
+        savedChatBounds = clampCompanionBounds(
+          chatWindow.getBounds(),
+          workArea,
+        );
 
         chatWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
         chatWindow.webContents.on("will-navigate", (event) =>
@@ -614,10 +618,16 @@ else {
         }
         const broadcastChatState = (visible: boolean, minimized: boolean) => {
           if (main && !main.isDestroyed()) {
-            main.webContents.send("cobble:chat-window-state", { visible, minimized });
+            main.webContents.send("cobble:chat-window-state", {
+              visible,
+              minimized,
+            });
           }
           if (chatWindow && !chatWindow.isDestroyed()) {
-            chatWindow.webContents.send("cobble:chat-window-state", { visible, minimized });
+            chatWindow.webContents.send("cobble:chat-window-state", {
+              visible,
+              minimized,
+            });
           }
         };
         const restoreChatBounds = (targetWin: BrowserWindow) => {
@@ -690,9 +700,7 @@ else {
               savedChatBounds = clampCompanionBounds(curr, display.workArea);
             }
             chatWindowMinimized = true;
-            const workArea = screen.getDisplayMatching(
-              curr,
-            ).workArea;
+            const workArea = screen.getDisplayMatching(curr).workArea;
             win.setMinimumSize(0, 0);
             win.setResizable(false);
             const pillBounds = clampCompanionBounds(

@@ -1,6 +1,6 @@
 {
   "name": "cobble",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "license": "UNLICENSED",
   "author": "Cobble",
@@ -21,6 +21,7 @@
     "test:relay": "node scripts/test-relay.mjs",
     "cli": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
+    "benchmark:plan-memory": "tsx scripts/benchmark-plan-memory.ts",
     "format": "prettier --write src scripts test extensions/vscode/src",
     "test": "tsx --test test/*.test.ts",
     "test:desktop": "node scripts/smoke.mjs",

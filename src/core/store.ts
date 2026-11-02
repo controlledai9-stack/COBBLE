@@ -2,7 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { requiredText, splitPlan } from "./plan";
+import { requiredText, splitPlan, remapPlanGraph } from "./plan";
+import { PlanMemory } from "./analysis/plan-memory";
 import type {
   Profile,
   Team,
@@ -15,6 +16,7 @@ import type {
 
 export class Store {
   readonly db: DatabaseSync;
+  readonly planMemory: PlanMemory;
   private transactionDepth = 0;
   constructor(file: string) {
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
@@ -47,6 +49,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS analysis_batch_team ON analysis_batches(team_id);
       CREATE INDEX IF NOT EXISTS analysis_job_batch ON analysis_jobs(batch_id);
       INSERT OR IGNORE INTO migrations VALUES(3);`);
+    this.planMemory = new PlanMemory(this);
   }
   transaction<T>(fn: () => T): T {
     const nested = this.transactionDepth > 0;
@@ -125,6 +128,7 @@ export class Store {
   }
   deleteTeam(id: string) {
     this.transaction(() => {
+      this.planMemory.clear(id);
       this.db.prepare("DELETE FROM plan_versions WHERE team_id=?").run(id);
       this.db.prepare("DELETE FROM members WHERE team_id=?").run(id);
       this.db.prepare("DELETE FROM change_batches WHERE team_id=?").run(id);
@@ -203,20 +207,22 @@ export class Store {
     return team;
   }
   putTeam(team: Team) {
-    this.db
-      .prepare(
-        "INSERT INTO teams VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-      )
-      .run(team.id, JSON.stringify(team));
-    this.db
-      .prepare("INSERT OR IGNORE INTO plan_versions VALUES(?,?,?,?,?)")
-      .run(
-        team.id,
-        team.version,
-        team.plan,
-        JSON.stringify(team.items),
-        new Date().toISOString(),
-      );
+    this.transaction(() => {
+      this.db
+        .prepare(
+          "INSERT INTO teams VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+        )
+        .run(team.id, JSON.stringify(team));
+      this.db
+        .prepare("INSERT OR IGNORE INTO plan_versions VALUES(?,?,?,?,?)")
+        .run(
+          team.id,
+          team.version,
+          team.plan,
+          JSON.stringify(team.items),
+          new Date().toISOString(),
+        );
+    });
   }
   updatePlan(id: string, version: number, plan: string): Team {
     return this.transaction(() => {
@@ -225,10 +231,12 @@ export class Store {
         throw new Error("Only the team owner can update the plan");
       if (team.version !== version)
         throw new Error("The plan changed. Reload it before saving.");
+      const items = splitPlan(plan);
       const next = {
         ...team,
         plan: requiredText(plan, "Plan"),
-        items: splitPlan(plan),
+        items,
+        graph: remapPlanGraph(team, items),
         version: version + 1,
       };
       this.putTeam(next);

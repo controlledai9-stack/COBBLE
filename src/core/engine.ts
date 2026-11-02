@@ -1,6 +1,7 @@
 import Ajv from "ajv";
 import { matchesGlob } from "node:path";
 import type { AgentPayload, Assessment, Change, Team } from "../shared/types";
+import { hasPlanCondition } from "./plan";
 const ajv = new Ajv({ allErrors: true });
 const string = { type: "string", maxLength: 12_000 };
 const validate = ajv.compile({
@@ -107,19 +108,18 @@ function pathMatches(path: string, reference: string) {
     return false;
   }
 }
+const pathDirective =
+  /(?:do not|must not|never)\s+(?:create|add|modify|edit|change)\s+(?:files?\s+(?:in|under|at)\s+)?`([^`]+)`/i;
+const simplePathDirective = new RegExp(`^${pathDirective.source}[.!]?$`, "i");
 export function explicitPathConflict(
   team: Team,
   paths: string[],
 ): Assessment | null {
   for (const item of team.items.filter((i) => i.kind === "constraint")) {
-    const match = item.text.match(
-      /(?:do not|must not|never)\s+(?:create|add|modify|edit|change)\s+(?:files?\s+(?:in|under|at)\s+)?`([^`]+)`/i,
-    );
+    const match = item.text.match(pathDirective);
     if (
-      match &&
-      /\b(except|unless|only if|without approval|when approved)\b/i.test(
-        item.text.slice((match.index ?? 0) + match[0].length),
-      )
+      hasPlanCondition(item.text) ||
+      !simplePathDirective.test(item.title.trim())
     )
       continue;
     if (match && paths.some((path) => pathMatches(path, match[1])))
@@ -153,14 +153,11 @@ export function assess(
   if (conflict) return conflict;
   const conditional = team.items.filter((item) => {
     if (item.kind !== "constraint") return false;
-    const match = item.text.match(
-      /(?:do not|must not|never)\s+(?:create|add|modify|edit|change)\s+(?:files?\s+(?:in|under|at)\s+)?`([^`]+)`/i,
-    );
+    const match = item.text.match(pathDirective);
     return (
       !!match &&
-      /\b(except|unless|only if|without approval|when approved)\b/i.test(
-        item.text.slice((match.index ?? 0) + match[0].length),
-      ) &&
+      (hasPlanCondition(item.text) ||
+        !simplePathDirective.test(item.title.trim())) &&
       changes.some((change) => pathMatches(change.path, match[1]))
     );
   });
@@ -171,7 +168,7 @@ export function assess(
       alert: false,
       planItemIds: conditional.map((item) => item.id),
       explanation:
-        "A matching plan boundary has an exception or approval condition. Saved paths alone do not establish a violation; recorded quietly for contextual review.",
+        "A matching plan boundary has an exception or approval condition, or prose outside the supported simple rule format. Saved paths alone do not establish a violation; recorded quietly for contextual review.",
     };
   const positive = team.items.filter((i) => i.kind !== "constraint");
   const linked = new Set<string>();

@@ -14,6 +14,7 @@ const api: DesktopApi = {
   bindWorkspace: () => ipcRenderer.invoke("cobble:bind"),
   pairing: () => ipcRenderer.invoke("cobble:pairing"),
   report: () => ipcRenderer.invoke("cobble:report"),
+  searchPlan: (query) => ipcRenderer.invoke("cobble:search-plan", query),
   artwork: () => ipcRenderer.invoke("cobble:artwork"),
   copyPairing: () => ipcRenderer.invoke("cobble:copy-pairing"),
   detectIdes: () => ipcRenderer.invoke("cobble:detect-ides"),
@@ -30,8 +31,10 @@ const api: DesktopApi = {
     ipcRenderer.invoke("cobble:companion", command, point),
   chatWindow: (command) => ipcRenderer.invoke("cobble:chat-window", command),
   onChatWindowState: (callback) => {
-    const listener = (_: unknown, state: { visible?: boolean; minimized: boolean }) =>
-      callback(state);
+    const listener = (
+      _: unknown,
+      state: { visible?: boolean; minimized: boolean },
+    ) => callback(state);
     ipcRenderer.on("cobble:chat-window-state", listener);
     return () =>
       ipcRenderer.removeListener("cobble:chat-window-state", listener);

@@ -98,6 +98,16 @@ export async function runSmoke(
     plan: "# A calmer way to build\n- Build shared tasks and team chat\n- Keep everything local\n- Do not modify `legacy/`",
     workspace,
   });
+  const retrieved = await main.webContents.executeJavaScript(
+    "window.cobble.searchPlan('team chat')",
+  );
+  assert.equal(retrieved.engine, "fts5-bm25");
+  assert.equal(retrieved.purpose, "context_only");
+  assert.ok(
+    retrieved.items.some((item: { text: string }) =>
+      item.text.includes("legacy/"),
+    ),
+  );
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[2].click()`,
   );

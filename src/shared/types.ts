@@ -18,6 +18,35 @@ export interface PlanItem {
   start: number;
   end: number;
 }
+export interface PlanMemoryItem {
+  logicalId: string;
+  sourceItemId: string;
+  kind: PlanItem["kind"];
+  text: string;
+  start: number;
+  end: number;
+  ambiguous: boolean;
+  conditional: boolean;
+}
+export interface PlanRetrieval {
+  teamId: string;
+  planVersion: number;
+  sourceDigest: string;
+  engine: "fts5-bm25" | "lexical";
+  items: (PlanMemoryItem & { signals: string[] })[];
+  coverage: {
+    totalItems: number;
+    totalConstraints: number;
+    omittedItems: number;
+    omittedConstraints: number;
+    omittedCandidates: number;
+    queryTruncated: boolean;
+    pathsTruncated: boolean;
+    characterBudget: number;
+    characters: number;
+  };
+  purpose: "context_only";
+}
 export interface Team {
   id: string;
   name: string;
@@ -397,6 +426,7 @@ export interface DesktopApi {
   transcribe(audio: ArrayBuffer): Promise<string>;
   bindWorkspace(): Promise<void>;
   report(): Promise<string>;
+  searchPlan?(query: string): Promise<PlanRetrieval>;
   artwork(): Promise<Partial<Record<CompanionMode, string>>>;
   copyPairing(): Promise<void>;
   detectIdes(): Promise<DetectedIde[]>;

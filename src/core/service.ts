@@ -59,7 +59,7 @@ export class CobbleService extends EventEmitter {
   private integrating = false;
   private integrationTask?: Promise<void>;
   private agentMessages = new Map<string, string>();
-  private contextVersions = new Map<string, number>();
+  private contextVersions = new Map<string, string>();
   private backupTasks = new Set<Promise<unknown>>();
   private closeTask?: Promise<void>;
   private observationTask?: Promise<Activity | null>;
@@ -83,9 +83,10 @@ export class CobbleService extends EventEmitter {
       () => this.changed(),
       () => this.schedule(),
       async (body) => {
-        const key = `${body.agent}:${body.sessionId}`;
         const team = this.activeTeam();
         if (!team) return;
+        const key = `${team.id}:${body.agent}:${body.sessionId}`;
+        const contextVersion = analysisContext(team, false);
         if (body.event === "output") {
           this.agentMessages.set(key, body.message ?? "");
           if (this.agentMessages.size > 32)
@@ -102,13 +103,20 @@ export class CobbleService extends EventEmitter {
         if (
           body.event === "context" ||
           (body.event === "write" &&
-            this.contextVersions.get(key) !== team.version)
+            this.contextVersions.get(key) !== contextVersion)
         ) {
-          this.contextVersions.set(key, team.version);
+          this.contextVersions.set(key, contextVersion);
+          if (this.contextVersions.size > 64)
+            this.contextVersions.delete(
+              this.contextVersions.keys().next().value!,
+            );
           return {
             context: agentContext(
               team,
               typeof body.prompt === "string" ? body.prompt : "",
+              this.store.planMemory.retrieve(team, {
+                query: typeof body.prompt === "string" ? body.prompt : "",
+              }),
             ),
           };
         }
@@ -500,6 +508,10 @@ export class CobbleService extends EventEmitter {
         contextHash: job.contextHash,
         assessment,
         evaluatedAt: new Date().toISOString(),
+        retrieval: this.store.planMemory.retrieve(job.context, {
+          query: changes.map((change) => change.path).join(" "),
+          paths: changes.map((change) => change.path),
+        }),
       };
       const old = this.store.activityByFingerprint(batch.teamId, key);
       if (old) {
@@ -1135,6 +1147,13 @@ export class CobbleService extends EventEmitter {
       "## Coverage",
       ...this.state().coverage.map((c) => `- ${c}`),
     ].join("\n");
+  }
+  searchPlan(query: string) {
+    if (typeof query !== "string" || query.length > 4000)
+      throw new Error("Plan query must be text of at most 4000 characters");
+    const team = this.activeTeam();
+    if (!team) throw new Error("Select a team first");
+    return this.store.planMemory.retrieve(team, { query });
   }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;

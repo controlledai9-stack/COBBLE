@@ -60,7 +60,11 @@ function validate(db: DatabaseSync) {
     )
       throw new Error("Backup contains malformed application records");
   // Optional additive tables: older backups remain readable without them.
-  for (const table of ["analysis_batches", "analysis_jobs"]) {
+  for (const table of [
+    "analysis_batches",
+    "analysis_jobs",
+    "plan_memory_items",
+  ]) {
     if (
       db
         .prepare("SELECT 1 FROM sqlite_master WHERE name=? AND type='table'")

@@ -1,6 +1,6 @@
 # Cobble
 
-Source 0.4.3 adds durable, revision-pinned analysis evidence and retryable rule-check jobs. See [backend delivery and remaining work](docs/ANALYSIS-EVIDENCE-DELIVERY.md). The optional semantic reviewer in the roadmap is still future work.
+Source 0.4.4 adds stable logical requirement identities and local, source-linked plan retrieval on top of the durable analysis jobs. See [plan-memory delivery and UI contract](docs/PLAN-MEMORY-DELIVERY.md) and [durable evidence](docs/ANALYSIS-EVIDENCE-DELIVERY.md). The optional semantic reviewer in the roadmap is still future work.
 
 UI update (28 October): Vyom's newer UI/window changes and the supplied Pebble reference animations are integrated. See [playback mapping and local testing](docs/PEBBLE-REFERENCE-INTEGRATION.md). The 0.4.2 installer below predates this source update; use `npm run dev` to test the latest UI.
 

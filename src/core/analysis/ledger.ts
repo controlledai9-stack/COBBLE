@@ -1,8 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Store } from "../store";
-import type { Assessment, Change, Profile, Team } from "../../shared/types";
+import type {
+  Assessment,
+  Change,
+  PlanRetrieval,
+  Profile,
+  Team,
+} from "../../shared/types";
 
-export const ANALYZER_VERSION = "rules-evidence-v1";
+export const ANALYZER_VERSION = "rules-evidence-v2-retrieval";
 export const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export type CaptureTrigger = {
@@ -48,6 +54,7 @@ export interface AnalysisJob {
     contextHash: string;
     assessment: Assessment;
     evaluatedAt: string;
+    retrieval?: PlanRetrieval;
   };
 }
 
