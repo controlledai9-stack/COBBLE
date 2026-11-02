@@ -24,6 +24,15 @@ import { agentContext } from "./agents";
 import { capacity } from "./host-capacity";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
+import {
+  ANALYZER_VERSION,
+  AnalysisLedger,
+  analysisContext,
+  hash,
+  type CaptureTrigger,
+  type EvidenceBatch,
+  type AnalysisJob,
+} from "./analysis/ledger";
 import type {
   ExtendedAction,
   AppState,
@@ -37,6 +46,7 @@ export class CobbleService extends EventEmitter {
   readonly bridge: IdeBridge;
   readonly network: TeamNetwork;
   readonly collaboration: Collaboration;
+  readonly analysis: AnalysisLedger;
   observer?: Observer;
   watcher?: FSWatcher;
   private timer?: ReturnType<typeof setTimeout>;
@@ -52,6 +62,10 @@ export class CobbleService extends EventEmitter {
   private contextVersions = new Map<string, number>();
   private backupTasks = new Set<Promise<unknown>>();
   private closeTask?: Promise<void>;
+  private observationTask?: Promise<Activity | null>;
+  private analysisTask?: Promise<void>;
+  private analysisTimer?: ReturnType<typeof setTimeout>;
+  private reconciledRoot?: string;
   constructor(
     file: string,
     private readonly secrets: {
@@ -62,6 +76,7 @@ export class CobbleService extends EventEmitter {
   ) {
     super();
     this.store = new Store(file);
+    this.analysis = new AnalysisLedger(this.store);
     this.collaboration = new Collaboration(this.store);
     this.bridge = new IdeBridge(
       () => this.activeTeam(),
@@ -77,7 +92,11 @@ export class CobbleService extends EventEmitter {
             this.agentMessages.delete(this.agentMessages.keys().next().value!);
         }
         if (body.event === "complete") {
-          await this.ingest(body.message || this.agentMessages.get(key) || "");
+          await this.ingest(body.message || this.agentMessages.get(key) || "", {
+            kind: "agent_complete",
+            agent: body.agent,
+            sessionId: body.sessionId,
+          });
           this.agentMessages.delete(key);
         }
         if (
@@ -116,6 +135,7 @@ export class CobbleService extends EventEmitter {
       this.emit("diagnostic", `Saved team connection is unavailable: ${error}`);
     }
     await this.monitor();
+    await this.observe();
   }
   async createBackup(destination: string) {
     if (this.closed) throw new Error("Cobble is closing");
@@ -168,6 +188,7 @@ export class CobbleService extends EventEmitter {
     const paused = this.store.setting("paused", false);
     return {
       hosting: this.network.hosting.state(),
+      analysis: team ? this.analysis.summary(team.id) : undefined,
       profile,
       teams: this.store.teams(),
       activeTeamId: team?.id ?? null,
@@ -220,6 +241,7 @@ export class CobbleService extends EventEmitter {
       await this.monitorTask;
     } finally {
       this.monitorTask = undefined;
+      this.wakeAnalysis();
     }
   }
   private async configureMonitor() {
@@ -228,6 +250,7 @@ export class CobbleService extends EventEmitter {
     await this.watcher?.close();
     this.watcher = undefined;
     this.observer = undefined;
+    this.reconciledRoot = undefined;
     this.bridge.reset();
     this.monitoredTeam = `${team?.id}:${team?.workspace}`;
     this.monitoringError = undefined;
@@ -264,8 +287,26 @@ export class CobbleService extends EventEmitter {
     this.watcher.on("error", (error) =>
       this.emit("diagnostic", `File watcher: ${error}`),
     );
+    this.schedule();
   }
-  async observe(agent: AgentPayload | null = null): Promise<Activity | null> {
+  observe(
+    agent: AgentPayload | null = null,
+    trigger: CaptureTrigger = { kind: "saved_checkpoint" },
+  ): Promise<Activity | null> {
+    if (this.observationTask) return this.observationTask;
+    const task = this.observeChanges(agent, trigger);
+    this.observationTask = task;
+    void task
+      .finally(() => {
+        if (this.observationTask === task) this.observationTask = undefined;
+      })
+      .catch(() => {});
+    return task;
+  }
+  private async observeChanges(
+    agent: AgentPayload | null,
+    trigger: CaptureTrigger,
+  ): Promise<Activity | null> {
     if (
       this.closed ||
       this.network.hosting.frozen ||
@@ -282,8 +323,13 @@ export class CobbleService extends EventEmitter {
       const profile = this.store.profile();
       if (!team || !profile) return null;
       const previousBaseline = observer.baseline;
+      this.reconciledRoot = undefined;
       const changes = await observer.changes();
-      if (this.network.hosting.frozen) {
+      if (
+        this.network.hosting.frozen ||
+        this.integrating ||
+        this.store.setting("paused", false)
+      ) {
         observer.baseline = previousBaseline;
         return null;
       }
@@ -293,76 +339,228 @@ export class CobbleService extends EventEmitter {
         this.observer !== observer
       )
         return null;
-      this.store.set(`baseline:${team.id}:${observer.root}`, [
-        ...observer.baseline,
-      ]);
-      if (!changes.length) return null;
-      const assessment = assess(team, changes, agent);
-      const impacts = impact(team, changes, profile.id);
-      const key = fingerprint(
-        changes.sort((a, b) => a.path.localeCompare(b.path)),
-      );
-      const old = this.store
-        .activities(team.id)
-        .find((a) => a.fingerprint === key);
-      const lastAlert = this.store.setting<number>(
-        `alert:${team.id}:${profile.id}`,
-        0,
-      );
-      const accepted = this.store.setting(`accepted:${team.id}:${key}`, false);
-      const activity: Activity = {
-        ...assessment,
-        ...impacts,
-        id: randomUUID(),
-        teamId: team.id,
-        authorId: profile.id,
-        authorName: profile.name,
-        source: agent ? "agent" : "diff",
-        paths: changes.map((c) => c.path),
-        fingerprint: key,
-        planVersion: team.version,
-        createdAt: new Date().toISOString(),
-        resolution: accepted ? "kept" : null,
-        agentExplanation: agent?.rich_explanation,
-        agentName: agent ? this.bridge.current.agent : undefined,
-        alert:
-          assessment.alert &&
-          !accepted &&
-          !old &&
-          Date.now() - lastAlert >= 300_000,
-      };
-      if (this.store.addActivity(activity)) {
-        this.store.saveBatch(activity.id, team.id, changes);
-        const structural = impacts.findings.some((f) => f.type === "contract");
-        const audience = notificationAudience(
-          team,
-          activity,
-          activity.alert ? "scope" : structural ? "structure" : "routine",
-        );
-        if (activity.alert || structural) {
-          if (audience.includes(profile.id))
-            this.store.notify(
-              team.id,
-              activity.alert
-                ? "A plan boundary needs your attention"
-                : "A shared interface changed",
-              activity.explanation,
-              `activity-notice:${activity.id}`,
-            );
-        }
-        if (activity.alert)
-          this.store.set(`alert:${team.id}:${profile.id}`, Date.now());
-        await this.network.publish("activity", activity);
+      if (!changes.length) {
+        this.reconciledRoot = observer.root;
+        await this.drainAnalysis();
+        return null;
       }
+      try {
+        this.analysis.capture(
+          team,
+          profile,
+          observer.root,
+          changes,
+          observer.baseline,
+          observer.coverage,
+          trigger,
+          agent?.rich_explanation,
+        );
+        this.reconciledRoot = observer.root;
+      } catch (error) {
+        observer.baseline = previousBaseline;
+        throw error;
+      }
+      await this.drainAnalysis();
       this.changed();
-      return activity;
+      const key = fingerprint(
+        [...changes].sort((a, b) => a.path.localeCompare(b.path)),
+      );
+      return this.store.activityByFingerprint(team.id, key);
     } finally {
       this.observing = false;
     }
   }
-  async ingest(text: string) {
+  async ingest(text: string, trigger: CaptureTrigger = { kind: "manual" }) {
     const payload = parseManifest(text);
-    return { validManifest: !!payload, activity: await this.observe(payload) };
+    return {
+      validManifest: !!payload,
+      activity: await this.observe(payload, trigger),
+    };
+  }
+  private wakeAnalysis() {
+    clearTimeout(this.analysisTimer);
+    if (
+      this.closed ||
+      this.network.hosting.frozen ||
+      this.integrating ||
+      this.store.setting("paused", false)
+    )
+      return;
+    const team = this.activeTeam();
+    if (!team) return;
+    const summary = this.analysis.summary(team.id);
+    if (!summary.pending && !summary.running) return;
+    if (!this.observer || this.reconciledRoot !== this.observer.root) {
+      this.schedule();
+      return;
+    }
+    this.analysisTimer = setTimeout(() => {
+      void this.drainAnalysis().catch((error) =>
+        this.emit("diagnostic", String(error)),
+      );
+    }, 1000);
+    this.analysisTimer.unref();
+  }
+  private drainAnalysis(): Promise<void> {
+    if (this.analysisTask) return this.analysisTask;
+    if (this.closed) return Promise.resolve();
+    const task = this.runAnalysis();
+    this.analysisTask = task;
+    void task
+      .finally(() => {
+        if (this.analysisTask === task) this.analysisTask = undefined;
+        this.changed();
+        this.wakeAnalysis();
+      })
+      .catch(() => {});
+    return task;
+  }
+  private async runAnalysis() {
+    // Yield between a bounded number of cheap rule jobs; no model or repository rescan here.
+    for (let i = 0; i < 8; i++) {
+      if (
+        this.closed ||
+        this.network.hosting.frozen ||
+        this.integrating ||
+        this.store.setting("paused", false)
+      )
+        return;
+      const team = this.activeTeam();
+      if (!team || this.store.setting(`restored-offline:${team.id}`, false))
+        return;
+      if (
+        !this.observer ||
+        this.reconciledRoot !== this.observer.root ||
+        this.monitoredTeam !== `${team.id}:${team.workspace}`
+      )
+        return;
+      const job = this.analysis.claim(team.id);
+      if (!job) return;
+      try {
+        const batch = this.analysis.batch(job.batchId);
+        const changes = batch.changes.map(({ path, before, after }) => ({
+          path,
+          before,
+          after,
+        }));
+        const key = fingerprint(
+          [...changes].sort((a, b) => a.path.localeCompare(b.path)),
+        );
+        const accepted = this.store.setting(
+          `accepted:${team.id}:${key}`,
+          false,
+        );
+        const baseline = this.store.setting<[string, string][] | null>(
+          `baseline:${team.id}:${batch.root}`,
+          null,
+        );
+        const current = baseline && new Map(baseline);
+        // Old saved evidence is retained; it must not produce a current notification.
+        if (
+          !current ||
+          batch.root !== this.observer?.root ||
+          batch.actor.id !== this.store.profile()?.id ||
+          batch.changes.some(
+            (c) => hash(current.get(c.path) ?? null) !== c.afterHash,
+          )
+        ) {
+          this.analysis.finish(job, "stale");
+        } else if (
+          job.analyzerVersion !== ANALYZER_VERSION ||
+          job.contextHash !== analysisContext(team, accepted)
+        ) {
+          this.store.transaction(() => {
+            this.analysis.finish(job, "stale");
+            this.analysis.enqueue(batch, team, accepted);
+          });
+        } else {
+          const activity = this.commitAnalysis(job, batch, changes, key);
+          if (activity) await this.network.publish("activity", activity);
+        }
+      } catch (error) {
+        this.analysis.fail(job, error);
+        this.emit(
+          "diagnostic",
+          `Analysis deferred: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  private commitAnalysis(
+    job: AnalysisJob,
+    batch: EvidenceBatch,
+    changes: import("../shared/types").Change[],
+    key: string,
+  ) {
+    return this.store.transaction(() => {
+      const assessment = assess(job.context, changes);
+      const result = {
+        planVersion: job.context.version,
+        contextHash: job.contextHash,
+        assessment,
+        evaluatedAt: new Date().toISOString(),
+      };
+      const old = this.store.activityByFingerprint(batch.teamId, key);
+      if (old) {
+        this.analysis.finish(job, "completed", old.id, result);
+        return null;
+      }
+      const impacts = impact(job.context, changes, batch.actor.id);
+      const activity: Activity = {
+        ...assessment,
+        ...impacts,
+        id: batch.id,
+        teamId: batch.teamId,
+        authorId: batch.actor.id,
+        authorName: batch.actor.name,
+        source: batch.agentExplanation ? "agent" : "diff",
+        paths: changes.map((c) => c.path),
+        fingerprint: key,
+        planVersion: job.context.version,
+        createdAt: batch.capturedAt,
+        resolution: job.accepted ? "kept" : null,
+        agentExplanation: batch.agentExplanation,
+        agentName: batch.trigger.agent,
+        alert:
+          assessment.alert &&
+          !job.accepted &&
+          Date.now() -
+            this.store.setting<number>(
+              `alert:${batch.teamId}:${batch.actor.id}`,
+              0,
+            ) >=
+            300_000,
+      };
+      this.store.addActivity(activity);
+      this.store.saveBatch(activity.id, batch.teamId, changes);
+      const structural = impacts.findings.some((f) => f.type === "contract");
+      if (
+        (activity.alert || structural) &&
+        notificationAudience(
+          job.context,
+          activity,
+          activity.alert ? "scope" : "structure",
+        ).includes(batch.actor.id)
+      )
+        this.store.notify(
+          batch.teamId,
+          activity.alert
+            ? "A plan boundary needs your attention"
+            : "A shared interface changed",
+          activity.explanation,
+          `activity-notice:${activity.id}`,
+        );
+      if (activity.alert)
+        this.store.set(`alert:${batch.teamId}:${batch.actor.id}`, Date.now());
+      // Stage network delivery in the same transaction as the result, so a restart cannot lose it.
+      if (this.network.state.role !== "local")
+        this.store.db
+          .prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)")
+          .run(activity.id, batch.teamId, "activity", JSON.stringify(activity));
+      this.analysis.finish(job, "completed", activity.id, result);
+      return activity;
+    });
   }
   async action(action: ExtendedAction): Promise<AppState> {
     if (this.closed) throw new Error("Cobble is closing");
@@ -500,6 +698,7 @@ export class CobbleService extends EventEmitter {
         if (typeof action.paused !== "boolean")
           throw new Error("Invalid pause state");
         this.store.set("paused", action.paused);
+        if (!action.paused) this.schedule();
         break;
       case "send": {
         const team = this.activeTeam();
@@ -785,6 +984,7 @@ export class CobbleService extends EventEmitter {
       ].includes(action.type)
     )
       await this.network.publishOwnerTeam(beforeTeam, afterTeam);
+    this.wakeAnalysis();
     this.changed();
     return this.state();
   }
@@ -894,6 +1094,9 @@ export class CobbleService extends EventEmitter {
       } finally {
         this.integrating = false;
         this.network.mainIntegrationActive = false;
+        this.reconciledRoot = undefined;
+        this.schedule();
+        this.wakeAnalysis();
       }
     }
   }
@@ -941,12 +1144,17 @@ export class CobbleService extends EventEmitter {
   }
   private async finishClose() {
     clearTimeout(this.timer);
+    clearTimeout(this.analysisTimer);
     await Promise.allSettled([
       this.watcher?.close(),
       this.monitorTask,
       this.integrationTask,
+      this.observationTask,
+      this.analysisTask,
       ...this.backupTasks,
     ]);
+    // A monitor operation may have created a new watcher while shutdown awaited it.
+    await this.watcher?.close();
     this.bridge.close();
     this.network.close();
     await this.network.hosting.settled();

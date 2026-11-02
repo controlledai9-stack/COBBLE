@@ -40,6 +40,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS notices(id TEXT PRIMARY KEY, team_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS receipts(message_id TEXT NOT NULL, member_id TEXT NOT NULL, PRIMARY KEY(message_id,member_id));
       INSERT OR IGNORE INTO migrations VALUES(2);`);
+    this.db
+      .exec(`CREATE TABLE IF NOT EXISTS analysis_batches(id TEXT PRIMARY KEY, team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS analysis_jobs(id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES analysis_batches(id) ON DELETE CASCADE, team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE, status TEXT NOT NULL, next_attempt INTEGER NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS analysis_queue ON analysis_jobs(team_id,status,next_attempt);
+      CREATE INDEX IF NOT EXISTS analysis_batch_team ON analysis_batches(team_id);
+      CREATE INDEX IF NOT EXISTS analysis_job_batch ON analysis_jobs(batch_id);
+      INSERT OR IGNORE INTO migrations VALUES(3);`);
   }
   transaction<T>(fn: () => T): T {
     const nested = this.transactionDepth > 0;
@@ -245,6 +252,12 @@ export class Store {
       "SELECT data FROM activities WHERE team_id=? ORDER BY rowid DESC LIMIT 250",
       teamId,
     );
+  }
+  activityByFingerprint(teamId: string, key: string): Activity | null {
+    const row = this.db
+      .prepare("SELECT data FROM activities WHERE team_id=? AND fingerprint=?")
+      .get(teamId, key) as { data: string } | undefined;
+    return row ? JSON.parse(row.data) : null;
   }
   allActivities(teamId: string): Activity[] {
     return this.rows(

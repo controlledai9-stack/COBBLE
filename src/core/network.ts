@@ -1497,9 +1497,21 @@ export class TeamNetwork {
   }
   async publish(kind: "chat" | "activity", data: ChatMessage | Activity) {
     if (this.state.role === "host" && !this.hosting.frozen) {
-      this.store.appendSync(data.teamId, kind, data);
-      if (kind === "activity")
-        this.routeChange(this.store.team(data.teamId), data as Activity);
+      this.store.transaction(() => {
+        const known = this.store.db
+          .prepare(
+            "SELECT 1 FROM sync_log WHERE team_id=? AND kind=? AND json_extract(data,'$.id')=?",
+          )
+          .get(data.teamId, kind, data.id);
+        if (!known) {
+          this.store.appendSync(data.teamId, kind, data);
+          if (kind === "activity")
+            this.routeChange(this.store.team(data.teamId), data as Activity);
+        }
+        this.store.db
+          .prepare("DELETE FROM outbox WHERE id=? AND team_id=? AND kind=?")
+          .run(data.id, data.teamId, kind);
+      });
     }
     if (this.state.role === "client" || this.hosting.frozen) {
       this.store.db

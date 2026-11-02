@@ -222,6 +222,16 @@ export interface JoinRequest {
   createdAt: string;
 }
 export interface AppState {
+  analysis?: {
+    pending: number;
+    running: number;
+    completed: number;
+    stale: number;
+    failed: number;
+    cancelled: number;
+    analyzerVersion: string;
+    semanticReview: false;
+  };
   hosting: HostingState;
   profile: Profile | null;
   teams: Team[];

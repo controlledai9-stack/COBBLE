@@ -59,6 +59,18 @@ function validate(db: DatabaseSync) {
         .get()
     )
       throw new Error("Backup contains malformed application records");
+  // Optional additive tables: older backups remain readable without them.
+  for (const table of ["analysis_batches", "analysis_jobs"]) {
+    if (
+      db
+        .prepare("SELECT 1 FROM sqlite_master WHERE name=? AND type='table'")
+        .get(table) &&
+      db
+        .prepare(`SELECT 1 FROM ${table} WHERE NOT json_valid(data) LIMIT 1`)
+        .get()
+    )
+      throw new Error("Backup contains malformed analysis evidence");
+  }
 }
 export async function createDatabaseBackup(
   store: Store,
@@ -149,6 +161,16 @@ export async function restoreDatabaseCopy(
       }[];
       db.exec("BEGIN IMMEDIATE");
       try {
+        if (
+          db
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE name='analysis_jobs' AND type='table'",
+            )
+            .get()
+        )
+          db.prepare(
+            "UPDATE analysis_jobs SET status='cancelled', data=json_set(data,'$.status','cancelled','$.lease',NULL,'$.leaseUntil',0,'$.error','Offline recovery: pending analysis is not replayed') WHERE status IN ('pending','running')",
+          ).run();
         for (const team of teams)
           db.prepare(
             "INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
