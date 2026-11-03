@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Store } from "../store";
 import { exceptionPolicyKey } from "../plan-policy";
+import {
+  captureDependencies,
+  type DependencyCapture,
+  type SymbolEvidence,
+} from "./symbols";
 import type {
   Assessment,
   Change,
@@ -9,7 +14,7 @@ import type {
   Team,
 } from "../../shared/types";
 
-export const ANALYZER_VERSION = "rules-evidence-v3-exceptions";
+export const ANALYZER_VERSION = "rules-evidence-v4-symbols";
 export const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export type CaptureTrigger = {
@@ -29,6 +34,7 @@ export interface EvidenceBatch {
   membershipEpoch?: number;
   contextHash: string;
   agentExplanation?: string;
+  dependencyContext?: DependencyCapture;
   changes: (Change & { beforeHash: string; afterHash: string })[];
   coverage: {
     status: "supported_saved_text" | "partial";
@@ -58,6 +64,7 @@ export interface AnalysisJob {
     assessment: Assessment;
     evaluatedAt: string;
     retrieval?: PlanRetrieval;
+    symbols?: SymbolEvidence;
   };
 }
 
@@ -93,6 +100,7 @@ export class AnalysisLedger {
     trigger: CaptureTrigger,
     agentExplanation?: string,
   ): EvidenceBatch {
+    const dependencyContext = captureDependencies(changes, baseline);
     return this.store.transaction(() => {
       const id = randomUUID();
       const key = `analysis-sequence:${team.id}:${root}`;
@@ -117,6 +125,7 @@ export class AnalysisLedger {
           this.store.setting(`membershipEpoch:${team.id}`, 0),
         ),
         agentExplanation,
+        dependencyContext,
         changes: changes.map((change) => ({
           ...change,
           beforeHash: hash(change.before),

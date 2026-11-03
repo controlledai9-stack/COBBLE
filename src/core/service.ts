@@ -23,6 +23,7 @@ import { gitFacts, integrateApproved } from "./git-main";
 import { agentContext } from "./agents";
 import { capacity } from "./host-capacity";
 import { exceptionPolicyKey } from "./plan-policy";
+import { analyzeSymbols } from "./analysis/symbols";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
 import {
@@ -530,6 +531,7 @@ export class CobbleService extends EventEmitter {
     key: string,
     now: number,
   ) {
+    const symbols = analyzeSymbols(changes, batch.dependencyContext);
     return this.store.transaction(() => {
       const assessment = assess(job.context, changes, null, {
         authorId: batch.actor.id,
@@ -544,8 +546,14 @@ export class CobbleService extends EventEmitter {
         contextHash: job.contextHash,
         assessment,
         evaluatedAt: new Date(now).toISOString(),
+        symbols,
         retrieval: this.store.planMemory.retrieve(job.context, {
-          query: changes.map((change) => change.path).join(" "),
+          query: [
+            ...changes.map((change) => change.path),
+            ...symbols.symbols.slice(0, 40).map((symbol) => symbol.name),
+          ]
+            .join(" ")
+            .slice(0, 4000),
           paths: changes.map((change) => change.path),
           now,
           authorId: batch.actor.id,
