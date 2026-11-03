@@ -1,9 +1,13 @@
 import type { Store } from "./store";
 import type { Member, WorkCompletion, MainProposal } from "../shared/types";
 import { requiredText } from "./plan";
+import { exceptionPolicyKey } from "./plan-policy";
 
 export class Collaboration {
-  constructor(private store: Store) {
+  constructor(
+    private store: Store,
+    private readonly clock: () => number = Date.now,
+  ) {
     this.store.db
       .exec(`CREATE TABLE IF NOT EXISTS work_completions(id TEXT PRIMARY KEY,team_id TEXT NOT NULL,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS main_proposals(id TEXT PRIMARY KEY,team_id TEXT NOT NULL,data TEXT NOT NULL);
@@ -29,14 +33,14 @@ export class Collaboration {
       )
       .map((p) => this.current(p));
   }
-  proposal(id: string): MainProposal {
+  proposal(id: string, at = this.clock()): MainProposal {
     const row = this.store.db
       .prepare("SELECT data FROM main_proposals WHERE id=?")
       .get(id) as { data: string } | undefined;
     if (!row) throw new Error("Proposal not found");
-    return this.current(JSON.parse(row.data));
+    return this.current(JSON.parse(row.data), at);
   }
-  private current(proposal: MainProposal): MainProposal {
+  private current(proposal: MainProposal, at = this.clock()): MainProposal {
     if (proposal.status === "integrated" || proposal.status === "rejected")
       return proposal;
     const team = this.store.team(proposal.teamId);
@@ -54,7 +58,15 @@ export class Collaboration {
       (team.graph?.version ?? 0) !== (proposal.graphVersion ?? 0) ||
       ids !== expected ||
       this.store.setting(`membershipEpoch:${team.id}`, 0) !==
-        proposal.membershipEpoch
+        proposal.membershipEpoch ||
+      (proposal.exceptionPolicyKey !== undefined
+        ? proposal.exceptionPolicyKey !==
+          exceptionPolicyKey(
+            team,
+            this.store.setting(`membershipEpoch:${team.id}`, 0),
+            at,
+          )
+        : (team.graph?.exceptions?.length ?? 0) > 0)
     )
       return { ...proposal, status: "stale" };
     return proposal;
@@ -133,6 +145,7 @@ export class Collaboration {
       baseSha: string;
       expectedPlanVersion?: number;
       expectedGraphVersion?: number;
+      expectedExceptionPolicyKey?: string;
     },
   ): MainProposal {
     actor = this.member(teamId, actor);
@@ -169,6 +182,25 @@ export class Collaboration {
         "Proposals must identify a personal branch commit and the exact main commit",
       );
     const team = this.store.team(teamId);
+    const policyKey = exceptionPolicyKey(
+      team,
+      this.store.setting(`membershipEpoch:${teamId}`, 0),
+      this.clock(),
+    );
+    if (
+      (team.graph?.exceptions?.length ?? 0) > 0 &&
+      body.expectedExceptionPolicyKey === undefined
+    )
+      throw new Error(
+        "Update Cobble and refresh the exception agreements before proposing main",
+      );
+    if (
+      body.expectedExceptionPolicyKey !== undefined &&
+      body.expectedExceptionPolicyKey !== policyKey
+    )
+      throw new Error(
+        "Exception agreements changed before the proposal reached the host",
+      );
     if (
       (body.expectedPlanVersion !== undefined &&
         body.expectedPlanVersion !== team.version) ||
@@ -190,6 +222,7 @@ export class Collaboration {
       authorName: actor.name,
       planVersion: team.version,
       graphVersion: team.graph?.version ?? 0,
+      exceptionPolicyKey: policyKey,
       electorate: this.store
         .members(teamId)
         .map((m) => ({ id: m.id, name: m.name })),
@@ -197,7 +230,7 @@ export class Collaboration {
       policy: "unanimous",
       votes: [],
       status: "open",
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(this.clock()).toISOString(),
     };
     this.store.transaction(() => {
       this.put(proposal);
@@ -214,12 +247,32 @@ export class Collaboration {
   vote(
     teamId: string,
     actor: Member,
-    body: { id: string; proposalId: string; choice: "yes" | "no" },
+    body: {
+      id: string;
+      proposalId: string;
+      choice: "yes" | "no";
+      expectedExceptionPolicyKey?: string;
+    },
   ): MainProposal {
     actor = this.member(teamId, actor);
     if (!["yes", "no"].includes(body.choice))
       throw new Error("Choose Yes or No");
     const proposal = this.proposal(body.proposalId);
+    const team = this.store.team(teamId);
+    const policyKey = exceptionPolicyKey(
+      team,
+      this.store.setting(`membershipEpoch:${teamId}`, 0),
+      this.clock(),
+    );
+    if (
+      ((team.graph?.exceptions?.length ?? 0) > 0 &&
+        body.expectedExceptionPolicyKey === undefined) ||
+      (body.expectedExceptionPolicyKey !== undefined &&
+        (body.expectedExceptionPolicyKey !== policyKey ||
+          (proposal.exceptionPolicyKey !== undefined &&
+            body.expectedExceptionPolicyKey !== proposal.exceptionPolicyKey)))
+    )
+      throw new Error("Refresh the current exception agreements before voting");
     if (
       proposal.teamId !== teamId ||
       !proposal.electorate.some((m) => m.id === actor.id)
@@ -268,8 +321,14 @@ export class Collaboration {
     });
     return next;
   }
-  integrated(id: string, sha: string) {
-    const p = this.proposal(id);
+  integrated(id: string, sha: string, authorizedAt?: number) {
+    // Only trusted backend code supplies its pre-Git authorization time, never a wire timestamp.
+    if (
+      authorizedAt !== undefined &&
+      (!Number.isFinite(authorizedAt) || authorizedAt > this.clock() + 1000)
+    )
+      throw new Error("Invalid integration authorization time");
+    const p = this.proposal(id, authorizedAt ?? this.clock());
     if (p.status !== "approved")
       throw new Error(
         "Every teammate must approve this exact change before main is updated",

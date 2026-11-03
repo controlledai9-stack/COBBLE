@@ -160,8 +160,9 @@ export async function restoreDatabaseCopy(
     try {
       db.exec("PRAGMA trusted_schema=OFF");
       validate(db);
-      const teams = db.prepare("SELECT id FROM teams").all() as {
+      const teams = db.prepare("SELECT id,data FROM teams").all() as {
         id: string;
+        data: string;
       }[];
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -175,10 +176,24 @@ export async function restoreDatabaseCopy(
           db.prepare(
             "UPDATE analysis_jobs SET status='cancelled', data=json_set(data,'$.status','cancelled','$.lease',NULL,'$.leaseUntil',0,'$.error','Offline recovery: pending analysis is not replayed') WHERE status IN ('pending','running')",
           ).run();
-        for (const team of teams)
+        for (const team of teams) {
           db.prepare(
             "INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
           ).run(`restored-offline:${team.id}`, "true");
+          const value = JSON.parse(team.data);
+          if (Array.isArray(value.graph?.exceptions)) {
+            value.graph.exceptions = value.graph.exceptions.map(
+              (e: object) => ({ ...e, restoredInactive: true }),
+            );
+            db.prepare("UPDATE teams SET data=? WHERE id=?").run(
+              JSON.stringify(value),
+              team.id,
+            );
+          }
+        }
+        db.prepare(
+          "DELETE FROM outbox WHERE kind='owner-admin' AND json_extract(data,'$.command') IN ('approve-plan-exception','revoke-plan-exception')",
+        ).run();
         db.prepare("DELETE FROM settings WHERE key='pending-join'").run();
         db.prepare(
           "INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

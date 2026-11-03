@@ -46,6 +46,12 @@ export interface PlanRetrieval {
     characters: number;
   };
   purpose: "context_only";
+  exceptions?: {
+    evaluatedAt: string;
+    records: PlanException[];
+    omitted: number;
+    characters: number;
+  };
 }
 export interface Team {
   id: string;
@@ -116,6 +122,31 @@ export interface PlanGraph {
   modules: ModulePlan[];
   contracts: ContractPlan[];
   dependencies: { from: string; to: string; source?: "manual" | "observed" }[];
+  exceptionPolicyVersion?: 1;
+  exceptions?: PlanException[];
+}
+export interface PlanException {
+  id: string;
+  requirementId: string;
+  planVersion: number;
+  membershipEpoch: number;
+  authorIds: string[];
+  paths: string[];
+  reason: string;
+  approvedBy: string;
+  approvedAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+  restoredInactive?: true;
+}
+export interface PlanExceptionRequest {
+  expectedPlanVersion: number;
+  expectedGraphVersion: number;
+  requirementId: string;
+  authorIds: string[];
+  paths: string[];
+  reason: string;
+  expiresAt: string;
 }
 export interface ImpactFinding {
   type: "ownership" | "contract" | "new_entity";
@@ -157,6 +188,7 @@ export interface MainProposal {
   baseSha: string;
   planVersion: number;
   graphVersion?: number;
+  exceptionPolicyKey?: string;
   electorate: { id: string; name: string }[];
   membershipEpoch: number;
   policy: "unanimous" | "majority";
@@ -189,6 +221,11 @@ export interface Assessment {
   alert: boolean;
 }
 export interface Activity extends Assessment {
+  observation?: {
+    capturedAt: string;
+    planVersion: number;
+    membershipEpoch: number;
+  };
   id: string;
   teamId: string;
   authorId: string;
@@ -251,6 +288,7 @@ export interface JoinRequest {
   createdAt: string;
 }
 export interface AppState {
+  policy?: { pendingManagerChanges: number };
   analysis?: {
     pending: number;
     running: number;
@@ -329,6 +367,13 @@ export type Action =
   | { type: "decideJoin"; requestId: string; accept: boolean };
 export type ExtendedAction =
   | Action
+  | ({ type: "approvePlanException" } & PlanExceptionRequest)
+  | {
+      type: "revokePlanException";
+      exceptionId: string;
+      expectedPlanVersion: number;
+      expectedGraphVersion: number;
+    }
   | { type: "configureHosting"; allow: boolean; address?: string }
   | { type: "evaluateHosting" }
   | { type: "refreshConnection"; address: string }

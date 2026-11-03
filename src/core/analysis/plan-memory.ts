@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { matchesGlob } from "node:path";
 import { hasPlanCondition } from "../plan";
+import { activeExceptionIds } from "../plan-policy";
 import type { Store } from "../store";
 import type { PlanMemoryItem, PlanRetrieval, Team } from "../../shared/types";
 
@@ -201,7 +202,13 @@ export class PlanMemory {
   }
   retrieve(
     team: Team,
-    options: { query?: string; paths?: string[]; budget?: number } = {},
+    options: {
+      query?: string;
+      paths?: string[];
+      budget?: number;
+      now?: number;
+      authorId?: string;
+    } = {},
   ): PlanRetrieval {
     const { sourceDigest, items } = this.ensure(team);
     const query = (options.query ?? "").slice(0, 4000);
@@ -321,6 +328,30 @@ export class PlanMemory {
         characters += cost;
       }
     }
+    const now = options.now ?? Date.now();
+    const active = new Set(
+      activeExceptionIds(
+        team,
+        this.store.setting(`membershipEpoch:${team.id}`, 0),
+        now,
+      ),
+    );
+    const authorId = options.authorId ?? this.store.profile()?.id;
+    const approvals = (team.graph?.exceptions ?? []).filter(
+      (e) =>
+        active.has(e.id) &&
+        (!authorId || e.authorIds.includes(authorId)) &&
+        (!paths.length || e.paths.some((path) => paths.includes(path))),
+    );
+    const records: NonNullable<PlanRetrieval["exceptions"]>["records"] = [];
+    let exceptionCharacters = 2;
+    for (const record of approvals) {
+      const cost = JSON.stringify(record).length + (records.length ? 1 : 0);
+      if (exceptionCharacters + cost <= 4000) {
+        records.push(record);
+        exceptionCharacters += cost;
+      }
+    }
     return {
       teamId: team.id,
       planVersion: team.version,
@@ -339,6 +370,16 @@ export class PlanMemory {
         characters,
       },
       purpose: "context_only",
+      ...(team.graph?.exceptionPolicyVersion
+        ? {
+            exceptions: {
+              evaluatedAt: new Date(now).toISOString(),
+              records,
+              omitted: approvals.length - records.length,
+              characters: exceptionCharacters,
+            },
+          }
+        : {}),
     };
   }
 }

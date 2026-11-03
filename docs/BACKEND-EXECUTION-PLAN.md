@@ -1,0 +1,41 @@
+# Backend completion sequence
+
+4 November 2026. Baseline 0.4.4 (`785463d`). This is the execution sequence for the remaining [intelligence roadmap](PLAN-INTELLIGENCE-ROADMAP.md). Each row is a separately reviewable delivery with tests and documentation before the next dependency is enabled.
+
+| Order | Deliverable | Acceptance gate | Status |
+|---|---|---|---|
+| 1 | Explicit manager-approved exceptions: current requirement, named authors, exact paths, expiry, revocation and audit trail | Non-managers cannot approve; unrelated work remains restricted; expiry/revocation/plan changes invalidate affected checks and main approvals; real teammate sync works | Complete in source 0.4.5; UI handoff documented |
+| 2 | JS/TS changed-symbol evidence and bounded dependency retrieval | Distinguish public-shape changes, private function changes and formatting; preserve exact before/after references; unsupported/dynamic code stays unknown | Queued |
+| 3 | Incremental dirty-file observation with reconciliation | Startup/branch changes/renames/deletes/dropped events retain changes; warm small edits avoid rereading the full repository; scan/resource budgets measured | Queued |
+| 4 | Durable adapter event/turn IDs, stronger existing hooks and Gemini CLI adapter | Authenticated, version-tested real turns; duplicate/out-of-order/cancel events are safe; coverage states distinguish saves from turns | Queued |
+| 5 | Labeled corpus and retrieval/judgment evaluation harness | Repository-separated held-out cases; genuine extras, necessary helpers, exceptions, co-ownership and adversarial comments; precision, recall and abstentions reported | Queued |
+| 6 | Optional local semantic reviewer in an isolated, resource-limited process | Select by the corpus; source-backed output validation; timeout/low-memory fallback; no model-derived accusations in initial shadow mode | Queued |
+| 7 | Shadow-mode review, author suggestions and notification calibration | Measure false interruptions and missed issues before widening delivery; existing targeted audiences and cooldowns preserved | Queued |
+| 8 | Self-contained distribution and physical-device validation | Offline clean Windows install; bundled dependencies/model if selected; real editor, microphone, cross-city network and reference-laptop checks | Queued |
+
+## Working rules
+
+- Reuse the current SQLite/Electron/TypeScript system. No paid API, required account, external database service or mandatory model process.
+- Preserve the original plan and version history. Search matches, agent explanations and ownership alone remain insufficient to prove a deviation.
+- Changes to shared agreements stay manager-controlled. Hosting another teammate's server never grants manager authority. Main still requires exact-commit unanimous votes.
+- New review features must not silently gain permission to commit, revert, modify the plan or send team-wide notices.
+- Raw local code evidence stays local. Shared agreement records contain scope/reason/identity metadata, not source bodies.
+- Commit/push complete tested source deliveries to main and shared development branches together. Keep installer evidence separate from source completion.
+
+## First delivery scope
+
+The first slice supports exceptions for the existing unambiguous, whole-line forbidden-path checks. An approval names a current constraint, an explicit set of current members and exact relative file paths; it requires a reason and a bounded future expiry. It does not infer whether a natural-language condition was satisfied or create a general "ignore the plan" switch.
+
+Store current exception metadata in shared agreement graph data with a graph version bump. Preserve approval/revocation events in the existing shared sync history. Manager commands execute on the current trusted host, including when the manager is a client; queued commands do not become effective merely by being queued locally. Changes are blocked by existing handover/main-integration fences.
+
+Evaluation must bind the author, requirement, path, plan version, membership epoch and evaluation time. Past captured work is not silently given retroactive permission. Delayed events that might have been covered historically stay uncertain rather than becoming a confirmed late accusation.
+
+Pending analysis jobs must refresh when effective approval state changes. Proposals must also become stale when applicable exception state changes, including time expiry without an explicit edit. Integrated history remains historical; an expired exception does not rewrite a completed merge.
+
+All participating clients must be updated before using the new exception feature. Existing older clients do not implement its policy or expiry checks; current shared source format and upgrade requirements must be documented rather than implying old binaries learned new rules.
+
+Required tests: owner/client/host role separation, invalid scopes, expired and revoked records, plan/membership changes, mixed allowed/disallowed paths, unrelated authors, queued manager operations, host restart/handover continuity, retry idempotence, source retention/backup compatibility and exact main-approval freshness.
+
+UI handoff follows the backend action and state contract after tests. Presentation must distinguish a queued request from a host-confirmed approval and display scope, reason and expiry. No mascot redesign is required.
+
+First delivery evidence: [exception implementation, limits, UI contract and validation](PLAN-EXCEPTIONS-DELIVERY.md). All 152 tests, type checking, production build, desktop smoke and both shutdown scenarios passed. Next implementation is row 2; a semantic reviewer and a new installer are not yet delivered.

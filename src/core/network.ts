@@ -9,6 +9,13 @@ import { equalSecret, json, readJson } from "./bridge";
 import { requiredText, splitPlan, fingerprint } from "./plan";
 import { matchesPath as importPathMatches, moduleOwners } from "./graph";
 import { explicitPathConflict } from "./engine";
+import {
+  approvePlanException,
+  preparePlanException,
+  revokePlanException,
+  currentExceptionAgreement,
+  exceptionPolicyKey,
+} from "./plan-policy";
 import { notificationAudience } from "./notification-policy";
 import { Collaboration } from "./collaboration";
 import { HostCoordinator, type HostMove } from "./host-coordinator";
@@ -19,6 +26,7 @@ import type {
   Team,
   Member,
   Activity,
+  PlanExceptionRequest,
 } from "../shared/types";
 import { RelayHost, tunnelAgent } from "../internet/tunnel";
 import {
@@ -740,6 +748,15 @@ export class TeamNetwork {
       JSON.stringify(next.items) !== JSON.stringify(splitPlan(next.plan))
     )
       throw new Error("Invalid manager plan update");
+    if (
+      JSON.stringify(next.graph?.exceptions ?? []) !==
+        JSON.stringify(current.graph?.exceptions ?? []) ||
+      next.graph?.exceptionPolicyVersion !==
+        current.graph?.exceptionPolicyVersion
+    )
+      throw new Error(
+        "Change plan exceptions through the confirmed manager command",
+      );
     const oldGraph = current.graph?.version ?? 0,
       newGraph = next.graph?.version ?? 0;
     const graphChanged =
@@ -805,11 +822,17 @@ export class TeamNetwork {
     const lock = this.store.setting<{
       proposalId: string;
       lockId: string;
+      authorizedAt?: number;
+      policyKey?: string;
     } | null>(`main-lock:${teamId}`, null);
     if (body.command === "integration-lock") {
       requiredText(body.lockId, "Integration lease", 100);
       if (body.active === true) {
-        const proposal = this.collaboration.proposal(body.proposalId);
+        const authorizedAt = Date.now();
+        const proposal = this.collaboration.proposal(
+          body.proposalId,
+          authorizedAt,
+        );
         if (
           proposal.teamId !== teamId ||
           proposal.status !== "approved" ||
@@ -818,9 +841,18 @@ export class TeamNetwork {
           throw new Error(
             "Current exact approval and an available integration lease are required",
           );
+        if (
+          (this.store.team(teamId).graph?.exceptions?.length ?? 0) > 0 &&
+          body.policyKey !== proposal.exceptionPolicyKey
+        )
+          throw new Error(
+            "Refresh exception agreements before starting integration",
+          );
         this.store.set(`main-lock:${teamId}`, {
           proposalId: body.proposalId,
           lockId: body.lockId,
+          authorizedAt,
+          policyKey: proposal.exceptionPolicyKey,
         });
         this.mainIntegrationActive = true;
       } else if (body.active === false) {
@@ -845,7 +877,25 @@ export class TeamNetwork {
         if (proposal.status === "integrated") {
           if (proposal.integratedSha !== body.sha)
             throw new Error("Integration already records another revision");
-        } else this.collaboration.integrated(proposal.id, body.sha);
+        } else {
+          const usesExceptions =
+            (this.store.team(teamId).graph?.exceptions?.length ?? 0) > 0;
+          if (
+            usesExceptions &&
+            (lock?.lockId !== body.lockId ||
+              lock?.proposalId !== proposal.id ||
+              lock?.policyKey !== proposal.exceptionPolicyKey ||
+              !Number.isFinite(lock?.authorizedAt))
+          )
+            throw new Error(
+              "The exact integration authorization lease is required",
+            );
+          this.collaboration.integrated(
+            proposal.id,
+            body.sha,
+            usesExceptions ? lock!.authorizedAt : undefined,
+          );
+        }
       }
       if (lock?.lockId === body.lockId) {
         this.store.set(`main-lock:${teamId}`, null);
@@ -860,6 +910,29 @@ export class TeamNetwork {
       );
     if (body.command === "ready") {
       this.hosting.enable(teamId, false);
+      return;
+    }
+    if (body.command === "approve-plan-exception") {
+      approvePlanException(
+        this.store,
+        teamId,
+        this.store.team(teamId).ownerId,
+        body.id,
+        body,
+      );
+      this.changed();
+      return;
+    }
+    if (body.command === "revoke-plan-exception") {
+      revokePlanException(
+        this.store,
+        teamId,
+        this.store.team(teamId).ownerId,
+        body.exceptionId,
+        body.expectedPlanVersion,
+        body.expectedGraphVersion,
+      );
+      this.changed();
       return;
     }
     if (body.command === "decide") {
@@ -879,6 +952,70 @@ export class TeamNetwork {
       .prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)")
       .run(id, s.teamId, "owner-admin", JSON.stringify({ id, ...body }));
     await this.tick();
+  }
+  async changePlanException(
+    command: "approve-plan-exception" | "revoke-plan-exception",
+    input:
+      | PlanExceptionRequest
+      | {
+          exceptionId: string;
+          expectedPlanVersion: number;
+          expectedGraphVersion: number;
+        },
+  ) {
+    const teamId = this.store.setting<string | null>("activeTeamId", null);
+    if (!teamId) throw new Error("Select a team first");
+    const team = this.store.team(teamId),
+      me = this.store.profile();
+    if (!me || me.id !== team.ownerId)
+      throw new Error("Only the team manager can change plan exceptions");
+    if (this.hosting.frozen || this.mainIntegrationActive)
+      throw new Error("Wait for the active handover or main integration");
+    if (
+      this.store.setting(`restored-offline:${teamId}`, false) ||
+      (this.state.role === "local" &&
+        (team.hosting?.hostId ?? team.ownerId) !== me.id)
+    )
+      throw new Error(
+        "Reconnect the manager to the current host before changing exceptions",
+      );
+    const id = randomUUID();
+    const common = {
+      command,
+      expectedPlanVersion: input.expectedPlanVersion,
+      expectedGraphVersion: input.expectedGraphVersion,
+    };
+    let body: Record<string, unknown>;
+    if (command === "approve-plan-exception") {
+      const request = input as PlanExceptionRequest;
+      preparePlanException(this.store, teamId, me.id, id, request);
+      body = {
+        ...common,
+        requirementId: request.requirementId,
+        authorIds: request.authorIds,
+        paths: request.paths,
+        reason: request.reason,
+        expiresAt: request.expiresAt,
+      };
+    } else {
+      const request = input as { exceptionId: string };
+      currentExceptionAgreement(
+        this.store,
+        teamId,
+        me.id,
+        input.expectedPlanVersion,
+        input.expectedGraphVersion,
+      );
+      if (!team.graph?.exceptions?.some((e) => e.id === request.exceptionId))
+        throw new Error("Exception not found");
+      body = { ...common, exceptionId: request.exceptionId };
+    }
+    if (this.state.role === "client") {
+      await this.criticalOwner(body, id);
+      this.nextAttempt = 0;
+      await this.tick();
+    } else this.applyOwnerCommand(teamId, { ...body, id });
+    this.changed();
   }
   async evaluateHosting() {
     if (this.state.role === "client")
@@ -906,7 +1043,15 @@ export class TeamNetwork {
   async acquireMain(proposalId: string) {
     if (this.state.role !== "client") return;
     const s = this.session!;
-    const lock = { teamId: s.teamId, proposalId, lockId: randomUUID() };
+    const lock = {
+      teamId: s.teamId,
+      proposalId,
+      lockId: randomUUID(),
+      policyKey: exceptionPolicyKey(
+        this.store.team(s.teamId),
+        this.store.setting(`membershipEpoch:${s.teamId}`, 0),
+      ),
+    };
     await this.call(
       s.address,
       s.fingerprint,
@@ -958,12 +1103,15 @@ export class TeamNetwork {
         });
     }
   }
-  private async criticalOwner(body: Record<string, unknown>) {
+  private async criticalOwner(
+    body: Record<string, unknown>,
+    eventId = randomUUID(),
+  ) {
     const s = this.session;
     if (!s || this.store.team(s.teamId).ownerId !== this.store.profile()?.id)
       throw new Error("Team manager connection required");
-    const id = randomUUID(),
-      data = { id, ...body };
+    const id = eventId,
+      data = { ...body, id };
     this.store.db
       .prepare("INSERT INTO outbox VALUES(?,?,?,?)")
       .run(id, s.teamId, "owner-admin", JSON.stringify(data));
@@ -1061,7 +1209,27 @@ export class TeamNetwork {
     activity: Activity,
     reported: Activity = activity,
   ) {
-    const conflict = explicitPathConflict(team, activity.paths);
+    const observation = reported.observation;
+    const conflict = explicitPathConflict(team, activity.paths, {
+      authorId: activity.authorId,
+      membershipEpoch: this.store.setting(`membershipEpoch:${team.id}`, 0),
+      observedAt:
+        typeof observation?.capturedAt === "string"
+          ? observation.capturedAt
+          : typeof reported.createdAt === "string"
+            ? reported.createdAt
+            : activity.createdAt,
+      observedPlanVersion: Number.isSafeInteger(observation?.planVersion)
+        ? observation!.planVersion
+        : Number.isSafeInteger(reported.planVersion)
+          ? reported.planVersion
+          : team.version,
+      observedMembershipEpoch: Number.isSafeInteger(
+        observation?.membershipEpoch,
+      )
+        ? observation!.membershipEpoch
+        : this.store.setting(`membershipEpoch:${team.id}`, 0),
+    });
     const structural = (reported.findings ?? []).some(
       (f) =>
         f.type === "contract" &&

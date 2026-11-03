@@ -1,7 +1,11 @@
 import Ajv from "ajv";
 import { matchesGlob } from "node:path";
 import type { AgentPayload, Assessment, Change, Team } from "../shared/types";
-import { hasPlanCondition } from "./plan";
+import {
+  pathBoundary,
+  exceptionCoverage,
+  type PolicyEvaluation,
+} from "./plan-policy";
 const ajv = new Ajv({ allErrors: true });
 const string = { type: "string", maxLength: 12_000 };
 const validate = ajv.compile({
@@ -108,25 +112,30 @@ function pathMatches(path: string, reference: string) {
     return false;
   }
 }
-const pathDirective =
-  /(?:do not|must not|never)\s+(?:create|add|modify|edit|change)\s+(?:files?\s+(?:in|under|at)\s+)?`([^`]+)`/i;
-const simplePathDirective = new RegExp(`^${pathDirective.source}[.!]?$`, "i");
 export function explicitPathConflict(
   team: Team,
   paths: string[],
+  context: PolicyEvaluation = {},
 ): Assessment | null {
+  if (
+    context.observedPlanVersion !== undefined &&
+    context.observedPlanVersion !== team.version
+  )
+    return null;
   for (const item of team.items.filter((i) => i.kind === "constraint")) {
-    const match = item.text.match(pathDirective);
+    const rule = pathBoundary(item);
+    if (!rule?.simple) continue;
     if (
-      hasPlanCondition(item.text) ||
-      !simplePathDirective.test(item.title.trim())
+      paths.some(
+        (path) =>
+          pathMatches(path, rule.path) &&
+          exceptionCoverage(team, item.id, path, context) === "none",
+      )
     )
-      continue;
-    if (match && paths.some((path) => pathMatches(path, match[1])))
       return {
         classification: "extra",
         confidence: "high",
-        explanation: `Saved changes touch ${match[1]}, which the core plan explicitly says not to change. Review this scope conflict.`,
+        explanation: `Saved changes touch ${rule.path}, which the core plan explicitly says not to change. Review this scope conflict.`,
         planItemIds: [item.id],
         alert: true,
       };
@@ -137,6 +146,7 @@ export function assess(
   team: Team,
   changes: Change[],
   _agent?: AgentPayload | null,
+  context: PolicyEvaluation = {},
 ): Assessment {
   if (!changes.length)
     return {
@@ -146,19 +156,36 @@ export function assess(
       planItemIds: [],
       alert: false,
     };
+  if (
+    context.observedPlanVersion !== undefined &&
+    context.observedPlanVersion !== team.version
+  )
+    return {
+      classification: "uncertain",
+      confidence: "low",
+      explanation:
+        "This work was captured under another plan version. The current rules do not independently establish a historical violation.",
+      planItemIds: [],
+      alert: false,
+    };
   const conflict = explicitPathConflict(
     team,
     changes.map((c) => c.path),
+    context,
   );
   if (conflict) return conflict;
   const conditional = team.items.filter((item) => {
     if (item.kind !== "constraint") return false;
-    const match = item.text.match(pathDirective);
+    const rule = pathBoundary(item);
     return (
-      !!match &&
-      (hasPlanCondition(item.text) ||
-        !simplePathDirective.test(item.title.trim())) &&
-      changes.some((change) => pathMatches(change.path, match[1]))
+      !!rule &&
+      (!rule.simple ||
+        changes.some(
+          (change) =>
+            exceptionCoverage(team, item.id, change.path, context) ===
+            "historical",
+        )) &&
+      changes.some((change) => pathMatches(change.path, rule.path))
     );
   });
   if (conditional.length)
@@ -168,7 +195,7 @@ export function assess(
       alert: false,
       planItemIds: conditional.map((item) => item.id),
       explanation:
-        "A matching plan boundary has an exception or approval condition, or prose outside the supported simple rule format. Saved paths alone do not establish a violation; recorded quietly for contextual review.",
+        "A matching plan boundary has an exception or approval condition, a potentially applicable historical approval, or unsupported prose. Saved paths alone do not establish a violation; recorded quietly for contextual review.",
     };
   const positive = team.items.filter((i) => i.kind !== "constraint");
   const linked = new Set<string>();
@@ -186,7 +213,12 @@ export function assess(
         return explicit || assigned;
       });
       matches.forEach((item) => linked.add(item.id));
-      return matches.length > 0;
+      const permissions = team.items.filter(
+        (item) =>
+          exceptionCoverage(team, item.id, change.path, context) === "approved",
+      );
+      permissions.forEach((item) => linked.add(item.id));
+      return matches.length > 0 || permissions.length > 0;
     })
     .every(Boolean);
   // Only saved paths and agreed mappings are evidence. Agent output, code
@@ -202,7 +234,7 @@ export function assess(
     confidence: "low",
     alert: false,
     explanation: scoped
-      ? "All saved paths match agreed work areas or explicit plan paths. This confirms scope mapping, not that every implementation detail is necessary."
+      ? "All saved paths match agreed work areas, explicit plan paths or active owner-approved file exceptions. This confirms scope mapping, not that every implementation detail is necessary."
       : supporting
         ? "Supporting tests or documentation changed. Recorded quietly; necessity has not been independently established."
         : linked.size

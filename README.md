@@ -1,6 +1,6 @@
 # Cobble
 
-Source 0.4.4 adds stable logical requirement identities and local, source-linked plan retrieval on top of the durable analysis jobs. See [plan-memory delivery and UI contract](docs/PLAN-MEMORY-DELIVERY.md) and [durable evidence](docs/ANALYSIS-EVIDENCE-DELIVERY.md). The optional semantic reviewer in the roadmap is still future work.
+Source 0.4.5 adds manager-approved, author/file-scoped plan exceptions with expiry, revocation, host confirmation and expiry-aware main votes. See [exception delivery and UI contract](docs/PLAN-EXCEPTIONS-DELIVERY.md) and [the ordered backend execution plan](docs/BACKEND-EXECUTION-PLAN.md). Source 0.4.4 introduced [local plan memory and retrieval](docs/PLAN-MEMORY-DELIVERY.md) on top of [durable evidence](docs/ANALYSIS-EVIDENCE-DELIVERY.md). The optional semantic reviewer remains future work.
 
 UI update (28 October): Vyom's newer UI/window changes and the supplied Pebble reference animations are integrated. See [playback mapping and local testing](docs/PEBBLE-REFERENCE-INTEGRATION.md). The 0.4.2 installer below predates this source update; use `npm run dev` to test the latest UI.
 

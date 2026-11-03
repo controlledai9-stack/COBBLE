@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Store } from "../store";
+import { exceptionPolicyKey } from "../plan-policy";
 import type {
   Assessment,
   Change,
@@ -8,7 +9,7 @@ import type {
   Team,
 } from "../../shared/types";
 
-export const ANALYZER_VERSION = "rules-evidence-v2-retrieval";
+export const ANALYZER_VERSION = "rules-evidence-v3-exceptions";
 export const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export type CaptureTrigger = {
@@ -25,6 +26,7 @@ export interface EvidenceBatch {
   actor: Pick<Profile, "id" | "name">;
   trigger: CaptureTrigger;
   planVersion: number;
+  membershipEpoch?: number;
   contextHash: string;
   agentExplanation?: string;
   changes: (Change & { beforeHash: string; afterHash: string })[];
@@ -46,6 +48,7 @@ export interface AnalysisJob {
   contextHash: string;
   analyzerVersion: string;
   context: Team;
+  membershipEpoch?: number;
   accepted: boolean;
   activityId?: string;
   error?: string;
@@ -58,7 +61,12 @@ export interface AnalysisJob {
   };
 }
 
-export function analysisContext(team: Team, accepted: boolean) {
+export function analysisContext(
+  team: Team,
+  accepted: boolean,
+  membershipEpoch = 0,
+  now = Date.now(),
+) {
   // Exclude host endpoint, invite code and local workspace spelling: they are not plan evidence.
   return hash({
     plan: team.plan,
@@ -66,6 +74,8 @@ export function analysisContext(team: Team, accepted: boolean) {
     version: team.version,
     graph: team.graph ?? null,
     accepted,
+    membershipEpoch,
+    exceptionPolicyKey: exceptionPolicyKey(team, membershipEpoch, now),
   });
 }
 
@@ -100,7 +110,12 @@ export class AnalysisLedger {
         actor: { id: profile.id, name: profile.name },
         trigger,
         planVersion: team.version,
-        contextHash: analysisContext(team, accepted),
+        membershipEpoch: this.store.setting(`membershipEpoch:${team.id}`, 0),
+        contextHash: analysisContext(
+          team,
+          accepted,
+          this.store.setting(`membershipEpoch:${team.id}`, 0),
+        ),
         agentExplanation,
         changes: changes.map((change) => ({
           ...change,
@@ -128,7 +143,11 @@ export class AnalysisLedger {
   }
 
   enqueue(batch: EvidenceBatch, context: Team, accepted: boolean) {
-    const digest = analysisContext(context, accepted);
+    const membershipEpoch = this.store.setting<number>(
+      `membershipEpoch:${context.id}`,
+      0,
+    );
+    const digest = analysisContext(context, accepted, membershipEpoch);
     const id = hash({
       batchId: batch.id,
       context: digest,
@@ -146,6 +165,7 @@ export class AnalysisLedger {
       contextHash: digest,
       analyzerVersion: ANALYZER_VERSION,
       context: structuredClone(context),
+      membershipEpoch,
       accepted,
     };
     this.store.db

@@ -1,5 +1,7 @@
 # Cobble plan intelligence: research and implementation plan
 
+Delivery update, 4 November 2026: durable evidence, local plan memory/retrieval and explicit scoped exceptions have now been implemented in source. See [the execution sequence and remaining gates](BACKEND-EXECUTION-PLAN.md), [evidence delivery](ANALYSIS-EVIDENCE-DELIVERY.md), [plan memory delivery](PLAN-MEMORY-DELIVERY.md) and [exception delivery](PLAN-EXCEPTIONS-DELIVERY.md). The baseline assessment below describes the original research inspection; it is not the current delivery checklist.
+
 28 October 2026. Baseline: source commit `0cfe321`. Status: proposed architecture and acceptance criteria; the new intelligence described here is not implemented. Existing code was inspected, and Node's current SQLite runtime successfully created an FTS5 table. Packaged Electron FTS5 support still needs its own check.
 
 ## 1. Product decision

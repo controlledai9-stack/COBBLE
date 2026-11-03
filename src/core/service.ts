@@ -22,6 +22,7 @@ import { notificationAudience } from "./notification-policy";
 import { gitFacts, integrateApproved } from "./git-main";
 import { agentContext } from "./agents";
 import { capacity } from "./host-capacity";
+import { exceptionPolicyKey } from "./plan-policy";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
 import {
@@ -86,7 +87,11 @@ export class CobbleService extends EventEmitter {
         const team = this.activeTeam();
         if (!team) return;
         const key = `${team.id}:${body.agent}:${body.sessionId}`;
-        const contextVersion = analysisContext(team, false);
+        const contextVersion = analysisContext(
+          team,
+          false,
+          this.store.setting(`membershipEpoch:${team.id}`, 0),
+        );
         if (body.event === "output") {
           this.agentMessages.set(key, body.message ?? "");
           if (this.agentMessages.size > 32)
@@ -196,6 +201,17 @@ export class CobbleService extends EventEmitter {
     const paused = this.store.setting("paused", false);
     return {
       hosting: this.network.hosting.state(),
+      policy: team
+        ? {
+            pendingManagerChanges: Number(
+              this.store.db
+                .prepare(
+                  "SELECT COUNT(*) AS n FROM outbox WHERE team_id=? AND kind='owner-admin' AND json_extract(data,'$.command') IN ('approve-plan-exception','revoke-plan-exception')",
+                )
+                .get(team.id)!.n,
+            ),
+          }
+        : undefined,
       analysis: team ? this.analysis.summary(team.id) : undefined,
       profile,
       teams: this.store.teams(),
@@ -458,6 +474,11 @@ export class CobbleService extends EventEmitter {
           `accepted:${team.id}:${key}`,
           false,
         );
+        const evaluationTime = Date.now();
+        const membershipEpoch = this.store.setting<number>(
+          `membershipEpoch:${team.id}`,
+          0,
+        );
         const baseline = this.store.setting<[string, string][] | null>(
           `baseline:${team.id}:${batch.root}`,
           null,
@@ -475,14 +496,21 @@ export class CobbleService extends EventEmitter {
           this.analysis.finish(job, "stale");
         } else if (
           job.analyzerVersion !== ANALYZER_VERSION ||
-          job.contextHash !== analysisContext(team, accepted)
+          job.contextHash !==
+            analysisContext(team, accepted, membershipEpoch, evaluationTime)
         ) {
           this.store.transaction(() => {
             this.analysis.finish(job, "stale");
             this.analysis.enqueue(batch, team, accepted);
           });
         } else {
-          const activity = this.commitAnalysis(job, batch, changes, key);
+          const activity = this.commitAnalysis(
+            job,
+            batch,
+            changes,
+            key,
+            evaluationTime,
+          );
           if (activity) await this.network.publish("activity", activity);
         }
       } catch (error) {
@@ -500,17 +528,27 @@ export class CobbleService extends EventEmitter {
     batch: EvidenceBatch,
     changes: import("../shared/types").Change[],
     key: string,
+    now: number,
   ) {
     return this.store.transaction(() => {
-      const assessment = assess(job.context, changes);
+      const assessment = assess(job.context, changes, null, {
+        authorId: batch.actor.id,
+        now,
+        observedAt: batch.capturedAt,
+        observedPlanVersion: batch.planVersion,
+        membershipEpoch: job.membershipEpoch ?? 0,
+        observedMembershipEpoch: batch.membershipEpoch ?? 0,
+      });
       const result = {
         planVersion: job.context.version,
         contextHash: job.contextHash,
         assessment,
-        evaluatedAt: new Date().toISOString(),
+        evaluatedAt: new Date(now).toISOString(),
         retrieval: this.store.planMemory.retrieve(job.context, {
           query: changes.map((change) => change.path).join(" "),
           paths: changes.map((change) => change.path),
+          now,
+          authorId: batch.actor.id,
         }),
       };
       const old = this.store.activityByFingerprint(batch.teamId, key);
@@ -530,6 +568,11 @@ export class CobbleService extends EventEmitter {
         paths: changes.map((c) => c.path),
         fingerprint: key,
         planVersion: job.context.version,
+        observation: {
+          capturedAt: batch.capturedAt,
+          planVersion: batch.planVersion,
+          membershipEpoch: batch.membershipEpoch ?? 0,
+        },
         createdAt: batch.capturedAt,
         resolution: job.accepted ? "kept" : null,
         agentExplanation: batch.agentExplanation,
@@ -592,6 +635,8 @@ export class CobbleService extends EventEmitter {
         "join",
         "host",
         "updatePlan",
+        "approvePlanException",
+        "revokePlanException",
         "configureModule",
         "captureContracts",
         "amendFromActivity",
@@ -614,6 +659,8 @@ export class CobbleService extends EventEmitter {
         "join",
         "host",
         "updatePlan",
+        "approvePlanException",
+        "revokePlanException",
         "configureModule",
         "captureContracts",
         "amendFromActivity",
@@ -627,6 +674,17 @@ export class CobbleService extends EventEmitter {
         "Finish the approved main integration before changing the team or its agreements",
       );
     switch (action.type) {
+      case "approvePlanException":
+        this.requireOwner();
+        await this.network.changePlanException(
+          "approve-plan-exception",
+          action,
+        );
+        break;
+      case "revokePlanException":
+        this.requireOwner();
+        await this.network.changePlanException("revoke-plan-exception", action);
+        break;
       case "refreshConnection":
         await this.network.refreshConnection(
           requiredText(action.address, "Current invitation", 12000),
@@ -914,6 +972,10 @@ export class CobbleService extends EventEmitter {
         const team = this.activeTeam();
         if (!team?.workspace)
           throw new Error("Choose the repository folder first");
+        const policyKey = exceptionPolicyKey(
+          team,
+          this.store.setting(`membershipEpoch:${team.id}`, 0),
+        );
         const facts = await gitFacts(
           team.workspace,
           action.sourceRef,
@@ -924,7 +986,12 @@ export class CobbleService extends EventEmitter {
           this.closed ||
           current?.id !== team.id ||
           current.version !== team.version ||
-          (current.graph?.version ?? 0) !== (team.graph?.version ?? 0)
+          (current.graph?.version ?? 0) !== (team.graph?.version ?? 0) ||
+          policyKey !==
+            exceptionPolicyKey(
+              current!,
+              this.store.setting(`membershipEpoch:${team.id}`, 0),
+            )
         )
           throw new Error(
             "The team or its agreements changed while preparing the proposal. Try again.",
@@ -935,6 +1002,7 @@ export class CobbleService extends EventEmitter {
           title: action.title,
           expectedPlanVersion: team.version,
           expectedGraphVersion: team.graph?.version ?? 0,
+          expectedExceptionPolicyKey: policyKey,
           ...facts,
         });
         break;
@@ -947,6 +1015,10 @@ export class CobbleService extends EventEmitter {
           teamId: team.id,
           proposalId: action.proposalId,
           choice: action.choice,
+          expectedExceptionPolicyKey: exceptionPolicyKey(
+            team,
+            this.store.setting(`membershipEpoch:${team.id}`, 0),
+          ),
         });
         break;
       }
@@ -1072,6 +1144,7 @@ export class CobbleService extends EventEmitter {
       throw new Error("This proposal belongs to another team");
     this.integrating = true;
     this.network.mainIntegrationActive = true;
+    let authorizedAt: number | undefined;
     try {
       await this.network.acquireMain(proposalId);
       const sha = await integrateApproved(
@@ -1080,11 +1153,13 @@ export class CobbleService extends EventEmitter {
         this.store.profile()!,
         this.gitBinary,
         () => {
-          if (this.collaboration.proposal(proposalId).status !== "approved")
+          const at = Date.now();
+          if (this.collaboration.proposal(proposalId, at).status !== "approved")
             throw new Error("Approval changed while preparing the integration");
+          authorizedAt = at;
         },
       );
-      this.collaboration.integrated(proposalId, sha);
+      this.collaboration.integrated(proposalId, sha, authorizedAt);
       await this.network.publishIntegrated(proposalId, sha);
       this.changed();
     } catch (error) {
