@@ -259,10 +259,12 @@ export async function runSmoke(
   if (process.platform === "win32") {
     assert.equal(
       reviewPreflight.resourceGuard,
-      "windows-job",
+      "windows-appcontainer",
       JSON.stringify(reviewPreflight),
     );
     assert.equal(reviewPreflight.osUsage!.inJob, true);
+    assert.equal(reviewPreflight.osUsage!.inAppContainer, true);
+    assert.equal(reviewPreflight.osUsage!.capabilityCount, 0);
     assert.ok(reviewPreflight.osUsage!.peakCommitBytes > 0);
   }
   assert.equal(service.state().analysis!.semanticReview, false);

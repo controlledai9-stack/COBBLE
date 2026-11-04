@@ -8,8 +8,8 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 // Trusted Windows resource guardian. Repository evidence is forwarded as bytes, never parsed or executed.
-// Job objects constrain resources/lifetime; they do NOT provide filesystem or network isolation.
-internal static class ReviewGuard {
+// Job objects constrain resources/lifetime; the companion partial supplies AppContainer isolation.
+internal static partial class ReviewGuard {
   const uint KillOnClose=0x2000, ProcessMemory=0x100, JobMemory=0x200, ProcessTime=0x2, ActiveProcess=0x8, Priority=0x20;
   const uint CreateSuspended=0x4, NoWindow=0x08000000, ExtendedStartup=0x80000, BelowNormal=0x4000;
   [StructLayout(LayoutKind.Sequential)] struct BasicLimits { public long ProcessUserTime,JobUserTime; public uint Flags; public UIntPtr MinWorkingSet,MaxWorkingSet; public uint ActiveProcesses; public UIntPtr Affinity; public uint PriorityClass,SchedulingClass; }
@@ -57,8 +57,10 @@ internal static class ReviewGuard {
   static FileStream PipeStream(IntPtr handle,FileAccess access) { return new FileStream(new SafeFileHandle(handle,true),access,4096,false); }
   public static int Main(string[] args) {
     IntPtr job=IntPtr.Zero,parent=IntPtr.Zero,list=IntPtr.Zero,jobValue=IntPtr.Zero,handlesValue=IntPtr.Zero;
+    IntPtr appSid=IntPtr.Zero,capValue=IntPtr.Zero,directoryLock=IntPtr.Zero,childEnvironment=IntPtr.Zero;FileStream reportStream=null;
     IntPtr inputRead=IntPtr.Zero,inputWrite=IntPtr.Zero,outputRead=IntPtr.Zero,outputWrite=IntPtr.Zero,errorRead=IntPtr.Zero,errorWrite=IntPtr.Zero;
-    ProcessInfo child=new ProcessInfo();bool listReady=false;Thread stdout=null,stderr=null;
+    ProcessInfo child=new ProcessInfo();bool listReady=false;Thread stdout=null,stderr=null,preparationWatch=null;ManualResetEvent preparationDone=null;
+    string phase="arguments";
     try {
       if(args.Length!=16) throw new ArgumentException("Invalid guardian arguments");
       string[] names={"--executable","--worker","--parent","--commit-mib","--cpu-ms","--heap-mib","--wall-ms","--report"};
@@ -66,9 +68,23 @@ internal static class ReviewGuard {
       string exe=Path.GetFullPath(args[1]),worker=Path.GetFullPath(args[3]),report=Path.GetFullPath(args[15]);
       if(!Path.IsPathRooted(args[1])||!Path.IsPathRooted(args[3])||!Path.IsPathRooted(args[15])||!File.Exists(exe)||!File.Exists(worker)) throw new ArgumentException("Missing absolute runtime path");
       int parentPid=Bound(args[5],1,int.MaxValue),memory=Bound(args[7],32,256),cpu=Bound(args[9],1,5000),heap=Bound(args[11],16,128),wall=Bound(args[13],1,20000);
+      byte[] reportKey=Convert.FromBase64String(Environment.GetEnvironmentVariable("COBBLE_REVIEW_GUARD_KEY")??"");
+      if(reportKey.Length!=32)throw new ArgumentException("Missing private report key");
       SetErrorMode(0x1|0x2|0x8000);
       parent=OpenProcess(0x100000,false,parentPid);Check(parent!=IntPtr.Zero);
-      job=CreateJobObject(IntPtr.Zero,null);Check(job!=IntPtr.Zero);
+      preparationDone=new ManualResetEvent(false);
+      preparationWatch=new Thread(delegate() {
+        uint stopped=WaitForMultipleObjects(2,new IntPtr[]{parent,preparationDone.SafeWaitHandle.DangerousGetHandle()},false,(uint)wall);
+        if(stopped==0)Environment.Exit(125);else if(stopped==0x102)Environment.Exit(124);
+      });
+      preparationWatch.IsBackground=true;preparationWatch.Start();
+      phase="container-profile";appSid=ContainerSid();RefuseLoopbackExemption(appSid);
+      var package=new System.Security.Principal.SecurityIdentifier(appSid);
+      phase="control-folder";report=PrepareControl(report,package,out directoryLock,out reportStream);
+      phase="staging";string runtimeDigest;exe=StageRuntime(exe,package,out runtimeDigest);worker=StageWorker(worker,report,package);
+      preparationDone.Set();preparationWatch.Join();preparationWatch=null;preparationDone.Dispose();preparationDone=null;
+      Check(WaitForSingleObject(parent,0)==0x102);
+      phase="job";job=CreateJobObject(IntPtr.Zero,null);Check(job!=IntPtr.Zero);
       ExtendedLimits limits=new ExtendedLimits();limits.Basic.Flags=KillOnClose|ProcessMemory|JobMemory|ProcessTime|ActiveProcess|Priority;
       limits.Basic.ProcessUserTime=checked((long)cpu*10000);limits.Basic.ActiveProcesses=1;limits.Basic.PriorityClass=BelowNormal;
       limits.ProcessMemory=new UIntPtr(checked((ulong)memory*1024*1024));limits.JobMemory=limits.ProcessMemory;
@@ -79,16 +95,20 @@ internal static class ReviewGuard {
       Check(CreatePipe(out inputRead,out inputWrite,ref security,4096));Check(SetHandleInformation(inputWrite,1,0));
       Check(CreatePipe(out outputRead,out outputWrite,ref security,4096));Check(SetHandleInformation(outputRead,1,0));
       Check(CreatePipe(out errorRead,out errorWrite,ref security,4096));Check(SetHandleInformation(errorRead,1,0));
-      IntPtr size=IntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,2,0,ref size);list=Marshal.AllocHGlobal(size);
-      Check(InitializeProcThreadAttributeList(list,2,0,ref size));listReady=true;
+      IntPtr size=IntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,3,0,ref size);list=Marshal.AllocHGlobal(size);
+      Check(InitializeProcThreadAttributeList(list,3,0,ref size));listReady=true;
       jobValue=Marshal.AllocHGlobal(IntPtr.Size);Marshal.WriteIntPtr(jobValue,job);
       Check(UpdateProcThreadAttribute(list,0,new IntPtr(0x2000D),jobValue,new IntPtr(IntPtr.Size),IntPtr.Zero,IntPtr.Zero));
       handlesValue=Marshal.AllocHGlobal(IntPtr.Size*3);Marshal.WriteIntPtr(handlesValue,0,inputRead);Marshal.WriteIntPtr(handlesValue,IntPtr.Size,outputWrite);Marshal.WriteIntPtr(handlesValue,IntPtr.Size*2,errorWrite);
       Check(UpdateProcThreadAttribute(list,0,new IntPtr(0x20002),handlesValue,new IntPtr(IntPtr.Size*3),IntPtr.Zero,IntPtr.Zero));
+      Capabilities caps=new Capabilities();caps.Sid=appSid;caps.List=IntPtr.Zero;caps.Count=0;
+      capValue=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Capabilities)));Marshal.StructureToPtr(caps,capValue,false);
+      Check(UpdateProcThreadAttribute(list,0,new IntPtr(0x20009),capValue,new IntPtr(Marshal.SizeOf(typeof(Capabilities))),IntPtr.Zero,IntPtr.Zero));
       StartupInfoEx start=new StartupInfoEx();start.Info.Size=Marshal.SizeOf(typeof(StartupInfoEx));start.Info.Flags=0x100;start.Info.Input=inputRead;start.Info.Output=outputWrite;start.Info.Error=errorWrite;start.Attributes=list;
-      string command=Quote(exe)+" --permission "+Quote("--allow-fs-read="+worker)+" --max-old-space-size="+heap+" --max-semi-space-size=8 --v8-pool-size=1 --disallow-code-generation-from-strings "+Quote(worker);
-      Check(CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,CreateSuspended|NoWindow|ExtendedStartup|BelowNormal,IntPtr.Zero,Path.GetDirectoryName(worker),ref start,out child));
-      bool inside;Check(IsProcessInJob(child.Process,job,out inside));Check(inside);
+      string command=Quote(exe)+" --preserve-symlinks-main --preserve-symlinks --permission "+Quote("--allow-fs-read="+worker)+" --max-old-space-size="+heap+" --max-semi-space-size=8 --v8-pool-size=1 --disallow-code-generation-from-strings "+Quote(worker);
+      childEnvironment=CleanEnvironment();
+      phase="create-process";Check(CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,CreateSuspended|NoWindow|ExtendedStartup|BelowNormal|0x400,childEnvironment,Path.GetDirectoryName(worker),ref start,out child));
+      phase="verify-job";bool inside;Check(IsProcessInJob(child.Process,job,out inside));Check(inside);phase="verify-container";VerifyContainer(child.Process,appSid);
       Close(ref inputRead);Close(ref outputWrite);Close(ref errorWrite);
       FileStream stdinTarget=PipeStream(inputWrite,FileAccess.Write);inputWrite=IntPtr.Zero;
       FileStream stdoutSource=PipeStream(outputRead,FileAccess.Read);outputRead=IntPtr.Zero;
@@ -115,16 +135,23 @@ internal static class ReviewGuard {
       Check(QueryInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(ExtendedLimits)),IntPtr.Zero));
       Check(QueryInformationJobObject(job,15,ref rate,(uint)Marshal.SizeOf(typeof(CpuRate)),IntPtr.Zero));
       // Trusted OS counters are written only after the child has exited. No source text is retained here.
-      string json="{\"version\":1,\"inJob\":true,\"pid\":"+child.Pid+",\"commitLimitBytes\":"+limits.ProcessMemory.ToUInt64()+",\"peakCommitBytes\":"+limits.PeakProcessMemory.ToUInt64()+",\"userCpuMs\":"+(usage.User/10000)+",\"kernelCpuMs\":"+(usage.Kernel/10000)+",\"processLimit\":"+limits.Basic.ActiveProcesses+",\"cpuRate\":"+rate.Rate+",\"cause\":\""+cause+"\",\"exitCode\":"+exit+"}";
-      File.WriteAllText(report,json,new UTF8Encoding(false));
+      string json="{\"version\":2,\"inJob\":true,\"inAppContainer\":true,\"capabilityCount\":0,\"runtimeDigest\":\""+runtimeDigest+"\",\"pid\":"+child.Pid+",\"commitLimitBytes\":"+limits.ProcessMemory.ToUInt64()+",\"peakCommitBytes\":"+limits.PeakProcessMemory.ToUInt64()+",\"userCpuMs\":"+(usage.User/10000)+",\"kernelCpuMs\":"+(usage.Kernel/10000)+",\"processLimit\":"+limits.Basic.ActiveProcesses+",\"cpuRate\":"+rate.Rate+",\"cause\":\""+cause+"\",\"exitCode\":"+exit+"}";
+      byte[] payload=Encoding.UTF8.GetBytes(json);string mac;
+      using(var hmac=new System.Security.Cryptography.HMACSHA256(reportKey))mac=BitConverter.ToString(hmac.ComputeHash(payload)).Replace("-","").ToLowerInvariant();
+      string envelope="{\"payload\":\""+Convert.ToBase64String(payload)+"\",\"mac\":\""+mac+"\"}";
+      byte[] encoded=Encoding.UTF8.GetBytes(envelope);reportStream.Write(encoded,0,encoded.Length);reportStream.Flush(true);
       return unchecked((int)exit);
     } catch(Exception e) {
-      Console.Error.WriteLine("COBBLE_REVIEW_GUARD_UNAVAILABLE: "+(e is Win32Exception ? ((Win32Exception)e).NativeErrorCode.ToString() : e.GetType().Name));return 125;
+      Console.Error.WriteLine("COBBLE_REVIEW_GUARD_UNAVAILABLE: "+phase+":"+(e is Win32Exception ? ((Win32Exception)e).NativeErrorCode.ToString() : e.GetType().Name));return 125;
     } finally {
       // Closing the sole noninherited job handle kills its assigned child even after guardian failure.
-      Close(ref job);Close(ref child.Thread);Close(ref child.Process);Close(ref parent);
+      Close(ref job);Close(ref child.Thread);Close(ref child.Process);
+      if(preparationDone!=null)preparationDone.Set();if(preparationWatch!=null)preparationWatch.Join();if(preparationDone!=null)preparationDone.Dispose();
+      if(runtimeLease!=null)runtimeLease.Dispose();if(reportStream!=null)reportStream.Dispose();Close(ref directoryLock);Close(ref parent);
+      if(childEnvironment!=IntPtr.Zero)Marshal.FreeHGlobal(childEnvironment);
       Close(ref inputRead);Close(ref inputWrite);Close(ref outputRead);Close(ref outputWrite);Close(ref errorRead);Close(ref errorWrite);
       if(listReady)DeleteProcThreadAttributeList(list);if(list!=IntPtr.Zero)Marshal.FreeHGlobal(list);
+      if(capValue!=IntPtr.Zero)Marshal.FreeHGlobal(capValue);if(appSid!=IntPtr.Zero)FreeSid(appSid);
       if(jobValue!=IntPtr.Zero)Marshal.FreeHGlobal(jobValue);if(handlesValue!=IntPtr.Zero)Marshal.FreeHGlobal(handlesValue);
     }
   }

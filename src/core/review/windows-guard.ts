@@ -1,8 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { REVIEW_LIMITS } from "./protocol";
 export interface OsUsage {
-  version: 1;
+  version: 2;
+  inAppContainer: true;
+  capabilityCount: 0;
+  runtimeDigest: string;
   inJob: true;
   pid: number;
   commitLimitBytes: number;
@@ -28,8 +32,8 @@ export async function verifyGuard(file: string) {
     .update(await readFile(path))
     .digest("hex");
   if (
-    manifest.version !== 1 ||
-    manifest.kind !== "windows-job-preflight" ||
+    manifest.version !== 2 ||
+    manifest.kind !== "windows-appcontainer-preflight" ||
     manifest.sha256 !== hash
   )
     throw new Error("Guard artifact mismatch");
@@ -38,13 +42,32 @@ export async function verifyGuard(file: string) {
 export async function readOsUsage(
   file: string,
   exitCode: number | null,
+  key: Buffer,
 ): Promise<OsUsage | null> {
   try {
-    if ((await stat(file)).size > 4096) return null;
-    const value = JSON.parse(await readFile(file, "utf8"));
+    if (key.length !== 32) return null;
+    const control = join(file + ".private", "usage.json");
+    if ((await stat(control)).size > 4096) return null;
+    const envelope = JSON.parse(await readFile(control, "utf8"));
+    if (
+      !envelope ||
+      typeof envelope.payload !== "string" ||
+      typeof envelope.mac !== "string" ||
+      Object.keys(envelope).length !== 2 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(envelope.payload) ||
+      !/^[a-f0-9]{64}$/.test(envelope.mac)
+    )
+      return null;
+    const payload = Buffer.from(envelope.payload, "base64");
+    const mac = createHmac("sha256", key).update(payload).digest();
+    if (!timingSafeEqual(mac, Buffer.from(envelope.mac, "hex"))) return null;
+    const value = JSON.parse(payload.toString("utf8"));
     const keys = [
       "version",
       "inJob",
+      "inAppContainer",
+      "capabilityCount",
+      "runtimeDigest",
       "pid",
       "commitLimitBytes",
       "peakCommitBytes",
@@ -64,7 +87,11 @@ export async function readOsUsage(
     )
       return null;
     if (
-      value.version !== 1 ||
+      value.version !== 2 ||
+      value.inAppContainer !== true ||
+      value.capabilityCount !== 0 ||
+      typeof value.runtimeDigest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(value.runtimeDigest) ||
       value.inJob !== true ||
       value.processLimit !== 1 ||
       value.commitLimitBytes !== 256 * 1024 * 1024 ||

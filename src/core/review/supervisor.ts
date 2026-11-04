@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile, realpath, stat, mkdtemp, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
@@ -29,7 +30,7 @@ export interface ReviewOutcome {
   peakReportedRss: number;
   reportedCpuMs: number;
   semanticEnabled: false;
-  resourceGuard: "windows-job" | "process-only" | "unverified";
+  resourceGuard: "windows-appcontainer" | "process-only" | "unverified";
   osUsage?: OsUsage;
 }
 type Controls = {
@@ -89,7 +90,7 @@ export class ReviewSupervisor {
       mode: "preflight-only" as const,
       semanticEnabled: false as const,
       resourceControl: this.guardFile
-        ? ("windows-job-configured" as const)
+        ? ("windows-appcontainer-configured" as const)
         : ("process-only" as const),
       busy: this.reservation,
       closed: this.closed,
@@ -241,6 +242,7 @@ export class ReviewSupervisor {
     } catch {
       return this.fallback(packet, "guard_unavailable", start);
     }
+    const reportKey = guard ? randomBytes(32) : undefined;
     const report = reportDirectory
       ? join(reportDirectory, "usage.json")
       : undefined;
@@ -272,7 +274,13 @@ export class ReviewSupervisor {
           TEMP: tmpdir(),
           TMP: tmpdir(),
         };
-        for (const name of ["SystemRoot", "WINDIR"])
+        if (reportKey)
+          env.COBBLE_REVIEW_GUARD_KEY = reportKey.toString("base64");
+        for (const name of [
+          "SystemRoot",
+          "WINDIR",
+          ...(guard ? ["LOCALAPPDATA", "USERPROFILE"] : []),
+        ])
           if (process.env[name]) env[name] = process.env[name];
         child = spawn(
           guard?.file ?? this.executable,
@@ -403,7 +411,10 @@ export class ReviewSupervisor {
           this.active = undefined;
           this.stop = undefined;
         }
-        const osUsage = report ? await readOsUsage(report, code) : null;
+        const osUsage =
+          report && reportKey
+            ? await readOsUsage(report, code, reportKey)
+            : null;
         let reason =
           stopped ??
           (this.closed
@@ -450,7 +461,7 @@ export class ReviewSupervisor {
             peakReportedRss: peak,
             reportedCpuMs: cpu,
             ...(osUsage
-              ? { resourceGuard: "windows-job" as const, osUsage }
+              ? { resourceGuard: "windows-appcontainer" as const, osUsage }
               : {}),
           });
           return;
@@ -464,7 +475,7 @@ export class ReviewSupervisor {
           peakReportedRss: peak,
           reportedCpuMs: cpu,
           semanticEnabled: false,
-          resourceGuard: osUsage ? "windows-job" : "process-only",
+          resourceGuard: osUsage ? "windows-appcontainer" : "process-only",
           ...(osUsage ? { osUsage } : {}),
         };
         if (outcome.status === "shadow_candidate") {

@@ -33,7 +33,7 @@ child.on("exit", async (code) => {
       !result.success ||
       result.version !== expected ||
       result.reviewWorker !== "model_not_configured" ||
-      result.reviewResourceGuard !== "windows-job"
+      result.reviewResourceGuard !== "windows-appcontainer"
     )
       throw new Error("Packaged app smoke test failed");
     console.log(

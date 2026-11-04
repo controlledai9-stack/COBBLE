@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHmac } from "node:crypto";
 import { build } from "esbuild";
 import electron from "electron";
 import { Store } from "../src/core/store";
@@ -21,6 +21,9 @@ import { assess } from "../src/core/engine";
 import { analyzeSymbols } from "../src/core/analysis/symbols";
 import { CobbleService } from "../src/core/service";
 import { buildReviewPacket } from "../src/core/review/packet";
+import { createServer } from "node:net";
+import { createSocket } from "node:dgram";
+import { readOsUsage } from "../src/core/review/windows-guard";
 import { ReviewSupervisor } from "../src/core/review/supervisor";
 import {
   packetDigest,
@@ -577,11 +580,18 @@ async function runNative(
   worker: string,
   options: Parameters<typeof nativeArguments>[2] = {},
 ) {
-  const report = join(directory, `usage-${randomUUID()}.json`);
+  const reportFolder = join(directory, `native-job-${randomUUID()}`);
+  await mkdir(reportFolder);
+  const report = join(reportFolder, "usage.json");
+  const reportKey = randomBytes(32);
   const child = spawn(guard, nativeArguments(worker, report, options), {
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      COBBLE_REVIEW_GUARD_KEY: reportKey.toString("base64"),
+    },
   });
   let stdout = "",
     stderr = "";
@@ -599,8 +609,23 @@ async function runNative(
     child.once("error", reject);
     child.once("close", resolve);
   });
-  const usage = JSON.parse(await readFile(report, "utf8"));
-  return { code, stdout, stderr, usage };
+  const usage = await unsealReport(report, reportKey).catch((e) => {
+    throw new Error(`Missing trusted report (exit ${code}): ${stderr}`, {
+      cause: e,
+    });
+  });
+  return { code, stdout, stderr, usage, report, reportKey };
+}
+async function unsealReport(report: string, key: Buffer) {
+  const envelope = JSON.parse(
+    await readFile(join(report + ".private", "usage.json"), "utf8"),
+  );
+  const payload = Buffer.from(envelope.payload, "base64");
+  assert.equal(
+    envelope.mac,
+    createHmac("sha256", key).update(payload).digest("hex"),
+  );
+  return JSON.parse(payload.toString("utf8"));
 }
 test(
   "Windows guarded preflight verifies OS accounting for Node and Electron without enabling semantics",
@@ -622,8 +647,10 @@ test(
             "model_not_configured",
             JSON.stringify(result),
           );
-          assert.equal(result.resourceGuard, "windows-job");
+          assert.equal(result.resourceGuard, "windows-appcontainer");
           assert.equal(result.osUsage!.inJob, true);
+          assert.equal(result.osUsage!.inAppContainer, true);
+          assert.equal(result.osUsage!.capabilityCount, 0);
           assert.equal(result.osUsage!.processLimit, 1);
           assert.equal(result.osUsage!.commitLimitBytes, 256 * 1024 * 1024);
           assert.ok(result.osUsage!.peakCommitBytes > 0);
@@ -672,7 +699,7 @@ test(
       JSON.stringify(cpu.usage),
     );
     const idle = await plainWorker("setInterval(()=>{},1000);");
-    const wall = await runNative(idle, { wall: 300 });
+    const wall = await runNative(idle, { wall: 3000 });
     assert.equal(wall.code, 124);
     assert.equal(wall.usage.cause, "wall_timeout");
   },
@@ -718,6 +745,10 @@ test(
     });
     const result = await promisify(execFile)(guard, args, {
       windowsHide: true,
+      env: {
+        ...process.env,
+        COBBLE_REVIEW_GUARD_KEY: randomBytes(32).toString("base64"),
+      },
     }).then(
       () => null,
       (e) => e,
@@ -733,13 +764,18 @@ test(
     const worker = await plainWorker(
       "console.log(JSON.stringify({pid:process.pid}));setInterval(()=>{},1000);",
     );
+    const reportKey = randomBytes(32);
     const child = spawn(
       guard,
-      nativeArguments(worker, join(directory, "killed-report.json")),
+      nativeArguments(worker, join(directory, `killed-${randomUUID()}.json`)),
       {
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          COBBLE_REVIEW_GUARD_KEY: reportKey.toString("base64"),
+        },
       },
     );
     child.stdin.on("error", () => {});
@@ -777,13 +813,20 @@ test(
     const worker = await plainWorker(
       "console.log(JSON.stringify({workerPid:process.pid}));setInterval(()=>{},1000);",
     );
-    const report = join(directory, `parent-death-${randomUUID()}.json`);
+    const parentFolder = join(directory, `parent-death-${randomUUID()}`);
+    await mkdir(parentFolder);
+    const report = join(parentFolder, "usage.json");
+    const reportKey = randomBytes(32);
     const parentScript = await plainWorker(
       `const {spawn}=require('node:child_process');const args=${JSON.stringify(nativeArguments(worker, report))};args[5]=String(process.pid);const child=spawn(${JSON.stringify(guard)},args,{windowsHide:true,detached:true,stdio:['ignore',1,2],env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});console.log(JSON.stringify({guardPid:child.pid}));setInterval(()=>{},1000);`,
     );
     const parent = spawn(process.execPath, [parentScript], {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        COBBLE_REVIEW_GUARD_KEY: reportKey.toString("base64"),
+      },
     });
     parent.stderr.resume();
     let workerPid = 0,
@@ -811,7 +854,7 @@ test(
       const started = Date.now();
       while (!usage) {
         try {
-          usage = JSON.parse(await readFile(report, "utf8"));
+          usage = await unsealReport(report, reportKey);
         } catch {
           if (Date.now() - started > 5000)
             throw new Error("Missing parent-death report");
@@ -868,5 +911,126 @@ test(
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "blocked");
     assert.equal(result.usage.processLimit, 1);
+  },
+);
+
+test(
+  "AppContainer denies private files, runtime mutation and TCP/UDP without Node permissions",
+  { ...windowsOnly, timeout: 40000 },
+  async () => {
+    const home = join(directory, `boundary-${randomUUID()}`);
+    await mkdir(home);
+    const canary = join(home, "private.txt");
+    await writeFile(canary, "generated private canary");
+    const acl = async () =>
+      (
+        await promisify(execFile)(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `[System.IO.File]::GetAccessControl('${canary.replaceAll("'", "''")}').GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::All)`,
+          ],
+          { windowsHide: true },
+        )
+      ).stdout.trim();
+    const beforeAcl = await acl();
+    const tcp = createServer((socket) => {
+      connections++;
+      socket.destroy();
+    });
+    const udp = createSocket("udp4");
+    let connections = 0,
+      datagrams = 0;
+    udp.on("message", () => datagrams++);
+    await new Promise<void>((r) => tcp.listen(0, "127.0.0.1", r));
+    await new Promise<void>((r) => udp.bind(0, "127.0.0.1", r));
+    try {
+      const tcpPort = (tcp.address() as any).port,
+        udpPort = udp.address().port;
+      const source = join(home, "boundary.cs"),
+        exe = join(home, "boundary.exe");
+      const encoded = Buffer.from(canary).toString("base64");
+      await writeFile(join(home, "icudtl.dat"), "public runtime fixture");
+      await writeFile(
+        source,
+        `using System;using System.IO;using System.Text;using System.Net;using System.Net.Sockets;using System.Reflection;class Boundary{
+static bool Allowed(Action action){try{action();return true;}catch{return false;}}
+static void Output(string key,bool value){Console.WriteLine(key+"="+value);}
+static int Main(string[] args){bool control=args.Length==1&&args[0]=="control";string file=Encoding.UTF8.GetString(Convert.FromBase64String("${encoded}"));
+Output("privateRead",Allowed(()=>File.ReadAllText(file)));if(!control){Output("privateWrite",Allowed(()=>File.AppendAllText(file,"bad")));string worker=args[args.Length-1];string asset=Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),"icudtl.dat");
+Output("workerRead",Allowed(()=>File.ReadAllText(worker)));Output("workerWrite",Allowed(()=>File.AppendAllText(worker,"bad")));Output("workerDelete",Allowed(()=>File.Delete(worker)));Output("runtimeRead",Allowed(()=>File.ReadAllText(asset)));Output("runtimeWrite",Allowed(()=>File.AppendAllText(asset,"bad")));Output("runtimeAcl",Allowed(()=>{var permissions=File.GetAccessControl(asset);permissions.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier("S-1-1-0"),System.Security.AccessControl.FileSystemRights.FullControl,System.Security.AccessControl.AccessControlType.Allow));File.SetAccessControl(asset,permissions);}));Output("controlRead",Allowed(()=>File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(worker)),"usage.json"))));Output("keyPresent",Environment.GetEnvironmentVariable("COBBLE_REVIEW_GUARD_KEY")!=null);}
+bool connected=false;try{using(var socket=new Socket(AddressFamily.InterNetwork,SocketType.Stream,ProtocolType.Tcp)){var pending=socket.BeginConnect(IPAddress.Loopback,${tcpPort},null,null);if(pending.AsyncWaitHandle.WaitOne(1000)){socket.EndConnect(pending);connected=socket.Connected;}}}catch{}Output("tcp",connected);
+try{using(var socket=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp)){socket.SendTo(new byte[]{42},new IPEndPoint(IPAddress.Loopback,${udpPort}));}}catch{}return 0;}}`,
+      );
+      await promisify(execFile)(
+        join(
+          process.env.SystemRoot ?? "C:\\Windows",
+          "Microsoft.NET",
+          "Framework64",
+          "v4.0.30319",
+          "csc.exe",
+        ),
+        ["/nologo", "/platform:x64", "/target:exe", `/out:${exe}`, source],
+        { windowsHide: true, timeout: 30000 },
+      );
+      const control = await promisify(execFile)(exe, ["control"], {
+        windowsHide: true,
+        timeout: 5000,
+      });
+      assert.match(control.stdout, /privateRead=True/);
+      assert.match(control.stdout, /tcp=True/);
+      await waitFor(
+        () => connections === 1 && datagrams === 1,
+        "network positive controls",
+      );
+      const result = await runNative(await plainWorker("// public fixture"), {
+        executable: exe,
+      });
+      assert.equal(result.code, 0, result.stderr);
+      const values = Object.fromEntries(
+        result.stdout
+          .trim()
+          .split(/\r?\n/)
+          .map((line) => line.split("=")),
+      );
+      assert.deepEqual(values, {
+        privateRead: "False",
+        privateWrite: "False",
+        workerRead: "True",
+        workerWrite: "False",
+        workerDelete: "False",
+        runtimeRead: "True",
+        runtimeWrite: "False",
+        runtimeAcl: "False",
+        controlRead: "False",
+        keyPresent: "False",
+        tcp: "False",
+      });
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(connections, 1);
+      assert.equal(datagrams, 1);
+      assert.equal(await readFile(canary, "utf8"), "generated private canary");
+      assert.equal(await acl(), beforeAcl);
+      assert.ok(
+        await readOsUsage(result.report, result.code, result.reportKey),
+      );
+      assert.equal(
+        await readOsUsage(result.report, result.code, randomBytes(32)),
+        null,
+      );
+      const report = join(result.report + ".private", "usage.json");
+      const envelope = JSON.parse(await readFile(report, "utf8"));
+      envelope.payload = Buffer.from("{}").toString("base64");
+      await writeFile(report, JSON.stringify(envelope));
+      assert.equal(
+        await readOsUsage(result.report, result.code, result.reportKey),
+        null,
+      );
+    } finally {
+      await new Promise<void>((r) => tcp.close(() => r()));
+      udp.close();
+    }
   },
 );

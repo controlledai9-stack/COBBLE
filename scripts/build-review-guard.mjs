@@ -25,14 +25,15 @@ export async function buildReviewGuard(directory = "dist") {
       "/target:exe",
       `/out:${binary}`,
       resolve("packaging/review-guard.cs"),
+      resolve("packaging/review-container.cs"),
     ],
     { windowsHide: true, timeout: 30000, maxBuffer: 64000 },
   );
   await writeFile(
     binary + ".manifest.json",
     JSON.stringify({
-      version: 1,
-      kind: "windows-job-preflight",
+      version: 2,
+      kind: "windows-appcontainer-preflight",
       sha256: createHash("sha256")
         .update(await readFile(binary))
         .digest("hex"),

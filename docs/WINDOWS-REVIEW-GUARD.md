@@ -1,5 +1,7 @@
 # Windows review-worker resource guard
 
+Historical 0.4.13 delivery. See [0.4.14 AppContainer containment](WINDOWS-REVIEW-CONTAINMENT.md) for the current execution contract and validation.
+
 Source 0.4.13. This adds independent Windows resource and lifetime controls to the existing trusted preflight worker. It does not add a model, native model inference, a security container or new alerts.
 
 ## Execution contract
