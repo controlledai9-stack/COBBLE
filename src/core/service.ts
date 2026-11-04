@@ -4,7 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import { Store } from "./store";
-import { Observer } from "./observer";
+import { Observer, OBSERVER_LIMITS } from "./observer";
 import { assess, parseManifest } from "./engine";
 import { fingerprint, requiredText } from "./plan";
 import { IdeBridge } from "./bridge";
@@ -51,6 +51,8 @@ export class CobbleService extends EventEmitter {
   readonly analysis: AnalysisLedger;
   observer?: Observer;
   watcher?: FSWatcher;
+  private gitWatcher?: FSWatcher;
+  private reconciliationTimer?: ReturnType<typeof setInterval>;
   private timer?: ReturnType<typeof setTimeout>;
   private observing = false;
   private closed = false;
@@ -214,6 +216,7 @@ export class CobbleService extends EventEmitter {
           }
         : undefined,
       analysis: team ? this.analysis.summary(team.id) : undefined,
+      monitoring: this.observer?.status,
       profile,
       teams: this.store.teams(),
       activeTeamId: team?.id ?? null,
@@ -249,13 +252,14 @@ export class CobbleService extends EventEmitter {
   }
   schedule() {
     clearTimeout(this.timer);
+    if (this.closed) return;
     this.timer = setTimeout(() => {
       if (this.bridge.agentActive()) {
         this.schedule();
         return;
       }
-      void this.observe().catch((error) =>
-        this.emit("diagnostic", String(error)),
+      void this.observe(null, { kind: "saved_checkpoint" }, true).catch(
+        (error) => this.emit("diagnostic", String(error)),
       );
     }, 2500);
   }
@@ -273,6 +277,9 @@ export class CobbleService extends EventEmitter {
     const team = this.activeTeam();
     if (this.monitoredTeam === `${team?.id}:${team?.workspace}`) return;
     await this.watcher?.close();
+    await this.gitWatcher?.close();
+    clearInterval(this.reconciliationTimer);
+    this.gitWatcher = undefined;
     this.watcher = undefined;
     this.observer = undefined;
     this.reconciledRoot = undefined;
@@ -302,24 +309,62 @@ export class CobbleService extends EventEmitter {
       ]);
     this.watcher = chokidar.watch(root, {
       ignoreInitial: true,
+      followSymlinks: false,
       ignored: (path, stats) =>
         /(?:^|[\\/])(?:node_modules|\.git|\.cobble|\.claude|\.cursor|dist|build|coverage|\.aws|\.ssh|\.codex)(?:[\\/]|$)/.test(
           path,
         ),
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
     });
-    this.watcher.on("all", () => this.schedule());
-    this.watcher.on("error", (error) =>
-      this.emit("diagnostic", `File watcher: ${error}`),
-    );
+    const observer = this.observer;
+    this.watcher.on("all", (event, path) => {
+      observer.markDirty(path, event);
+      this.schedule();
+    });
+    this.watcher.on("ready", () => {
+      observer.trackEvents(true);
+      this.schedule();
+    });
+    this.watcher.on("error", (error) => {
+      observer.trackEvents(false);
+      this.emit("diagnostic", `File watcher: ${error}`);
+      this.schedule();
+    });
+    const metadataPaths = await observer.gitMetadataPaths();
+    if (metadataPaths.length) {
+      this.gitWatcher = chokidar.watch(metadataPaths, {
+        ignoreInitial: true,
+        followSymlinks: false,
+      });
+      this.gitWatcher.on("all", () => {
+        observer.requestReconcile();
+        this.schedule();
+      });
+      this.gitWatcher.on("error", (error) => {
+        observer.requestReconcile();
+        this.emit("diagnostic", `Git watcher: ${error}`);
+      });
+    }
+    this.reconciliationTimer = setInterval(() => {
+      observer.requestReconcile();
+      this.schedule();
+    }, OBSERVER_LIMITS.reconcileMs);
+    this.reconciliationTimer.unref();
     this.schedule();
   }
   observe(
     agent: AgentPayload | null = null,
     trigger: CaptureTrigger = { kind: "saved_checkpoint" },
+    incremental = false,
   ): Promise<Activity | null> {
-    if (this.observationTask) return this.observationTask;
-    const task = this.observeChanges(agent, trigger);
+    if (this.observationTask) {
+      if (!incremental) {
+        this.observer?.requestReconcile();
+        return this.observationTask.then(() => this.observe(agent, trigger));
+      }
+      return this.observationTask;
+    }
+    const task = this.observeChanges(agent, trigger, incremental);
     this.observationTask = task;
     void task
       .finally(() => {
@@ -331,6 +376,7 @@ export class CobbleService extends EventEmitter {
   private async observeChanges(
     agent: AgentPayload | null,
     trigger: CaptureTrigger,
+    incremental: boolean,
   ): Promise<Activity | null> {
     if (
       this.closed ||
@@ -347,15 +393,15 @@ export class CobbleService extends EventEmitter {
       const observer = this.observer;
       const profile = this.store.profile();
       if (!team || !profile) return null;
-      const previousBaseline = observer.baseline;
+      const previousCheckpoint = observer.checkpoint();
       this.reconciledRoot = undefined;
-      const changes = await observer.changes();
+      const changes = await observer.changes({ incremental });
       if (
         this.network.hosting.frozen ||
         this.integrating ||
         this.store.setting("paused", false)
       ) {
-        observer.baseline = previousBaseline;
+        observer.restore(previousCheckpoint);
         return null;
       }
       if (
@@ -365,6 +411,22 @@ export class CobbleService extends EventEmitter {
       )
         return null;
       if (!changes.length) {
+        if (
+          observer.baseline.size !== previousCheckpoint.baseline.size ||
+          [...observer.baseline].some(
+            ([path, source]) =>
+              previousCheckpoint.baseline.get(path) !== source,
+          )
+        ) {
+          try {
+            this.store.set(`baseline:${team.id}:${observer.root}`, [
+              ...observer.baseline,
+            ]);
+          } catch (error) {
+            observer.restore(previousCheckpoint);
+            throw error;
+          }
+        }
         this.reconciledRoot = observer.root;
         await this.drainAnalysis();
         return null;
@@ -382,7 +444,7 @@ export class CobbleService extends EventEmitter {
         );
         this.reconciledRoot = observer.root;
       } catch (error) {
-        observer.baseline = previousBaseline;
+        observer.restore(previousCheckpoint);
         throw error;
       }
       await this.drainAnalysis();
@@ -393,6 +455,13 @@ export class CobbleService extends EventEmitter {
       return this.store.activityByFingerprint(team.id, key);
     } finally {
       this.observing = false;
+      if (
+        !this.closed &&
+        !this.store.setting("paused", false) &&
+        (this.observer?.status.pendingPaths ||
+          this.observer?.status.reconciliationPending)
+      )
+        this.schedule();
     }
   }
   async ingest(text: string, trigger: CaptureTrigger = { kind: "manual" }) {
@@ -776,7 +845,10 @@ export class CobbleService extends EventEmitter {
         if (typeof action.paused !== "boolean")
           throw new Error("Invalid pause state");
         this.store.set("paused", action.paused);
-        if (!action.paused) this.schedule();
+        if (!action.paused) {
+          this.observer?.requestReconcile();
+          this.schedule();
+        }
         break;
       case "send": {
         const team = this.activeTeam();
@@ -1127,6 +1199,7 @@ export class CobbleService extends EventEmitter {
       this.store.set(`baseline:${team!.id}:${this.observer.root}`, [
         ...this.observer.baseline,
       ]);
+      this.observer.requestReconcile();
     }
     this.changed();
   }
@@ -1247,8 +1320,10 @@ export class CobbleService extends EventEmitter {
   private async finishClose() {
     clearTimeout(this.timer);
     clearTimeout(this.analysisTimer);
+    clearInterval(this.reconciliationTimer);
     await Promise.allSettled([
       this.watcher?.close(),
+      this.gitWatcher?.close(),
       this.monitorTask,
       this.integrationTask,
       this.observationTask,
@@ -1257,6 +1332,8 @@ export class CobbleService extends EventEmitter {
     ]);
     // A monitor operation may have created a new watcher while shutdown awaited it.
     await this.watcher?.close();
+    await this.gitWatcher?.close();
+    clearInterval(this.reconciliationTimer);
     this.bridge.close();
     this.network.close();
     await this.network.hosting.settled();

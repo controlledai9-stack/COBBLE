@@ -287,7 +287,22 @@ export interface JoinRequest {
   state: "pending" | "accepted" | "declined";
   createdAt: string;
 }
+export interface MonitoringStatus {
+  lastScan?: {
+    mode: "full" | "incremental";
+    readFiles: number;
+    readBytes: number;
+    dirtyPaths: number;
+    durationMs: number;
+  };
+  lastFullAt: string | null;
+  pendingPaths: number;
+  trackingEvents: boolean;
+  reconciliationPending: boolean;
+  reconcileIntervalMs: number;
+}
 export interface AppState {
+  monitoring?: MonitoringStatus;
   policy?: { pendingManagerChanges: number };
   analysis?: {
     pending: number;

@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 1 | Explicit manager-approved exceptions: current requirement, named authors, exact paths, expiry, revocation and audit trail | Non-managers cannot approve; unrelated work remains restricted; expiry/revocation/plan changes invalidate affected checks and main approvals; real teammate sync works | Complete in source 0.4.5; UI handoff documented |
 | 2 | JS/TS changed-symbol evidence and bounded dependency retrieval | Distinguish public-shape changes, private function changes and formatting; preserve exact before/after references; unsupported/dynamic code stays unknown | Complete in source 0.4.6; bounded syntax evidence, not semantic review |
-| 3 | Incremental dirty-file observation with reconciliation | Startup/branch changes/renames/deletes/dropped events retain changes; warm small edits avoid rereading the full repository; scan/resource budgets measured | Queued |
+| 3 | Incremental dirty-file observation with reconciliation | Startup/branch changes/renames/deletes/dropped events retain changes; warm small edits avoid rereading the full repository; scan/resource budgets measured | Complete in source 0.4.7; timing and coverage limits documented |
 | 4 | Durable adapter event/turn IDs, stronger existing hooks and Gemini CLI adapter | Authenticated, version-tested real turns; duplicate/out-of-order/cancel events are safe; coverage states distinguish saves from turns | Queued |
 | 5 | Labeled corpus and retrieval/judgment evaluation harness | Repository-separated held-out cases; genuine extras, necessary helpers, exceptions, co-ownership and adversarial comments; precision, recall and abstentions reported | Queued |
 | 6 | Optional local semantic reviewer in an isolated, resource-limited process | Select by the corpus; source-backed output validation; timeout/low-memory fallback; no model-derived accusations in initial shadow mode | Queued |
@@ -40,4 +40,6 @@ UI handoff follows the backend action and state contract after tests. Presentati
 
 First delivery evidence: [exception implementation, limits, UI contract and validation](PLAN-EXCEPTIONS-DELIVERY.md). All 152 tests, type checking, production build, desktop smoke and both shutdown scenarios passed.
 
-Second delivery: [changed-function evidence, checkpoint context, limits and timings](CHANGED-SYMBOL-DELIVERY.md). Next implementation is row 3, incremental dirty-file observation with reconciliation. A semantic reviewer and a new installer are not yet delivered.
+Second delivery: [changed-function evidence, checkpoint context, limits and timings](CHANGED-SYMBOL-DELIVERY.md).
+
+Third delivery: [incremental monitoring, recovery rules, UI status and timings](INCREMENTAL-MONITORING-DELIVERY.md). Next implementation is row 4, durable adapter event/turn identity and the Gemini CLI adapter. A semantic reviewer and a new installer are not yet delivered.
