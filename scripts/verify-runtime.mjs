@@ -50,3 +50,27 @@ const gitVersion = (
 console.log(
   `Git runtime verified: ${gitManifest.files.length} files · ${gitVersion}`,
 );
+
+const redist = join(dirname(directory), "redist", "vc_redist.x64.exe");
+if ((await stat(redist)).size < 1_000_000)
+  throw new Error("Included Microsoft runtime is incomplete");
+const signatureScript = `$s = Get-AuthenticodeSignature -LiteralPath '${redist.replaceAll("'", "''")}'; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'Microsoft runtime signature verification failed' }`;
+await promisify(execFile)(
+  "powershell.exe",
+  ["-NoProfile", "-NonInteractive", "-Command", signatureScript],
+  {
+    windowsHide: true,
+    timeout: 30000,
+    env: {
+      ...process.env,
+      PSModulePath: join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "Modules",
+      ),
+    },
+  },
+);
+console.log("Included Microsoft C++ runtime signature verified.");

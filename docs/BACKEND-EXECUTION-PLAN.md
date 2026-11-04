@@ -11,7 +11,7 @@
 | 5 | Labeled corpus and retrieval/judgment evaluation harness | Repository-separated held-out cases; genuine extras, necessary helpers, exceptions, co-ownership and adversarial comments; precision, recall and abstentions reported | Harness and 63-case synthetic bootstrap in 0.4.9; review import/comparison/adjudication tooling in 0.4.11; dataset expansion and actual independent human review pending |
 | 6 | Optional local semantic reviewer in an isolated, resource-limited process | Select by the corpus; source-backed output validation; timeout/low-memory fallback; no model-derived accusations in initial shadow mode | Preflight process/evidence foundation in 0.4.10; model selection, OS containment, independent resource controls and inference pending |
 | 7 | Shadow-mode review, author suggestions and notification calibration | Measure false interruptions and missed issues before widening delivery; existing targeted audiences and cooldowns preserved | Queued |
-| 8 | Self-contained distribution and physical-device validation | Offline clean Windows install; bundled dependencies/model if selected; real editor, microphone, cross-city network and reference-laptop checks | Queued |
+| 8 | Self-contained distribution and physical-device validation | Offline clean Windows install; bundled dependencies/model if selected; real editor, microphone, cross-city network and reference-laptop checks | Zero-model NSIS installer built and packaged checks passed in 0.4.12; clean Windows/provider/physical-device checks pending |
 
 ## Working rules
 
@@ -55,3 +55,5 @@ Sixth foundation validation: type checking/build, all 194 tests on the bounded-c
 Evaluation follow-up: [independent review import, comparison and explicit adjudication workflow](INDEPENDENT-REVIEW-WORKFLOW.md) in 0.4.11. Source-backed annotations and immutable evidence bindings are implemented; the original corpus/seal remain unchanged and no genuine human labels or release readiness are claimed.
 
 Evaluation follow-up validation: all 202 tests (bounded-concurrency full suite), type checking, production build and local prepare/compare commands passed. Review forms remain unconfirmed/blank; actual human review, representative corpus expansion and semantic-runtime gates remain pending.
+
+Technical release 0.4.12: [network lifecycle fixes, absolute request deadlines, packaged verification and clean Windows handoff](TECHNICAL-RELEASE-0.4.12.md). All 208 tests, type checking/build, source and packaged smoke, packaged companion/shutdown, included-runtime verification, offline sample transcription and isolated VS Code extension installation passed. The user left human review pending; model selection/inference/shadow rollout and external-device verification remain explicitly incomplete.

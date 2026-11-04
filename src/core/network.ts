@@ -59,6 +59,7 @@ export class TeamNetwork {
   private interval?: ReturnType<typeof setInterval>;
   private busyGeneration?: number;
   private requests = new Set<ClientRequest>();
+  private requestTimeoutMs = 12_000;
   private relayHost?: RelayHost;
   private connectionAbort = new AbortController();
   private failures = 0;
@@ -88,7 +89,15 @@ export class TeamNetwork {
     private protect: (value: string) => string,
     private unprotect: (value: string) => string,
     measure = capacity,
+    options: { requestTimeoutMs?: number } = {},
   ) {
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 12_000;
+    if (
+      !Number.isSafeInteger(this.requestTimeoutMs) ||
+      this.requestTimeoutMs < 50 ||
+      this.requestTimeoutMs > 12_000
+    )
+      throw new Error("Network deadline may only tighten the 12-second limit");
     this.collaboration = new Collaboration(store);
     this.hosting = new HostCoordinator(
       store,
@@ -2083,117 +2092,147 @@ export class TeamNetwork {
     const generation = this.generation;
     const internet = parseInvite(address);
     const direct = parseDirectInvite(address);
-    const relayAgent = internet
-      ? await tunnelAgent(internet, this.connectionAbort.signal)
-      : direct
-        ? new Agent({
-            ca: direct.certificate,
-            rejectUnauthorized: true,
-            checkServerIdentity: (_hostname, cert) =>
-              cert.fingerprint256?.replaceAll(":", "").toLowerCase() ===
-              direct.pin
-                ? undefined
-                : new Error("Host identity changed"),
-          })
-        : undefined;
-    if (generation !== this.generation) {
-      relayAgent?.destroy();
-      throw new Error("Team connection closed");
-    }
-    return new Promise((resolve, reject) => {
-      const url = new URL(path, internet ? "https://cobble.local" : address);
-      const bytes = body === undefined ? "" : JSON.stringify(body);
-      const req = request(
-        url,
-        {
-          method,
-          rejectUnauthorized: internet || direct ? true : false,
-          agent: relayAgent ?? false,
-          timeout: 4000,
-          headers: {
-            "content-type": "application/json",
-            ...(token ? { authorization: `Bearer ${token}` } : {}),
-          },
-        },
-        (res) => {
-          let size = 0;
-          const chunks: Buffer[] = [];
-          res.on("data", (chunk) => {
-            size += chunk.length;
-            if (size > 4_000_000) {
-              req.destroy(new Error("Sync response too large"));
-              return;
-            }
-            chunks.push(chunk);
-          });
-          res.on("end", () => {
-            try {
-              if (generation !== this.generation)
-                throw new Error("Team connection closed");
-              const value = JSON.parse(Buffer.concat(chunks).toString());
-              if ((res.statusCode ?? 500) >= 400)
-                reject(
-                  Object.assign(
-                    new Error(value.error ?? "Host rejected request"),
-                    { statusCode: res.statusCode },
-                  ),
-                );
-              else resolve(value);
-            } catch (error) {
-              reject(error);
-            }
-          });
-          res.on("error", reject);
-        },
-      );
-      this.requests.add(req);
-      req.once("close", () => this.requests.delete(req));
-      // Never send authorization or body until the TLS peer has matched the pin.
-      req.on("socket", (socket) => {
-        (socket as TLSSocket).once("secureConnect", () => {
-          if (req.destroyed || generation !== this.generation) return;
-          const cert = (socket as TLSSocket).getPeerCertificate();
-          if (
-            cert.fingerprint256?.replaceAll(":", "").toLowerCase() !==
-            fingerprint
-          )
-            req.destroy(
-              new Error(
-                "Host identity changed. Pair again using the new address.",
-              ),
-            );
-          else req.end(bytes);
-        });
-      });
-      req.on("timeout", () =>
-        req.destroy(
+    const controller = new AbortController();
+    const abort = () => controller.abort(new Error("Team connection closed"));
+    const parent = this.connectionAbort.signal;
+    const timeout = setTimeout(
+      () =>
+        controller.abort(
           new Error(
             direct
               ? "The teammate host did not respond. It may be offline, or its router/ISP may block incoming connections. No external fallback is enabled."
-              : "Host did not respond",
+              : "Host request timed out during connection or sync",
           ),
         ),
-      );
-      req.on("error", (error: NodeJS.ErrnoException) => {
-        if (
-          direct &&
-          [
-            "ECONNREFUSED",
-            "EHOSTUNREACH",
-            "ENETUNREACH",
-            "ECONNRESET",
-            "ETIMEDOUT",
-          ].includes(error.code ?? "")
-        )
-          reject(
+      this.requestTimeoutMs,
+    );
+    timeout.unref();
+    parent.addEventListener("abort", abort, { once: true });
+    if (parent.aborted) abort();
+    let relayAgent: Agent | undefined;
+    const operation = (async () => {
+      relayAgent = internet
+        ? await tunnelAgent(internet, controller.signal)
+        : direct
+          ? new Agent({
+              ca: direct.certificate,
+              rejectUnauthorized: true,
+              checkServerIdentity: (_hostname, cert) =>
+                cert.fingerprint256?.replaceAll(":", "").toLowerCase() ===
+                direct.pin
+                  ? undefined
+                  : new Error("Host identity changed"),
+            })
+          : undefined;
+      if (generation !== this.generation) {
+        relayAgent?.destroy();
+        throw new Error("Team connection closed");
+      }
+      return new Promise((resolve, reject) => {
+        const url = new URL(path, internet ? "https://cobble.local" : address);
+        const bytes = body === undefined ? "" : JSON.stringify(body);
+        const req = request(
+          url,
+          {
+            method,
+            rejectUnauthorized: internet || direct ? true : false,
+            agent: relayAgent ?? false,
+            signal: controller.signal,
+            timeout: 4000,
+            headers: {
+              "content-type": "application/json",
+              ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
+          },
+          (res) => {
+            let size = 0;
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk) => {
+              size += chunk.length;
+              if (size > 4_000_000) {
+                req.destroy(new Error("Sync response too large"));
+                return;
+              }
+              chunks.push(chunk);
+            });
+            res.on("end", () => {
+              try {
+                if (generation !== this.generation)
+                  throw new Error("Team connection closed");
+                const value = JSON.parse(Buffer.concat(chunks).toString());
+                if ((res.statusCode ?? 500) >= 400)
+                  reject(
+                    Object.assign(
+                      new Error(value.error ?? "Host rejected request"),
+                      { statusCode: res.statusCode },
+                    ),
+                  );
+                else resolve(value);
+              } catch (error) {
+                reject(error);
+              }
+            });
+            res.on("error", reject);
+          },
+        );
+        this.requests.add(req);
+        req.once("close", () => this.requests.delete(req));
+        // Never send authorization or body until the TLS peer has matched the pin.
+        req.on("socket", (socket) => {
+          (socket as TLSSocket).once("secureConnect", () => {
+            if (req.destroyed || generation !== this.generation) return;
+            const cert = (socket as TLSSocket).getPeerCertificate();
+            if (
+              cert.fingerprint256?.replaceAll(":", "").toLowerCase() !==
+              fingerprint
+            )
+              req.destroy(
+                new Error(
+                  "Host identity changed. Pair again using the new address.",
+                ),
+              );
+            else req.end(bytes);
+          });
+        });
+        req.on("timeout", () =>
+          req.destroy(
             new Error(
-              "The teammate host is unreachable or offline. If hosting moved, ask a connected teammate for the current full invitation. Its router/ISP may block incoming connections. No external fallback is enabled.",
+              direct
+                ? "The teammate host did not respond. It may be offline, or its router/ISP may block incoming connections. No external fallback is enabled."
+                : "Host did not respond",
             ),
-          );
-        else reject(error);
+          ),
+        );
+        req.on("error", (error: NodeJS.ErrnoException) => {
+          if (
+            direct &&
+            [
+              "ECONNREFUSED",
+              "EHOSTUNREACH",
+              "ENETUNREACH",
+              "ECONNRESET",
+              "ETIMEDOUT",
+            ].includes(error.code ?? "")
+          )
+            reject(
+              new Error(
+                "The teammate host is unreachable or offline. If hosting moved, ask a connected teammate for the current full invitation. Its router/ISP may block incoming connections. No external fallback is enabled.",
+              ),
+            );
+          else reject(error);
+        });
       });
-    })
-      .finally(() => relayAgent?.destroy())
+    })();
+    return operation
+      .catch((error) => {
+        if (controller.signal.aborted) throw controller.signal.reason;
+        throw error;
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        parent.removeEventListener("abort", abort);
+        relayAgent?.destroy();
+      })
       .then(async (value: any) => {
         if (!value || typeof value !== "object")
           throw new Error("Invalid host response");

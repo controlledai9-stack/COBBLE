@@ -220,7 +220,25 @@ export async function runSmoke(
     join(workspace, "legacy", "old.ts"),
     "export const changed = true;",
   );
-  await service.observe();
+  const observationStart = Date.now();
+  while (
+    !service.observer?.status.trackingEvents ||
+    !service.observer.status.pendingPaths
+  ) {
+    if (Date.now() - observationStart > 8000)
+      throw new Error("Saved-file watcher did not settle for review preflight");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const reviewCheckpoint = await service.observe();
+  assert.ok(reviewCheckpoint);
+  const reviewPreflight = await service.preflightReview(reviewCheckpoint.id);
+  assert.equal(
+    reviewPreflight.reason,
+    "model_not_configured",
+    JSON.stringify(reviewPreflight),
+  );
+  assert.equal(reviewPreflight.semanticEnabled, false);
+  assert.equal(service.state().analysis!.semanticReview, false);
   assert.equal(service.state().activities[0].alert, true);
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[0].click()`,
@@ -497,7 +515,12 @@ export async function runSmoke(
     );
     await writeFile(
       join(root, "packaged-smoke.json"),
-      JSON.stringify({ runId: process.env.COBBLE_SMOKE_ID, success: true }),
+      JSON.stringify({
+        runId: process.env.COBBLE_SMOKE_ID,
+        success: true,
+        version: app.getVersion(),
+        reviewWorker: reviewPreflight.reason,
+      }),
     );
   }
   console.log(

@@ -27,6 +27,9 @@ export class InternetRelay {
     perMessageDeflate: false,
   });
   private rooms = new Map<string, Room>();
+  private sockets = new Set<import("node:stream").Duplex>();
+  private closeTask?: Promise<void>;
+  private closing = false;
   private rates = new Map<string, { at: number; count: number }>();
   private alive = new WeakSet<WebSocket>();
   private heartbeat: ReturnType<typeof setInterval>;
@@ -52,9 +55,15 @@ export class InternetRelay {
     socket: import("node:stream").Duplex,
     head: Buffer,
   ) => {
+    if (this.closing) return socket.destroy();
+    // HTTP no longer owns upgraded sockets, including rejected upgrades.
+    this.sockets.add(socket);
+    socket.once("close", () => this.sockets.delete(socket));
+    socket.on("error", () => socket.destroy());
     const reject = (status: number) => {
       socket.end(
         `HTTP/1.1 ${status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+        () => socket.destroy(),
       );
     };
     if (req.headers.origin || req.method !== "GET") return reject(403);
@@ -142,11 +151,27 @@ export class InternetRelay {
       this.send(room.host, frame(id, CLOSE));
     });
   }
-  async close() {
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true;
     clearInterval(this.heartbeat);
     this.server.off("upgrade", this.upgrade);
     for (const ws of this.wss.clients) ws.terminate();
+    const socketsClosed = [...this.sockets].map(
+      (socket) =>
+        new Promise<void>((resolve) => {
+          if (socket.closed) resolve();
+          else socket.once("close", () => resolve());
+          socket.destroy();
+        }),
+    );
     this.rooms.clear();
-    await new Promise<void>((resolve) => this.wss.close(() => resolve()));
+    this.closeTask = Promise.all([
+      ...socketsClosed,
+      new Promise<void>((resolve) => this.wss.close(() => resolve())),
+    ]).then(() => {
+      this.sockets.clear();
+    });
+    return this.closeTask;
   }
 }

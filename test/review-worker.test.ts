@@ -29,6 +29,14 @@ import {
   type ReviewPacket,
 } from "../src/core/review/protocol";
 let directory: string, stock: string;
+async function waitFor(check: () => boolean, label: string) {
+  const start = Date.now();
+  while (!check()) {
+    if (Date.now() - start > 8000) throw new Error(`Waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 before(async () => {
   directory = await realpath(
     await mkdtemp(join(tmpdir(), "cobble-review-tests-")),
@@ -457,7 +465,16 @@ test("backend preflight is explicit and local; activities and notifications reta
     service.store.saveProfile("Author", "");
     service.store.createTeam("Review app", "Build `app.ts`", root);
     await service.start();
+    await waitFor(
+      () => !!service.observer?.status.trackingEvents,
+      "file watcher readiness",
+    );
+    await service.observe();
     await writeFile(join(root, "app.ts"), "export const reviewAppValue=42;");
+    await waitFor(
+      () => !!service.observer?.status.pendingPaths,
+      "saved-file notification",
+    );
     const activity = await service.observe();
     assert.ok(activity);
     const activities = JSON.stringify(service.state().activities),
@@ -474,6 +491,37 @@ test("backend preflight is explicit and local; activities and notifications reta
       service.preflightReview(activity.id),
       /current analyzed evidence/,
     );
+  } finally {
+    await service.close();
+  }
+});
+
+test("real file changes cancel an active backend review after watcher readiness", async () => {
+  const root = join(directory, "changing-project");
+  await mkdir(root);
+  const service = new CobbleService(":memory:", undefined, {
+    reviewWorker: { file: await fake("setInterval(()=>{},1000);") },
+  });
+  try {
+    service.store.saveProfile("Author", "");
+    service.store.createTeam("Changing review", "Build `app.ts`", root);
+    await service.start();
+    await waitFor(
+      () => !!service.observer?.status.trackingEvents,
+      "watcher readiness",
+    );
+    await service.observe();
+    await writeFile(join(root, "app.ts"), "export const value=1;");
+    await waitFor(() => !!service.observer?.status.pendingPaths, "first save");
+    const activity = await service.observe();
+    assert.ok(activity);
+    const pending = service.preflightReview(activity.id);
+    await waitFor(() => !!service.reviewWorker?.state.busy, "active review");
+    await writeFile(join(root, "app.ts"), "export const value=2;");
+    const result = await pending;
+    assert.equal(result.reason, "stale");
+    assert.equal(result.semanticEnabled, false);
+    assert.equal(service.reviewWorker!.state.busy, false);
   } finally {
     await service.close();
   }

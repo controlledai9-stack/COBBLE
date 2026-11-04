@@ -48,3 +48,5 @@ Validation on this machine: type checking and production build passed; all 194 t
 5. Validate the packaged runtime on a clean offline Windows installation and reference laptops, alongside the outstanding real-provider and multi-device checks.
 
 Vyom has no new UI dependency for this foundation. Continue using the existing analysis coverage display; do not label preflight as AI analysis or add review alerts. UI design should follow a later measured shadow-review contract.
+
+Follow-up in source 0.4.12: [actual packaged preflight execution and lifecycle validation now pass](TECHNICAL-RELEASE-0.4.12.md), including a version-bound packaged smoke result. A real file edit during review cancels the worker. Clean Windows verification, model selection/native inference/OS containment and human-evaluated rollout remain open.
