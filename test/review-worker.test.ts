@@ -1,4 +1,6 @@
 import { test, before, after } from "node:test";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import {
   mkdtemp,
@@ -28,7 +30,7 @@ import {
   REVIEW_LIMITS,
   type ReviewPacket,
 } from "../src/core/review/protocol";
-let directory: string, stock: string;
+let directory: string, stock: string, guard: string;
 async function waitFor(check: () => boolean, label: string) {
   const start = Date.now();
   while (!check()) {
@@ -39,7 +41,7 @@ async function waitFor(check: () => boolean, label: string) {
 
 before(async () => {
   directory = await realpath(
-    await mkdtemp(join(tmpdir(), "cobble-review-tests-")),
+    await mkdtemp(join(tmpdir(), "cobble review tests-")),
   );
   stock = join(directory, "review-worker.cjs");
   await build({
@@ -50,6 +52,14 @@ before(async () => {
     outfile: stock,
   });
   await seal(stock);
+  if (process.platform === "win32") {
+    await promisify(execFile)(
+      process.execPath,
+      [resolve("scripts/build-review-guard.mjs"), directory],
+      { windowsHide: true, timeout: 30000 },
+    );
+    guard = join(directory, "review-guard.exe");
+  }
 });
 after(async () => {
   await rm(directory, { recursive: true, force: true });
@@ -526,3 +536,337 @@ test("real file changes cancel an active backend review after watcher readiness"
     await service.close();
   }
 });
+
+const windowsOnly = { skip: process.platform !== "win32", timeout: 20000 };
+async function plainWorker(code: string) {
+  const file = join(directory, `native-fixture-${randomUUID()}.cjs`);
+  await writeFile(file, code);
+  return file;
+}
+function nativeArguments(
+  worker: string,
+  report: string,
+  options: {
+    memory?: number;
+    cpu?: number;
+    wall?: number;
+    executable?: string;
+    parent?: number;
+  } = {},
+) {
+  return [
+    "--executable",
+    options.executable ?? process.execPath,
+    "--worker",
+    worker,
+    "--parent",
+    String(options.parent ?? process.pid),
+    "--commit-mib",
+    String(options.memory ?? 256),
+    "--cpu-ms",
+    String(options.cpu ?? 5000),
+    "--heap-mib",
+    "128",
+    "--wall-ms",
+    String(options.wall ?? 8000),
+    "--report",
+    report,
+  ];
+}
+async function runNative(
+  worker: string,
+  options: Parameters<typeof nativeArguments>[2] = {},
+) {
+  const report = join(directory, `usage-${randomUUID()}.json`);
+  const child = spawn(guard, nativeArguments(worker, report, options), {
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  });
+  let stdout = "",
+    stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+    if (stdout.length > 64000) child.kill();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+    if (stderr.length > 64000) child.kill();
+  });
+  child.stdin.on("error", () => {});
+  child.stdin.end();
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+  const usage = JSON.parse(await readFile(report, "utf8"));
+  return { code, stdout, stderr, usage };
+}
+test(
+  "Windows guarded preflight verifies OS accounting for Node and Electron without enabling semantics",
+  windowsOnly,
+  async () => {
+    const f = fixture();
+    try {
+      for (const executable of [process.execPath, String(electron)]) {
+        const supervisor = new ReviewSupervisor(
+          stock,
+          executable,
+          { cooldownMs: 0 },
+          guard,
+        );
+        try {
+          const result = await supervisor.run(f.packet);
+          assert.equal(
+            result.reason,
+            "model_not_configured",
+            JSON.stringify(result),
+          );
+          assert.equal(result.resourceGuard, "windows-job");
+          assert.equal(result.osUsage!.inJob, true);
+          assert.equal(result.osUsage!.processLimit, 1);
+          assert.equal(result.osUsage!.commitLimitBytes, 256 * 1024 * 1024);
+          assert.ok(result.osUsage!.peakCommitBytes > 0);
+          assert.ok(
+            result.osUsage!.cpuRate > 0 && result.osUsage!.cpuRate <= 10000,
+          );
+          assert.equal(result.semanticEnabled, false);
+        } finally {
+          await supervisor.close();
+        }
+      }
+    } finally {
+      f.store.close();
+    }
+  },
+);
+test(
+  "Windows job enforces commit limits independently of a worker's own reports",
+  windowsOnly,
+  async () => {
+    const worker = await plainWorker(
+      "const b=Buffer.alloc(128*1024*1024,1);process.stdout.write(String(b[0]));",
+    );
+    const allowed = await runNative(worker, { memory: 256 });
+    assert.equal(allowed.code, 0, allowed.stderr);
+    assert.equal(allowed.stdout, "1");
+    assert.ok(allowed.usage.peakCommitBytes > 96 * 1024 * 1024);
+    const denied = await runNative(worker, { memory: 96 });
+    assert.notEqual(denied.code, 0, denied.stderr);
+    assert.equal(denied.usage.commitLimitBytes, 96 * 1024 * 1024);
+    assert.ok(denied.usage.peakCommitBytes <= 96 * 1024 * 1024);
+    assert.equal(denied.usage.inJob, true);
+  },
+);
+test(
+  "Windows job terminates CPU-bound work and its independent wall clock stops idle work",
+  windowsOnly,
+  async () => {
+    const busy = await plainWorker("while(true){Math.sqrt(Math.random())}");
+    const cpu = await runNative(busy, { cpu: 600, wall: 8000 });
+    assert.notEqual(cpu.code, 0);
+    assert.ok(cpu.usage.userCpuMs >= 500, JSON.stringify(cpu.usage));
+    assert.ok(["child_exit", "cpu_limit"].includes(cpu.usage.cause));
+    assert.ok(
+      cpu.usage.userCpuMs + cpu.usage.kernelCpuMs < 2000,
+      JSON.stringify(cpu.usage),
+    );
+    const idle = await plainWorker("setInterval(()=>{},1000);");
+    const wall = await runNative(idle, { wall: 300 });
+    assert.equal(wall.code, 124);
+    assert.equal(wall.usage.cause, "wall_timeout");
+  },
+);
+test(
+  "Windows guardian rejects invalid bounds and missing/tampered guard artifacts never fall back",
+  windowsOnly,
+  async () => {
+    const f = fixture();
+    const missing = new ReviewSupervisor(
+      stock,
+      process.execPath,
+      {},
+      join(directory, "missing.exe"),
+    );
+    try {
+      assert.equal((await missing.run(f.packet)).reason, "guard_integrity");
+    } finally {
+      await missing.close();
+    }
+    const altered = join(directory, "changed-guard.exe");
+    await writeFile(altered, await readFile(guard));
+    await writeFile(
+      altered + ".manifest.json",
+      await readFile(guard + ".manifest.json"),
+    );
+    await writeFile(altered, "modified");
+    const supervisor = new ReviewSupervisor(
+      stock,
+      process.execPath,
+      {},
+      altered,
+    );
+    try {
+      assert.equal((await supervisor.run(f.packet)).reason, "guard_integrity");
+    } finally {
+      await supervisor.close();
+      f.store.close();
+    }
+    const file = await plainWorker("process.stdout.write('must not run');");
+    const args = nativeArguments(file, join(directory, "invalid-report.json"), {
+      memory: 257,
+    });
+    const result = await promisify(execFile)(guard, args, {
+      windowsHide: true,
+    }).then(
+      () => null,
+      (e) => e,
+    );
+    assert.equal(result.code, 125);
+    assert.equal(result.stdout, "");
+  },
+);
+test(
+  "killing the Windows guardian cannot leave its active worker behind",
+  windowsOnly,
+  async () => {
+    const worker = await plainWorker(
+      "console.log(JSON.stringify({pid:process.pid}));setInterval(()=>{},1000);",
+    );
+    const child = spawn(
+      guard,
+      nativeArguments(worker, join(directory, "killed-report.json")),
+      {
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      },
+    );
+    child.stdin.on("error", () => {});
+    child.stdin.end();
+    child.stderr.resume();
+    let workerPid = 0;
+    try {
+      let line = "";
+      child.stdout.on("data", (chunk) => {
+        line += chunk.toString();
+        if (line.includes("\n"))
+          workerPid = JSON.parse(line.split("\n")[0]).pid;
+      });
+      await waitFor(() => workerPid > 0, "native worker PID");
+      const exited = new Promise<void>((r) => child.once("exit", () => r()));
+      child.kill();
+      await exited;
+      await waitFor(() => {
+        try {
+          process.kill(workerPid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      }, "kernel job cleanup");
+    } finally {
+      child.kill();
+    }
+  },
+);
+test(
+  "Windows guardian observes parent death and kills the worker without a graceful shutdown",
+  windowsOnly,
+  async () => {
+    const worker = await plainWorker(
+      "console.log(JSON.stringify({workerPid:process.pid}));setInterval(()=>{},1000);",
+    );
+    const report = join(directory, `parent-death-${randomUUID()}.json`);
+    const parentScript = await plainWorker(
+      `const {spawn}=require('node:child_process');const args=${JSON.stringify(nativeArguments(worker, report))};args[5]=String(process.pid);const child=spawn(${JSON.stringify(guard)},args,{windowsHide:true,detached:true,stdio:['ignore',1,2],env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});console.log(JSON.stringify({guardPid:child.pid}));setInterval(()=>{},1000);`,
+    );
+    const parent = spawn(process.execPath, [parentScript], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    parent.stderr.resume();
+    let workerPid = 0,
+      guardPid = 0,
+      buffer = "";
+    parent.stdout.on("data", (chunk) => {
+      buffer += chunk.toString();
+      let end: number;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        const value = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        workerPid = value.workerPid ?? workerPid;
+        guardPid = value.guardPid ?? guardPid;
+      }
+    });
+    try {
+      await waitFor(
+        () => workerPid > 0 && guardPid > 0,
+        "parent's guarded worker",
+      );
+      const exited = new Promise<void>((r) => parent.once("exit", () => r()));
+      parent.kill();
+      await exited;
+      let usage: any;
+      const started = Date.now();
+      while (!usage) {
+        try {
+          usage = JSON.parse(await readFile(report, "utf8"));
+        } catch {
+          if (Date.now() - started > 5000)
+            throw new Error("Missing parent-death report");
+          await new Promise((r) => setTimeout(r, 20));
+        }
+      }
+      assert.equal(usage.cause, "parent_exit");
+      assert.equal(usage.exitCode, 125);
+      assert.equal(usage.pid, workerPid);
+      await waitFor(() => {
+        try {
+          process.kill(workerPid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      }, "worker exit after parent crash");
+    } finally {
+      parent.kill();
+      if (guardPid)
+        try {
+          process.kill(guardPid);
+        } catch {}
+    }
+  },
+);
+
+test(
+  "Windows job denies native descendant creation independently of Node permissions",
+  windowsOnly,
+  async () => {
+    const source = join(directory, "native-spawn-fixture.cs"),
+      exe = join(directory, "native-spawn-fixture.exe");
+    await writeFile(
+      source,
+      `using System;using System.Diagnostics;using System.ComponentModel;class Fixture{static int Main(string[] args){if(args.Length==1&&args[0]=="child")return 0;try{var info=new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName,"child");info.UseShellExecute=false;info.CreateNoWindow=true;using(var child=Process.Start(info)){child.WaitForExit();Console.Write("spawned");return 9;}}catch(Win32Exception){Console.Write("blocked");return 0;}}}`,
+    );
+    const compiler = join(
+      process.env.SystemRoot ?? "C:\\Windows",
+      "Microsoft.NET",
+      "Framework64",
+      "v4.0.30319",
+      "csc.exe",
+    );
+    await promisify(execFile)(
+      compiler,
+      ["/nologo", "/platform:x64", "/target:exe", `/out:${exe}`, source],
+      { windowsHide: true, timeout: 30000 },
+    );
+    const result = await runNative(
+      await plainWorker("// unused trusted fixture"),
+      { executable: exe },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "blocked");
+    assert.equal(result.usage.processLimit, 1);
+  },
+);

@@ -93,6 +93,12 @@ else {
             file: app.isPackaged
               ? join(process.resourcesPath, "review", "review-worker.cjs")
               : join(app.getAppPath(), "dist", "review-worker.cjs"),
+            guard:
+              process.platform === "win32"
+                ? app.isPackaged
+                  ? join(process.resourcesPath, "review", "review-guard.exe")
+                  : join(app.getAppPath(), "dist", "review-guard.exe")
+                : undefined,
           },
         },
       );

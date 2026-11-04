@@ -46,6 +46,11 @@ $workerManifest = Get-Content -LiteralPath ($worker + '.manifest.json') -Raw | C
 if ($workerManifest.mode -ne 'preflight-only' -or $workerManifest.protocolVersion -ne 1 -or (Get-FileHash -LiteralPath $worker -Algorithm SHA256).Hash.ToLowerInvariant() -ne $workerManifest.sha256) {
   throw 'Review worker integrity failed.'
 }
+if ([version]$ExpectedVersion -ge [version]'0.4.13') {
+  $guard = Join-Path $resources 'review\review-guard.exe'
+  $guardManifest = Get-Content -LiteralPath ($guard + '.manifest.json') -Raw | ConvertFrom-Json
+  if ($guardManifest.version -ne 1 -or $guardManifest.kind -ne 'windows-job-preflight' -or (Get-FileHash -LiteralPath $guard -Algorithm SHA256).Hash.ToLowerInvariant() -ne $guardManifest.sha256) { throw 'Native resource supervisor integrity failed.' }
+}
 $redist = Join-Path $resources 'redist\vc_redist.x64.exe'
 $signature = Get-AuthenticodeSignature -LiteralPath $redist
 if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'Included Microsoft runtime signature is invalid.' }
@@ -64,6 +69,7 @@ try {
   if ($app.ExitCode -ne 0) { throw "Installed app test failed: $($app.ExitCode). Inspect the logs." }
   $smoke = Get-Content -LiteralPath (Join-Path $runDir '.cobble\packaged-smoke.json') -Raw | ConvertFrom-Json
   if (-not $smoke.success -or $smoke.runId -ne $runId -or $smoke.version -ne $ExpectedVersion -or $smoke.reviewWorker -ne 'model_not_configured') { throw 'Installed app test evidence is missing or does not match this run/version.' }
+  if ([version]$ExpectedVersion -ge [version]'0.4.13' -and $smoke.reviewResourceGuard -ne 'windows-job') { throw 'Installed worker did not verify Windows resource enforcement.' }
   $result = [ordered]@{ version = $ExpectedVersion; runId = $runId; installerSHA256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant(); success = $true; environment = 'user-supplied clean Windows test machine'; networkIsolationIndependentlyVerified = $false; humanReviewCompleted = $false; semanticReviewEnabled = $false; installedAt = $installDir; checkedAt = [DateTime]::UtcNow.ToString('o') }
   $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'clean-install-result.json') -Encoding UTF8
   Write-Output "COBBLE_CLEAN_INSTALL_OK: $ExpectedVersion. Evidence: $output"

@@ -304,6 +304,7 @@ export interface MonitoringStatus {
 export interface AppState {
   review?: {
     mode: "not-configured" | "preflight-only";
+    resourceControl?: "windows-job-configured" | "process-only";
     semanticEnabled: false;
     busy: boolean;
   };

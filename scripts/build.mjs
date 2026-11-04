@@ -2,6 +2,8 @@ import { build } from "esbuild";
 import { build as viteBuild } from "vite";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { buildReviewGuard } from "./build-review-guard.mjs";
+await buildReviewGuard();
 await build({
   entryPoints: ["src/core/review/worker.ts"],
   bundle: true,

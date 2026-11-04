@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readFile, realpath, stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile, realpath, stat, mkdtemp, rm } from "node:fs/promises";
+import { dirname, resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { StringDecoder } from "node:string_decoder";
@@ -14,6 +14,13 @@ import {
   type ReviewResponse,
 } from "./protocol";
 
+import {
+  verifyGuard,
+  readOsUsage,
+  guardArguments,
+  type OsUsage,
+} from "./windows-guard";
+
 export interface ReviewOutcome {
   status: "uncertain" | "shadow_candidate";
   reason: string;
@@ -22,6 +29,8 @@ export interface ReviewOutcome {
   peakReportedRss: number;
   reportedCpuMs: number;
   semanticEnabled: false;
+  resourceGuard: "windows-job" | "process-only" | "unverified";
+  osUsage?: OsUsage;
 }
 type Controls = {
   signal?: AbortSignal;
@@ -41,6 +50,7 @@ export class ReviewSupervisor {
     private workerFile: string,
     private executable = process.execPath,
     limits: Partial<Record<keyof typeof REVIEW_LIMITS, number>> = {},
+    private guardFile?: string,
   ) {
     if (
       Object.keys(limits).some(
@@ -78,6 +88,9 @@ export class ReviewSupervisor {
     return {
       mode: "preflight-only" as const,
       semanticEnabled: false as const,
+      resourceControl: this.guardFile
+        ? ("windows-job-configured" as const)
+        : ("process-only" as const),
       busy: this.reservation,
       closed: this.closed,
       limits: { ...this.limits },
@@ -96,6 +109,7 @@ export class ReviewSupervisor {
       peakReportedRss: 0,
       reportedCpuMs: 0,
       semanticEnabled: false,
+      resourceGuard: this.guardFile ? "unverified" : "process-only",
     };
   }
   async run(
@@ -108,6 +122,8 @@ export class ReviewSupervisor {
       Buffer.byteLength(JSON.stringify(packet)) > this.limits.inputBytes
     )
       return this.fallback(packet, "invalid_input", start);
+    if (!this.limits.cpuMs || !this.limits.rssBytes)
+      return this.fallback(packet, "resource_deferred", start);
     // Detach caller-owned evidence before the first asynchronous boundary.
     packet = structuredClone(packet);
     const current = () => {
@@ -180,7 +196,32 @@ export class ReviewSupervisor {
               : "resource_deferred",
         start,
       );
-    const key = artifactHash + ":" + packet.packetDigest;
+    let guard: Awaited<ReturnType<typeof verifyGuard>> | undefined;
+    if (this.guardFile) {
+      try {
+        guard = await verifyGuard(this.guardFile);
+      } catch {
+        return this.fallback(packet, "guard_integrity", start);
+      }
+    }
+    if (this.closed || controls.signal?.aborted || !current() || !permitted())
+      return this.fallback(
+        packet,
+        this.closed
+          ? "closed"
+          : controls.signal?.aborted
+            ? "cancelled"
+            : !current()
+              ? "stale"
+              : "resource_deferred",
+        start,
+      );
+    const key =
+      artifactHash +
+      ":" +
+      (guard?.hash ?? "process-only") +
+      ":" +
+      packet.packetDigest;
     const cached = this.cache.get(key);
     if (cached && performance.now() - cached.at < 30_000)
       return {
@@ -193,6 +234,33 @@ export class ReviewSupervisor {
       };
     if (performance.now() - this.lastStart < this.limits.cooldownMs)
       return this.fallback(packet, "rate_limited", start);
+    let reportDirectory: string | undefined;
+    try {
+      if (guard)
+        reportDirectory = await mkdtemp(join(tmpdir(), "cobble-review-guard-"));
+    } catch {
+      return this.fallback(packet, "guard_unavailable", start);
+    }
+    const report = reportDirectory
+      ? join(reportDirectory, "usage.json")
+      : undefined;
+    if (this.closed || controls.signal?.aborted || !current() || !permitted()) {
+      if (reportDirectory)
+        await rm(reportDirectory, { recursive: true, force: true }).catch(
+          () => {},
+        );
+      return this.fallback(
+        packet,
+        this.closed
+          ? "closed"
+          : controls.signal?.aborted
+            ? "cancelled"
+            : !current()
+              ? "stale"
+              : "resource_deferred",
+        start,
+      );
+    }
     this.lastStart = performance.now();
     return new Promise<ReviewOutcome>((resolveResult) => {
       let child: ChildProcessWithoutNullStreams;
@@ -207,16 +275,18 @@ export class ReviewSupervisor {
         for (const name of ["SystemRoot", "WINDIR"])
           if (process.env[name]) env[name] = process.env[name];
         child = spawn(
-          this.executable,
-          [
-            "--permission",
-            `--allow-fs-read=${file}`,
-            `--max-old-space-size=${this.limits.heapMiB}`,
-            "--max-semi-space-size=8",
-            "--v8-pool-size=1",
-            "--disallow-code-generation-from-strings",
-            file,
-          ],
+          guard?.file ?? this.executable,
+          guard
+            ? guardArguments(this.executable, file, report!, this.limits)
+            : [
+                "--permission",
+                `--allow-fs-read=${file}`,
+                `--max-old-space-size=${this.limits.heapMiB}`,
+                "--max-semi-space-size=8",
+                "--v8-pool-size=1",
+                "--disallow-code-generation-from-strings",
+                file,
+              ],
           {
             cwd: dirname(file),
             env,
@@ -324,7 +394,7 @@ export class ReviewSupervisor {
         }
       });
       child.once("error", () => stop("spawn_failed"));
-      child.once("close", (code) => {
+      child.once("close", async (code) => {
         buffer += decoder.end();
         clearTimeout(deadline);
         clearInterval(check);
@@ -333,19 +403,37 @@ export class ReviewSupervisor {
           this.active = undefined;
           this.stop = undefined;
         }
+        const osUsage = report ? await readOsUsage(report, code) : null;
         let reason =
           stopped ??
-          (code !== 0
-            ? "worker_crashed"
-            : buffer.trim()
-              ? "invalid_output"
-              : !ready || !result
-                ? "incomplete_output"
-                : !current()
-                  ? "stale"
-                  : !permitted()
-                    ? "resource_deferred"
-                    : undefined);
+          (this.closed
+            ? "closed"
+            : controls.signal?.aborted
+              ? "cancelled"
+              : guard && code === 123
+                ? "os_cpu_limit"
+                : guard && code === 125
+                  ? "guard_unavailable"
+                  : guard && code === 124
+                    ? "guard_timeout"
+                    : code !== 0
+                      ? "worker_crashed"
+                      : buffer.trim()
+                        ? "invalid_output"
+                        : !ready || !result
+                          ? "incomplete_output"
+                          : !current()
+                            ? "stale"
+                            : !permitted()
+                              ? "resource_deferred"
+                              : undefined);
+        if (!reason && guard && !osUsage) reason = "guard_unverified";
+        if (
+          !reason &&
+          osUsage &&
+          osUsage.userCpuMs + osUsage.kernelCpuMs > this.limits.cpuMs
+        )
+          reason = "os_cpu_limit";
         if (
           !reason &&
           result?.status === "candidate" &&
@@ -361,6 +449,9 @@ export class ReviewSupervisor {
             ...this.fallback(packet, reason ?? "incomplete_output", start),
             peakReportedRss: peak,
             reportedCpuMs: cpu,
+            ...(osUsage
+              ? { resourceGuard: "windows-job" as const, osUsage }
+              : {}),
           });
           return;
         }
@@ -373,6 +464,8 @@ export class ReviewSupervisor {
           peakReportedRss: peak,
           reportedCpuMs: cpu,
           semanticEnabled: false,
+          resourceGuard: osUsage ? "windows-job" : "process-only",
+          ...(osUsage ? { osUsage } : {}),
         };
         if (outcome.status === "shadow_candidate") {
           this.cache.set(key, {
@@ -386,6 +479,11 @@ export class ReviewSupervisor {
       });
       child.stdin.end(JSON.stringify(packet));
       if (controls.signal?.aborted) abort();
+    }).finally(async () => {
+      if (reportDirectory)
+        await rm(reportDirectory, { recursive: true, force: true }).catch(
+          () => {},
+        );
     });
   }
   async close() {

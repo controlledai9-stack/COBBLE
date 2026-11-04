@@ -85,7 +85,7 @@ export class CobbleService extends EventEmitter {
     } = { protect: (s) => s, unprotect: (s) => s },
     options: {
       measureCapacity?: typeof capacity;
-      reviewWorker?: { file: string; executable?: string };
+      reviewWorker?: { file: string; executable?: string; guard?: string };
     } = {},
   ) {
     super();
@@ -95,6 +95,8 @@ export class CobbleService extends EventEmitter {
       this.reviewWorker = new ReviewSupervisor(
         options.reviewWorker.file,
         options.reviewWorker.executable,
+        {},
+        options.reviewWorker.guard,
       );
     this.agentEvents = new AgentEvents(this.store);
     this.collaboration = new Collaboration(this.store);
@@ -273,6 +275,8 @@ export class CobbleService extends EventEmitter {
         mode: this.reviewWorker ? "preflight-only" : "not-configured",
         semanticEnabled: false,
         busy: this.reviewWorker?.state.busy ?? false,
+        resourceControl:
+          this.reviewWorker?.state.resourceControl ?? "process-only",
       },
       agentTracking: team ? this.agentEvents.summary(team.id) : undefined,
       profile,
@@ -1526,31 +1530,45 @@ export class CobbleService extends EventEmitter {
       !this.network.hosting.frozen &&
       !this.integrating &&
       !this.store.setting(`restored-offline:${team.id}`, false);
+    let invalidation: string | undefined;
+    const invalid = (why: string) => {
+      invalidation ??= why;
+      return false;
+    };
     const current = () => {
-      if (
-        !available() ||
-        this.observer !== observer ||
-        observer.baseline !== baseline ||
-        observer.status.pendingPaths > 0 ||
-        observer.status.reconciliationPending
-      )
-        return false;
+      if (!available()) return invalid("workspace_unavailable");
+      if (this.observer !== observer) return invalid("workspace_replaced");
+      if (observer.baseline !== baseline)
+        return invalid("source_checkpoint_replaced");
+      if (observer.status.pendingPaths > 0)
+        return invalid("pending_saved_files");
+      if (observer.status.reconciliationPending)
+        return invalid("pending_reconciliation");
       const selected = this.activeTeam();
-      return (
-        selected?.id === team.id &&
-        selected.workspace === team.workspace &&
+      if (selected?.id !== team.id || selected.workspace !== team.workspace)
+        return invalid("workspace_selection_changed");
+      if (
         analysisContext(
           selected,
           job.accepted,
           this.store.setting(`membershipEpoch:${team.id}`, 0),
-        ) === job.contextHash
-      );
+        ) !== job.contextHash
+      )
+        return invalid("agreement_changed");
+      return true;
     };
-    return this.reviewWorker.run(packet, {
+    const result = await this.reviewWorker.run(packet, {
       isCurrent: current,
       canRun: available,
     });
+    if (result.reason === "stale" && !this.closed)
+      this.emit(
+        "diagnostic",
+        `Review preflight invalidated: ${invalidation ?? "unknown_revision_change"}`,
+      );
+    return result;
   }
+
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.closed = true;

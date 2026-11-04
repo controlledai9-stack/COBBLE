@@ -2,7 +2,7 @@ import type { BrowserWindow } from "electron";
 import { app, BrowserWindow as ElectronWindow } from "electron";
 import type { CobbleService } from "../core/service";
 import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
@@ -215,20 +215,38 @@ export async function runSmoke(
   );
   await wait('document.querySelectorAll(".bubble").length === 2');
   assert.equal(service.state().messages.length, 2);
-  await mkdir(join(workspace, "legacy"));
-  await writeFile(
-    join(workspace, "legacy", "old.ts"),
-    "export const changed = true;",
-  );
   const observationStart = Date.now();
-  while (
-    !service.observer?.status.trackingEvents ||
-    !service.observer.status.pendingPaths
-  ) {
+  while (!service.observer?.status.trackingEvents) {
     if (Date.now() - observationStart > 8000)
-      throw new Error("Saved-file watcher did not settle for review preflight");
+      throw new Error("File watcher did not become ready for preflight");
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+  await mkdir(join(workspace, "legacy"));
+  const savedPath = join(workspace, "legacy", "old.ts");
+  const watcher = service.watcher!;
+  const savedEvent = new Promise<void>((resolve, reject) => {
+    const onSaved = (event: string, path: string) => {
+      if (
+        (event === "add" || event === "change") &&
+        resolvePath(path) === resolvePath(savedPath)
+      ) {
+        clearTimeout(timeout);
+        watcher.off("all", onSaved);
+        resolve();
+      }
+    };
+    const timeout = setTimeout(() => {
+      watcher.off("all", onSaved);
+      reject(
+        new Error(
+          "The target saved-file event did not arrive for review preflight",
+        ),
+      );
+    }, 8000);
+    watcher.on("all", onSaved);
+  });
+  await writeFile(savedPath, "export const changed = true;");
+  await savedEvent;
   const reviewCheckpoint = await service.observe();
   assert.ok(reviewCheckpoint);
   const reviewPreflight = await service.preflightReview(reviewCheckpoint.id);
@@ -238,6 +256,15 @@ export async function runSmoke(
     JSON.stringify(reviewPreflight),
   );
   assert.equal(reviewPreflight.semanticEnabled, false);
+  if (process.platform === "win32") {
+    assert.equal(
+      reviewPreflight.resourceGuard,
+      "windows-job",
+      JSON.stringify(reviewPreflight),
+    );
+    assert.equal(reviewPreflight.osUsage!.inJob, true);
+    assert.ok(reviewPreflight.osUsage!.peakCommitBytes > 0);
+  }
   assert.equal(service.state().analysis!.semanticReview, false);
   assert.equal(service.state().activities[0].alert, true);
   await main.webContents.executeJavaScript(
@@ -520,6 +547,8 @@ export async function runSmoke(
         success: true,
         version: app.getVersion(),
         reviewWorker: reviewPreflight.reason,
+        reviewResourceGuard: reviewPreflight.resourceGuard,
+        reviewPeakCommitBytes: reviewPreflight.osUsage?.peakCommitBytes,
       }),
     );
   }
