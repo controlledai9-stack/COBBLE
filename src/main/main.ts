@@ -88,6 +88,13 @@ else {
       service = new CobbleService(
         join(app.getPath("userData"), "cobble.sqlite"),
         { protect, unprotect },
+        {
+          reviewWorker: {
+            file: app.isPackaged
+              ? join(process.resourcesPath, "review", "review-worker.cjs")
+              : join(app.getAppPath(), "dist", "review-worker.cjs"),
+          },
+        },
       );
       service.gitBinary = app.isPackaged
         ? join(process.resourcesPath, "git", "cmd", "git.exe")

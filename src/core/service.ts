@@ -24,6 +24,8 @@ import { agentContext } from "./agents";
 import { capacity } from "./host-capacity";
 import { exceptionPolicyKey } from "./plan-policy";
 import { analyzeSymbols } from "./analysis/symbols";
+import { ReviewSupervisor, type ReviewOutcome } from "./review/supervisor";
+import { buildReviewPacket } from "./review/packet";
 import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
@@ -50,6 +52,7 @@ export class CobbleService extends EventEmitter {
   readonly network: TeamNetwork;
   readonly collaboration: Collaboration;
   readonly analysis: AnalysisLedger;
+  readonly reviewWorker?: ReviewSupervisor;
   readonly agentEvents: AgentEvents;
   private agentTask?: Promise<void>;
   private agentTimer?: ReturnType<typeof setTimeout>;
@@ -80,11 +83,19 @@ export class CobbleService extends EventEmitter {
       protect: (s: string) => string;
       unprotect: (s: string) => string;
     } = { protect: (s) => s, unprotect: (s) => s },
-    options: { measureCapacity?: typeof capacity } = {},
+    options: {
+      measureCapacity?: typeof capacity;
+      reviewWorker?: { file: string; executable?: string };
+    } = {},
   ) {
     super();
     this.store = new Store(file);
     this.analysis = new AnalysisLedger(this.store);
+    if (options.reviewWorker)
+      this.reviewWorker = new ReviewSupervisor(
+        options.reviewWorker.file,
+        options.reviewWorker.executable,
+      );
     this.agentEvents = new AgentEvents(this.store);
     this.collaboration = new Collaboration(this.store);
     this.bridge = new IdeBridge(
@@ -258,6 +269,11 @@ export class CobbleService extends EventEmitter {
         : undefined,
       analysis: team ? this.analysis.summary(team.id) : undefined,
       monitoring: this.observer?.status,
+      review: {
+        mode: this.reviewWorker ? "preflight-only" : "not-configured",
+        semanticEnabled: false,
+        busy: this.reviewWorker?.state.busy ?? false,
+      },
       agentTracking: team ? this.agentEvents.summary(team.id) : undefined,
       profile,
       teams: this.store.teams(),
@@ -1451,6 +1467,90 @@ export class CobbleService extends EventEmitter {
     if (!team) throw new Error("Select a team first");
     return this.store.planMemory.retrieve(team, { query });
   }
+  /** Trusted backend diagnostic only; no renderer action, model execution or alert authority. */
+  async preflightReview(batchId: string): Promise<ReviewOutcome> {
+    if (this.closed || !this.reviewWorker)
+      throw new Error("Review worker is not configured");
+    if (!this.activeTeam() || !this.observer)
+      throw new Error("Select an available local workspace first");
+    if (
+      this.store.setting("paused", false) ||
+      this.network.hosting.frozen ||
+      this.integrating
+    )
+      throw new Error("Resume the workspace before review preflight");
+    await this.observe();
+    if (this.closed || !this.activeTeam() || !this.observer)
+      throw new Error("Workspace closed during review preflight");
+    const team = this.activeTeam()!,
+      observer = this.observer!;
+    const batch = this.analysis.batch(
+      requiredText(batchId, "Evidence batch", 100),
+    );
+    if (batch.teamId !== team.id)
+      throw new Error("This evidence belongs to another team");
+    const rows = this.store.rows<AnalysisJob>(
+      "SELECT data FROM analysis_jobs WHERE batch_id=? AND team_id=? AND status='completed' ORDER BY rowid DESC LIMIT 1",
+      batch.id,
+      team.id,
+    );
+    const job = rows[0];
+    if (
+      !job?.result ||
+      batch.planVersion !== team.version ||
+      (batch.membershipEpoch ?? 0) !==
+        this.store.setting(`membershipEpoch:${team.id}`, 0)
+    )
+      throw new Error("Review requires current analyzed evidence");
+    const baseline = observer.baseline;
+    if (
+      batch.root !== observer.root ||
+      batch.changes.some(
+        (change) =>
+          hash(baseline.get(change.path) ?? null) !== change.afterHash,
+      ) ||
+      batch.dependencyContext?.files.some(
+        (file) => baseline.get(file.path) !== file.source,
+      )
+    )
+      throw new Error("Saved source changed since this evidence checkpoint");
+    const retrieval = this.store.planMemory.retrieve(team, {
+      query: batch.changes.map((change) => change.path).join(" "),
+      paths: batch.changes.map((change) => change.path),
+      authorId: batch.actor.id,
+    });
+    const packet = buildReviewPacket(team, batch, job, retrieval);
+    const available = () =>
+      !this.closed &&
+      !this.store.setting("paused", false) &&
+      !this.network.hosting.frozen &&
+      !this.integrating &&
+      !this.store.setting(`restored-offline:${team.id}`, false);
+    const current = () => {
+      if (
+        !available() ||
+        this.observer !== observer ||
+        observer.baseline !== baseline ||
+        observer.status.pendingPaths > 0 ||
+        observer.status.reconciliationPending
+      )
+        return false;
+      const selected = this.activeTeam();
+      return (
+        selected?.id === team.id &&
+        selected.workspace === team.workspace &&
+        analysisContext(
+          selected,
+          job.accepted,
+          this.store.setting(`membershipEpoch:${team.id}`, 0),
+        ) === job.contextHash
+      );
+    };
+    return this.reviewWorker.run(packet, {
+      isCurrent: current,
+      canRun: available,
+    });
+  }
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.closed = true;
@@ -1470,6 +1570,7 @@ export class CobbleService extends EventEmitter {
       this.observationTask,
       this.analysisTask,
       this.agentTask,
+      this.reviewWorker?.close(),
       ...this.backupTasks,
     ]);
     // A monitor operation may have created a new watcher while shutdown awaited it.

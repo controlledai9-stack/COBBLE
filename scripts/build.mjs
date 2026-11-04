@@ -1,6 +1,24 @@
 import { build } from "esbuild";
 import { build as viteBuild } from "vite";
-import { copyFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+await build({
+  entryPoints: ["src/core/review/worker.ts"],
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  outfile: "dist/review-worker.cjs",
+});
+await writeFile(
+  "dist/review-worker.cjs.manifest.json",
+  JSON.stringify({
+    protocolVersion: 1,
+    mode: "preflight-only",
+    sha256: createHash("sha256")
+      .update(await readFile("dist/review-worker.cjs"))
+      .digest("hex"),
+  }),
+);
 await build({
   entryPoints: ["src/main/main.ts"],
   bundle: true,

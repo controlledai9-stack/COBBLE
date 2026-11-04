@@ -302,6 +302,11 @@ export interface MonitoringStatus {
   reconcileIntervalMs: number;
 }
 export interface AppState {
+  review?: {
+    mode: "not-configured" | "preflight-only";
+    semanticEnabled: false;
+    busy: boolean;
+  };
   agentTracking?: {
     protocolVersion: 1;
     activeTurns: number;
