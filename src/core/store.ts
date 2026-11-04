@@ -49,6 +49,12 @@ export class Store {
       CREATE INDEX IF NOT EXISTS analysis_batch_team ON analysis_batches(team_id);
       CREATE INDEX IF NOT EXISTS analysis_job_batch ON analysis_jobs(batch_id);
       INSERT OR IGNORE INTO migrations VALUES(3);`);
+    this.db
+      .exec(`CREATE TABLE IF NOT EXISTS agent_events(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,status TEXT NOT NULL,received_at INTEGER NOT NULL,fingerprint TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS agent_event_pending ON agent_events(team_id,status,received_at);
+      CREATE TABLE IF NOT EXISTS agent_turns(id TEXT PRIMARY KEY,team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS agent_turn_team ON agent_turns(team_id,updated_at);
+      INSERT OR IGNORE INTO migrations VALUES(5);`);
     this.planMemory = new PlanMemory(this);
   }
   transaction<T>(fn: () => T): T {

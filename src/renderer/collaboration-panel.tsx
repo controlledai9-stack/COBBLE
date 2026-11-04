@@ -12,7 +12,10 @@ export function AgentConnections({
 }) {
   const [busy, setBusy] = useState(false);
   const team = state.teams.find((t) => t.id === state.activeTeamId);
-  const configure = async (agent: "claude" | "cursor", remove = false) => {
+  const configure = async (
+    agent: "claude" | "cursor" | "gemini",
+    remove = false,
+  ) => {
     setBusy(true);
     try {
       await window.cobble.installAgent(agent, remove);
@@ -40,13 +43,18 @@ export function AgentConnections({
         alongside existing settings; it does not install or sign into a coding
         service.
       </p>
-      {(["claude", "cursor"] as const).map((agent) => (
+      {(["claude", "cursor", "gemini"] as const).map((agent) => (
         <div className="inline section-actions" key={agent}>
           <button
             disabled={busy || !team?.workspace}
             onClick={() => void configure(agent)}
           >
-            Enable {agent === "claude" ? "Claude Code" : "Cursor"}
+            Enable{" "}
+            {agent === "claude"
+              ? "Claude Code"
+              : agent === "gemini"
+                ? "Gemini CLI"
+                : "Cursor"}
           </button>
           <button
             className="text-button"

@@ -375,7 +375,7 @@ else {
       handle("search-plan", (_, query: string) => service.searchPlan(query));
       handle("install-agent", async (_, agent: string, remove = false) => {
         if (
-          !["claude", "cursor"].includes(agent) ||
+          !["claude", "cursor", "gemini"].includes(agent) ||
           typeof remove !== "boolean"
         )
           throw new Error("Unsupported coding agent");
@@ -386,7 +386,7 @@ else {
           : join(app.getAppPath(), "packaging", "agent-relay.ps1");
         await installAgentHooks(
           workspace,
-          agent as "claude" | "cursor",
+          agent as "claude" | "cursor" | "gemini",
           relay,
           join(app.getPath("userData"), "ide-pairing.json"),
           remove,

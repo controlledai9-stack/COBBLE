@@ -70,7 +70,7 @@ export async function diagnoseIntegrations(
     }),
   );
   const hooks: IntegrationDiagnostics["hooks"] = [];
-  for (const agent of ["claude", "cursor"] as const) {
+  for (const agent of ["claude", "cursor", "gemini"] as const) {
     if (!workspace) {
       hooks.push({
         agent,
@@ -85,7 +85,9 @@ export async function diagnoseIntegrations(
         root,
         agent === "claude"
           ? ".claude/settings.local.json"
-          : ".cursor/hooks.json",
+          : agent === "gemini"
+            ? ".gemini/settings.json"
+            : ".cursor/hooks.json",
       );
       const registry = join(root, ".cobble/agent-hooks.json");
       for (const file of [config, registry]) {
@@ -111,19 +113,24 @@ export async function diagnoseIntegrations(
         (entries: any) =>
           Array.isArray(entries)
             ? entries.flatMap((entry) =>
-                agent === "claude"
+                agent !== "cursor"
                   ? (entry.hooks ?? []).map((h: any) => h.command)
                   : [entry.command],
               )
             : [],
       );
-      const installed = owned.every((command) => commands.includes(command));
+      const installed =
+        owned.every((command) => commands.includes(command)) &&
+        !(agent === "gemini" && settings.hooksConfig?.enabled === false);
       hooks.push({
         agent,
         status: installed ? "configured" : "needs-repair",
-        detail: installed
-          ? "Registered hooks are present. A real agent turn is still required to verify event compatibility."
-          : "Some registered Cobble hooks are missing; unrelated hooks have not been changed.",
+        detail:
+          agent === "gemini" && settings.hooksConfig?.enabled === false
+            ? "Gemini CLI hooks are disabled in this project's existing settings; Cobble preserved that setting."
+            : installed
+              ? "Registered hooks are present. A real agent turn is still required to verify event compatibility."
+              : "Some registered Cobble hooks are missing; unrelated hooks have not been changed.",
       });
     } catch (error) {
       const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -146,7 +153,7 @@ export async function diagnoseIntegrations(
     limitations: [
       "Installed extension is not proof of a live paired workspace.",
       "Configured hooks are not proof of successful real agent events.",
-      "Gemini, Jules and other detection-only apps have no automatic agent adapter; saved-file observation still works.",
+      "Gemini CLI hooks are separate from Antigravity, Jules and other detection-only apps; configured hooks still need a real provider turn to verify compatibility.",
       "Extension checks inspect the editor's default profile; remote/custom profiles need manual verification.",
     ],
   };

@@ -6,7 +6,7 @@ import { performance } from "node:perf_hooks";
 import type { Change, MonitoringStatus } from "../shared/types";
 const exec = promisify(execFile);
 const ignored =
-  /(^|\/)(\.git|\.cobble|\.claude|\.cursor|node_modules|dist|build|coverage|\.env(?:\.[^/]*)?|\.aws|\.ssh|\.codex)(\/|$)|\.(?:(?:sqlite|db)(?:-(?:wal|shm|journal))?|pem|key|pfx|png|jpe?g|gif|webp|zip|exe|dll|pdf|mp[34]|wav|webm|lock)$/i;
+  /(^|\/)(\.git|\.cobble|\.claude|\.cursor|\.gemini|node_modules|dist|build|coverage|\.env(?:\.[^/]*)?|\.aws|\.ssh|\.codex)(\/|$)|\.(?:(?:sqlite|db)(?:-(?:wal|shm|journal))?|pem|key|pfx|png|jpe?g|gif|webp|zip|exe|dll|pdf|mp[34]|wav|webm|lock)$/i;
 export const OBSERVER_LIMITS = Object.freeze({
   files: 5000,
   fileBytes: 256_000,

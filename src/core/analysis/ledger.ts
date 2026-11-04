@@ -21,6 +21,10 @@ export type CaptureTrigger = {
   kind: "saved_checkpoint" | "agent_complete" | "manual";
   agent?: string;
   sessionId?: string;
+  eventKey?: string;
+  eventId?: string;
+  turnId?: string;
+  attribution?: "turn_boundary" | "partial" | "delayed" | "overlapping";
 };
 export interface EvidenceBatch {
   id: string;
@@ -145,6 +149,15 @@ export class AnalysisLedger {
         .prepare("INSERT INTO analysis_batches VALUES(?,?,?)")
         .run(id, team.id, JSON.stringify(batch));
       this.enqueue(batch, team, accepted);
+      if (trigger.eventKey) {
+        const saved = this.store.db
+          .prepare(
+            "UPDATE agent_events SET status='done',data=json_remove(json_set(data,'$.status','done','$.checkpointId',?,'$.attribution',?),'$.envelope.message') WHERE id=? AND team_id=? AND status='pending'",
+          )
+          .run(id, trigger.attribution ?? "partial", trigger.eventKey, team.id);
+        if (!saved.changes)
+          throw new Error("Agent checkpoint receipt is no longer pending");
+      }
       this.store.set(key, sequence);
       this.store.set(`baseline:${team.id}:${root}`, [...baseline]);
       return batch;

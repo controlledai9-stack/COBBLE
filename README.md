@@ -1,6 +1,6 @@
 # Cobble
 
-Source 0.4.7 adds [incremental saved-file monitoring with full reconciliation](docs/INCREMENTAL-MONITORING-DELIVERY.md), following [changed-function evidence](docs/CHANGED-SYMBOL-DELIVERY.md), [manager-approved scoped exceptions](docs/PLAN-EXCEPTIONS-DELIVERY.md), [local plan memory/retrieval](docs/PLAN-MEMORY-DELIVERY.md) and [durable evidence](docs/ANALYSIS-EVIDENCE-DELIVERY.md). See [the ordered backend execution plan](docs/BACKEND-EXECUTION-PLAN.md). The optional semantic reviewer remains future work.
+Source 0.4.8 adds [durable hook receipts and Gemini CLI integration](docs/AGENT-TURN-DELIVERY.md), with real provider/version verification still pending. Previous source deliveries added [incremental monitoring](docs/INCREMENTAL-MONITORING-DELIVERY.md), [changed-function evidence](docs/CHANGED-SYMBOL-DELIVERY.md), [scoped exceptions](docs/PLAN-EXCEPTIONS-DELIVERY.md), [plan retrieval](docs/PLAN-MEMORY-DELIVERY.md) and [durable evidence](docs/ANALYSIS-EVIDENCE-DELIVERY.md). See [the backend execution plan](docs/BACKEND-EXECUTION-PLAN.md). The optional semantic reviewer remains future work.
 
 UI update (28 October): Vyom's newer UI/window changes and the supplied Pebble reference animations are integrated. See [playback mapping and local testing](docs/PEBBLE-REFERENCE-INTEGRATION.md). The 0.4.2 installer below predates this source update; use `npm run dev` to test the latest UI.
 

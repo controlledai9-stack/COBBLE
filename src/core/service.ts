@@ -24,6 +24,7 @@ import { agentContext } from "./agents";
 import { capacity } from "./host-capacity";
 import { exceptionPolicyKey } from "./plan-policy";
 import { analyzeSymbols } from "./analysis/symbols";
+import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
 import {
@@ -49,6 +50,9 @@ export class CobbleService extends EventEmitter {
   readonly network: TeamNetwork;
   readonly collaboration: Collaboration;
   readonly analysis: AnalysisLedger;
+  readonly agentEvents: AgentEvents;
+  private agentTask?: Promise<void>;
+  private agentTimer?: ReturnType<typeof setTimeout>;
   observer?: Observer;
   watcher?: FSWatcher;
   private gitWatcher?: FSWatcher;
@@ -81,6 +85,7 @@ export class CobbleService extends EventEmitter {
     super();
     this.store = new Store(file);
     this.analysis = new AnalysisLedger(this.store);
+    this.agentEvents = new AgentEvents(this.store);
     this.collaboration = new Collaboration(this.store);
     this.bridge = new IdeBridge(
       () => this.activeTeam(),
@@ -89,6 +94,35 @@ export class CobbleService extends EventEmitter {
       async (body) => {
         const team = this.activeTeam();
         if (!team) return;
+        if (body.protocolVersion !== undefined) {
+          const record = this.agentEvents.receive(team, body);
+          await this.drainAgentEvents();
+          const current = this.activeTeam();
+          if (
+            !current ||
+            current.id !== team.id ||
+            current.workspace !== team.workspace
+          )
+            throw new Error("Selected agent workspace changed");
+          const active = this.agentEvents.active(team.id);
+          return {
+            eventId: record.envelope.eventId,
+            disposition: record.disposition,
+            activeUntil: active.until,
+            displayAgent: active.agent ?? null,
+            context:
+              ["session", "context"].includes(body.event) &&
+              record.disposition === "accepted"
+                ? agentContext(
+                    current,
+                    body.prompt ?? "",
+                    this.store.planMemory.retrieve(current, {
+                      query: body.prompt ?? "",
+                    }),
+                  )
+                : undefined,
+          };
+        }
         const key = `${team.id}:${body.agent}:${body.sessionId}`;
         const contextVersion = analysisContext(
           team,
@@ -105,6 +139,7 @@ export class CobbleService extends EventEmitter {
             kind: "agent_complete",
             agent: body.agent,
             sessionId: body.sessionId,
+            attribution: "partial",
           });
           this.agentMessages.delete(key);
         }
@@ -119,6 +154,7 @@ export class CobbleService extends EventEmitter {
               this.contextVersions.keys().next().value!,
             );
           return {
+            activeUntil: this.agentEvents.active(team.id).until || undefined,
             context: agentContext(
               team,
               typeof body.prompt === "string" ? body.prompt : "",
@@ -128,6 +164,10 @@ export class CobbleService extends EventEmitter {
             ),
           };
         }
+        const active = this.agentEvents.active(team.id);
+        return active.until
+          ? { activeUntil: active.until, displayAgent: active.agent }
+          : undefined;
       },
     );
     this.network = new TeamNetwork(
@@ -152,6 +192,7 @@ export class CobbleService extends EventEmitter {
     }
     await this.monitor();
     await this.observe();
+    await this.drainAgentEvents();
   }
   async createBackup(destination: string) {
     if (this.closed) throw new Error("Cobble is closing");
@@ -217,6 +258,7 @@ export class CobbleService extends EventEmitter {
         : undefined,
       analysis: team ? this.analysis.summary(team.id) : undefined,
       monitoring: this.observer?.status,
+      agentTracking: team ? this.agentEvents.summary(team.id) : undefined,
       profile,
       teams: this.store.teams(),
       activeTeamId: team?.id ?? null,
@@ -271,6 +313,7 @@ export class CobbleService extends EventEmitter {
     } finally {
       this.monitorTask = undefined;
       this.wakeAnalysis();
+      this.wakeAgentEvents();
     }
   }
   private async configureMonitor() {
@@ -311,7 +354,7 @@ export class CobbleService extends EventEmitter {
       ignoreInitial: true,
       followSymlinks: false,
       ignored: (path, stats) =>
-        /(?:^|[\\/])(?:node_modules|\.git|\.cobble|\.claude|\.cursor|dist|build|coverage|\.aws|\.ssh|\.codex)(?:[\\/]|$)/.test(
+        /(?:^|[\\/])(?:node_modules|\.git|\.cobble|\.claude|\.cursor|\.gemini|dist|build|coverage|\.aws|\.ssh|\.codex)(?:[\\/]|$)/.test(
           path,
         ),
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
@@ -455,6 +498,7 @@ export class CobbleService extends EventEmitter {
       return this.store.activityByFingerprint(team.id, key);
     } finally {
       this.observing = false;
+      this.wakeAgentEvents();
       if (
         !this.closed &&
         !this.store.setting("paused", false) &&
@@ -470,6 +514,102 @@ export class CobbleService extends EventEmitter {
       validManifest: !!payload,
       activity: await this.observe(payload, trigger),
     };
+  }
+  private drainAgentEvents(): Promise<void> {
+    if (this.agentTask) return this.agentTask;
+    const task = this.processAgentEvents();
+    this.agentTask = task;
+    void task
+      .finally(() => {
+        if (this.agentTask === task) this.agentTask = undefined;
+        this.wakeAgentEvents();
+      })
+      .catch(() => {});
+    return task;
+  }
+  private wakeAgentEvents() {
+    clearTimeout(this.agentTimer);
+    if (this.closed) return;
+    const team = this.activeTeam();
+    if (
+      this.closed ||
+      this.agentTask ||
+      !team ||
+      !this.observer ||
+      this.store.setting("paused", false) ||
+      this.network.hosting.frozen ||
+      this.integrating ||
+      this.store.setting(`restored-offline:${team.id}`, false) ||
+      !this.agentEvents.summary(team.id).pendingCheckpoints
+    )
+      return;
+    this.agentTimer = setTimeout(() => {
+      void this.drainAgentEvents().catch((error) =>
+        this.emit("diagnostic", `Agent checkpoint deferred: ${error}`),
+      );
+    }, 1000);
+    this.agentTimer.unref();
+  }
+  private async processAgentEvents() {
+    const team = this.activeTeam();
+    if (
+      !team ||
+      !this.observer ||
+      this.closed ||
+      this.network.hosting.frozen ||
+      this.integrating ||
+      this.store.setting("paused", false) ||
+      this.store.setting(`restored-offline:${team.id}`, false)
+    )
+      return;
+    for (const record of this.agentEvents.pending(team.id)) {
+      if (
+        this.closed ||
+        this.activeTeam()?.id !== team.id ||
+        this.store.setting("paused", false) ||
+        this.network.hosting.frozen ||
+        this.integrating
+      )
+        return;
+      const event: AgentEnvelope = record.envelope;
+      const delayed =
+        event.replayed ||
+        Date.now() - Date.parse(event.occurredAt) > 5000 ||
+        Date.now() - record.receivedAt > 5000;
+      const attribution = delayed
+        ? "delayed"
+        : this.agentEvents.active(team.id).count > 0
+          ? "overlapping"
+          : !record.started ||
+              event.identity !== "native" ||
+              event.event !== "complete"
+            ? "partial"
+            : "turn_boundary";
+      const trigger: CaptureTrigger = {
+        kind:
+          attribution === "turn_boundary"
+            ? "agent_complete"
+            : "saved_checkpoint",
+        agent: event.agent,
+        sessionId: event.sessionId,
+        turnId: event.turnId,
+        eventId: event.eventId,
+        eventKey: record.id,
+        attribution,
+      };
+      // A hook boundary is not proof that its agent authored every changed file.
+      // Preserve receipt linkage without attaching the assistant's claim to a mixed saved diff.
+      await this.observe(null, trigger);
+      if (
+        this.closed ||
+        this.activeTeam()?.id !== team.id ||
+        this.store.setting("paused", false) ||
+        this.network.hosting.frozen ||
+        this.integrating
+      )
+        return;
+      this.agentEvents.finish(record.id, team.id); // A no-change checkpoint still has a durable receipt.
+    }
   }
   private wakeAnalysis() {
     clearTimeout(this.analysisTimer);
@@ -1320,6 +1460,7 @@ export class CobbleService extends EventEmitter {
   private async finishClose() {
     clearTimeout(this.timer);
     clearTimeout(this.analysisTimer);
+    clearTimeout(this.agentTimer);
     clearInterval(this.reconciliationTimer);
     await Promise.allSettled([
       this.watcher?.close(),
@@ -1328,6 +1469,7 @@ export class CobbleService extends EventEmitter {
       this.integrationTask,
       this.observationTask,
       this.analysisTask,
+      this.agentTask,
       ...this.backupTasks,
     ]);
     // A monitor operation may have created a new watcher while shutdown awaited it.

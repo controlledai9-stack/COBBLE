@@ -302,6 +302,13 @@ export interface MonitoringStatus {
   reconcileIntervalMs: number;
 }
 export interface AppState {
+  agentTracking?: {
+    protocolVersion: 1;
+    activeTurns: number;
+    pendingCheckpoints: number;
+    receipts: number;
+    coverage: "saved_checkpoints_at_hook_boundaries";
+  };
   monitoring?: MonitoringStatus;
   policy?: { pendingManagerChanges: number };
   analysis?: {
@@ -429,7 +436,7 @@ export interface IntegrationDiagnostics {
     detail: string;
   }[];
   hooks: {
-    agent: "claude" | "cursor";
+    agent: "claude" | "cursor" | "gemini";
     status:
       | "no-workspace"
       | "configured"
@@ -491,7 +498,10 @@ export interface DesktopApi {
   copyPairing(): Promise<void>;
   detectIdes(): Promise<DetectedIde[]>;
   connectIde(id?: string): Promise<string>;
-  installAgent(agent: "claude" | "cursor", remove?: boolean): Promise<void>;
+  installAgent(
+    agent: "claude" | "cursor" | "gemini",
+    remove?: boolean,
+  ): Promise<void>;
   previewRevert(activityId: string): Promise<RevertPreview>;
   applyRevert(activityId: string, token: string): Promise<void>;
   integrateMain(proposalId: string): Promise<void>;

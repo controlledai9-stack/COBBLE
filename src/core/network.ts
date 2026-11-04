@@ -608,7 +608,7 @@ export class TeamNetwork {
                 typeof body.agentExplanation === "string"
                   ? body.agentExplanation.slice(0, 12000)
                   : undefined,
-              agentName: ["claude", "cursor"].includes(body.agentName)
+              agentName: ["claude", "cursor", "gemini"].includes(body.agentName)
                 ? body.agentName
                 : undefined,
               moduleIds: impacted,

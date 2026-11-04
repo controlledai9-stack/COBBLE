@@ -36,14 +36,18 @@ export function agentContext(
 }
 export async function installAgentHooks(
   root: string,
-  agent: "claude" | "cursor",
+  agent: "claude" | "cursor" | "gemini",
   relay: string,
   bootstrap: string,
   remove = false,
 ) {
   const file = resolve(
     root,
-    agent === "claude" ? ".claude/settings.local.json" : ".cursor/hooks.json",
+    agent === "claude"
+      ? ".claude/settings.local.json"
+      : agent === "gemini"
+        ? ".gemini/settings.json"
+        : ".cursor/hooks.json",
   );
   const registryFile = resolve(root, ".cobble/agent-hooks.json");
   for (const parent of [dirname(file), dirname(registryFile)]) {
@@ -88,7 +92,7 @@ export async function installAgentHooks(
       throw new Error("Existing hook configuration has an unsupported shape");
     settings.hooks[key] = settings.hooks[key]
       .map((entry: any) =>
-        agent === "claude"
+        agent !== "cursor"
           ? {
               ...entry,
               hooks: Array.isArray(entry.hooks)
@@ -100,7 +104,7 @@ export async function installAgentHooks(
           : entry,
       )
       .filter((entry: any) =>
-        agent === "claude"
+        agent !== "cursor"
           ? !Array.isArray(entry.hooks) || entry.hooks.length > 0
           : !previous.includes(entry.command),
       );
@@ -113,13 +117,21 @@ export async function installAgentHooks(
           Stop: "complete",
           SessionEnd: "end",
         }
-      : {
-          sessionStart: "context",
-          postToolUse: "write",
-          afterAgentResponse: "output",
-          stop: "complete",
-          sessionEnd: "end",
-        };
+      : agent === "gemini"
+        ? {
+            BeforeAgent: "context",
+            AfterTool: "write",
+            AfterAgent: "complete",
+            SessionEnd: "end",
+          }
+        : {
+            sessionStart: "session",
+            beforeSubmitPrompt: "context",
+            postToolUse: "write",
+            afterAgentResponse: "output",
+            stop: "complete",
+            sessionEnd: "end",
+          };
   const commands: string[] = [];
   if (!remove)
     for (const [event, kind] of Object.entries(events)) {
@@ -129,8 +141,18 @@ export async function installAgentHooks(
       commands.push(command);
       settings.hooks[event] ??= [];
       settings.hooks[event].push(
-        agent === "claude"
-          ? { hooks: [{ type: "command", command, timeout: 10 }] }
+        agent !== "cursor"
+          ? {
+              hooks: [
+                {
+                  type: "command",
+                  command,
+                  ...(agent === "gemini"
+                    ? { name: `cobble-${kind}`, timeout: 10_000 }
+                    : { timeout: 10 }),
+                },
+              ],
+            }
           : { command },
       );
     }

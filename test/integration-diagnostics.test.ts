@@ -53,7 +53,7 @@ test("compatibility diagnostics distinguish detected apps, installed extensions 
     assert.equal(report.bridge.state, "disconnected");
     assert.deepEqual(
       report.hooks.map((h) => h.status),
-      ["configured", "configured"],
+      ["configured", "configured", "not-configured"],
     );
     assert.equal(calls.length, 2);
     assert.equal(await readFile(file, "utf8"), original);

@@ -75,7 +75,13 @@ export class IdeBridge {
     private team: () => Team | null,
     private changed: () => void,
     private saved: () => void,
-    private agentEvent?: (body: any) => Promise<{ context?: string } | void>,
+    private agentEvent?: (body: any) => Promise<{
+      context?: string;
+      eventId?: string;
+      disposition?: string;
+      activeUntil?: number;
+      displayAgent?: string | null;
+    } | void>,
   ) {}
   async start() {
     this.server = createServer(async (request, response) => {
@@ -108,31 +114,43 @@ export class IdeBridge {
           });
         if (request.url === "/agent") {
           if (
-            !["claude", "cursor"].includes(body.agent) ||
-            !["context", "write", "output", "complete", "end"].includes(
-              body.event,
-            ) ||
+            !["claude", "cursor", "gemini"].includes(body.agent) ||
+            ![
+              "session",
+              "context",
+              "write",
+              "output",
+              "complete",
+              "cancel",
+              "end",
+            ].includes(body.event) ||
             typeof body.sessionId !== "string" ||
+            !body.sessionId.trim() ||
             body.sessionId.length > 200 ||
             (body.message &&
               (typeof body.message !== "string" || body.message.length > 60000))
           )
             throw new Error("Invalid coding-agent event");
+          const result = await this.agentEvent?.(body);
           const linked = ["files", "linked"].includes(this.current.state);
+          const agent =
+            result?.displayAgent !== undefined ||
+            body.protocolVersion !== undefined
+              ? (result?.displayAgent ?? undefined)
+              : ["end", "cancel"].includes(body.event)
+                ? undefined
+                : body.agent;
           this.current = {
             ...this.current,
-            agent: body.event === "end" ? undefined : body.agent,
+            agent,
             agentLastSeen: new Date().toISOString(),
-            state: linked
-              ? body.event === "end"
-                ? "files"
-                : "linked"
-              : this.current.state,
+            state: linked ? (!agent ? "files" : "linked") : this.current.state,
           };
-          this.activeUntil = ["complete", "end"].includes(body.event)
-            ? 0
-            : Date.now() + 120000;
-          const result = await this.agentEvent?.(body);
+          this.activeUntil =
+            result?.activeUntil ??
+            (["complete", "cancel", "end"].includes(body.event)
+              ? 0
+              : Date.now() + 120000);
           this.changed();
           return json(response, 200, { ok: true, ...result });
         }

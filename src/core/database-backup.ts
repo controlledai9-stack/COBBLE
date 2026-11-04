@@ -64,6 +64,8 @@ function validate(db: DatabaseSync) {
     "analysis_batches",
     "analysis_jobs",
     "plan_memory_items",
+    "agent_events",
+    "agent_turns",
   ]) {
     if (
       db
@@ -176,6 +178,26 @@ export async function restoreDatabaseCopy(
           db.prepare(
             "UPDATE analysis_jobs SET status='cancelled', data=json_set(data,'$.status','cancelled','$.lease',NULL,'$.leaseUntil',0,'$.error','Offline recovery: pending analysis is not replayed') WHERE status IN ('pending','running')",
           ).run();
+        if (
+          db
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE name='agent_events' AND type='table'",
+            )
+            .get()
+        )
+          db.exec(
+            "UPDATE agent_events SET status='done',data=json_remove(json_set(data,'$.status','done','$.disposition','ignored','$.attribution','recovered_offline'),'$.envelope.message') WHERE status='pending'",
+          );
+        if (
+          db
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE name='agent_turns' AND type='table'",
+            )
+            .get()
+        )
+          db.exec(
+            "UPDATE agent_turns SET data=json_remove(json_set(data,'$.status','interrupted'),'$.output') WHERE json_extract(data,'$.status')='open'",
+          );
         for (const team of teams) {
           db.prepare(
             "INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
