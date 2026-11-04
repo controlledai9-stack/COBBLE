@@ -1,6 +1,6 @@
 {
   "name": "cobble",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "private": true,
   "license": "UNLICENSED",
   "author": "Cobble",
@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit",
     "benchmark:plan-memory": "tsx scripts/benchmark-plan-memory.ts",
     "evaluate:plan": "tsx scripts/evaluate-plan.ts",
+    "review:plan": "tsx scripts/review-plan.ts",
     "format": "prettier --write src scripts test evaluation extensions/vscode/src",
     "test": "tsx --test test/*.test.ts",
     "test:desktop": "node scripts/smoke.mjs",
