@@ -42,6 +42,7 @@ class ComponentService:
                 capability="artifact.consume", artifact_id=implementation["artifact_id"],
                 execution_context=frozen.get("execution_context", "trusted"), parameters={
                     "contract_id": contract_id, "implementation_id": implementation["implementation_id"],
+                    "state_version": frozen['state_version'], "consumer": frozen.get('consumer', 'interface'),
                     "input_hash": digest({"args": frozen["args"], "kwargs": frozen["kwargs"]})})
             decision = self.control._authorize(tx, action)
             if decision.decision != "allow":
@@ -55,6 +56,8 @@ class ComponentService:
                 "principal_id": principal["principal_id"], "action": action.model_dump(),
                 "implementation_id": implementation["implementation_id"], "contract_id": contract_id,
                 "artifact_id": implementation["artifact_id"], "state": "prepared",
+                'selection_revision': resolved['selection_revision'],
+                'consumer': frozen.get('consumer', 'interface'), 'state_version': frozen['state_version'],
                 "container_operation": "val-" + uuid.uuid4().hex, "fence": decision.principal_revision,
                 "policy_epoch": decision.policy_epoch, "lease_until": self.control.clock() + 30,
                 "verification_status": "unverified", "created_at": now_iso()})
@@ -124,6 +127,15 @@ class ComponentService:
                 or decision.policy_epoch != op["policy_epoch"]):
             raise Forbidden("component policy or principal fence no longer permits use")
         contract = tx.get("contract", op["contract_id"])
+        selection = tx.get('selection', op['contract_id'])
+        if (contract['state'] != 'active' or contract['state_version'] != op.get('state_version')
+                or contract['state_mode'] != 'disposable' or selection['revision'] != op.get('selection_revision')
+                or op['implementation_id'] not in {selection['implementation_id'], selection.get('fallback_id')}):
+            raise Conflict('component selection or persistent-state contract changed')
+        if op.get('consumer') in {'implementation', 'security-critical'} and any(
+                q['state'] not in {'promoted', 'rejected'} and q.get('release_state') != 'selected'
+                for q in tx.list('quarantine', filters={'contract_id': op['contract_id']})):
+            raise Forbidden('affected component dependency became held before use')
         self.quarantine._check_context(tx, contract)
 
     def _mock(self, contract_id, request, *, actor, key):

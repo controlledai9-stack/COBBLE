@@ -126,6 +126,33 @@ def approval(system, request, key='approval'):
         executor_id='local-' + request.parameters['kind'] + '-release', reason='Exact reviewed action'), actor='operator', key=key)
 
 
+def dependency_runner(system, spec=None):
+    from datetime import datetime, timezone
+    import random
+    from app.adapters.base import DeterministicAdapter
+    from app.modules.response.runtime import ResponseRuntime
+    from app.modules.simulator.runner import AgentRunner, _make_agents
+    from app.modules.simulator.gateway import PolicyGateway
+    from app.modules.simulator.environment import SharedEnvironment
+    from app.modules.simulator.broker import MessageBroker
+    from app.modules.detection.live import LiveGuard
+    from app.schemas import ScenarioConfig
+    cid = system.contract['contract_id']
+    declarations = {'coder': {cid: spec or {'state_version': 'stateless-v1'}}}
+    response = ResponseRuntime(system.control, quarantine_service=system.service, component_dependencies=declarations)
+    agents = _make_agents('run-dependencies', 'dependencies', 5)
+    response.start('run-dependencies', agents, ScenarioConfig(live_guard='contain', gateway_mode='monitor'))
+    guard = LiveGuard([], 'contain')
+    guard.start(response.run_id, agents)
+    guard.response = response
+    runner = AgentRunner(response.run_id, 'dependencies', datetime(2026, 1, 1, tzinfo=timezone.utc),
+        random.Random(1), PolicyGateway('monitor'), DeterministicAdapter(), env=SharedEnvironment(response.run_id),
+        broker=MessageBroker(response.run_id), live=guard, response=response)
+    runner.register_agents(agents)
+    runner.broker.register_agents(a.agent_id for a in agents)
+    return response, runner, {a.role: a for a in agents}
+
+
 def test_capture_preserves_identity_audit_and_safe_diff_without_host_paths(system):
     record = capture(system)
     assert record['state'] == 'quarantined' and record['evidence_class'] == 'restricted'
@@ -352,6 +379,110 @@ def test_real_quarantine_fallback_rejection_salvage_and_exact_promotion(system):
     assert promoted_result['state'] == 'succeeded' and promoted_result['result'] == 5
     assert promoted_result['artifact_id'] == salvage['artifact_id']
     assert promoted_result['output_lineage'] == 'unreviewed-input-data'
+    response, runner, agents = dependency_runner(system)
+    dependent = runner.tools.invoke_component(agents['coder'], base['contract_id'], [[2, 3]])
+    assert dependent.success and dependent.data['result'] == 5 and not dependent.data['mock']
+    assert dependent.data['artifact_id'] == salvage['artifact_id']
+    assert dependent.data['output_lineage'] == 'unreviewed-component-output'
+    assert response.report()['other_operation_counts'] == {'local-json-component': 1}
+
+
+def test_simulator_dependency_tool_keeps_trusted_interface_and_labels_result_before_sharing(system):
+    base = approved(system, candidate=system.base, key='base')
+    request = action(system, base)
+    system.service.release(request, approval(system, request)['approval_id'], key='release')
+    capture(system, key='held-replacement')
+    response, runner, agents = dependency_runner(system)
+    result = runner.tools.invoke_component(agents['coder'], base['contract_id'], [[2, 3]])
+    assert result.success and result.data['result'] == 5
+    assert result.data['artifact_id'] == base['artifact_id']
+    external = runner.tools.access_external(agents['coder'], 'external:approved-partner-api', resource='data/public', data=result.data)
+    assert not external.success and 'lineage' in external.error
+    independent = runner.tools.write_file(agents['reviewer'], 'docs/wiki/independent', 'independent safe work')
+    assert independent.success
+    with response.repository.read() as tx:
+        assert response._flow(tx, 'principal', response.principals[agents['coder'].agent_id])['unknown']
+
+
+def test_security_dependency_cannot_be_downgraded_by_model_args(system):
+    base = approved(system, candidate=system.base, key='base')
+    request = action(system, base)
+    system.service.release(request, approval(system, request)['approval_id'], key='release')
+    capture(system, key='held-replacement')
+    response, runner, agents = dependency_runner(system, {'state_version': 'stateless-v1', 'consumer': 'security-critical'})
+    worker = Mock(wraps=system.service.validator.executor.invoke)
+    system.service.validator.executor.invoke = worker
+    simulated = runner.get_sim_agent(agents['coder'].agent_id)
+    forged = simulated.execute_tool('invoke_component', contract_id=base['contract_id'], args=[[1]], consumer='interface')
+    assert not forged.success
+    result = simulated.execute_tool('invoke_component', contract_id=base['contract_id'], args=[[1]])
+    assert not result.success and worker.call_count == 0
+    # A different role cannot use the coder's dependency declaration.
+    assert not runner.tools.invoke_component(agents['reviewer'], base['contract_id'], [[1]]).success
+
+
+def test_dependency_becoming_held_between_resolve_and_dispatch_never_launches_worker(system, monkeypatch):
+    base = approved(system, candidate=system.base, key='base')
+    request = action(system, base)
+    system.service.release(request, approval(system, request)['approval_id'], key='release')
+    _, runner, agents = dependency_runner(system, {'state_version': 'stateless-v1', 'consumer': 'security-critical'})
+    original = system.service.registry.resolve
+    def resolve_then_hold(*args, **kwargs):
+        result = original(*args, **kwargs)
+        capture(system, key='racing-replacement')
+        return result
+    monkeypatch.setattr(system.service.registry, 'resolve', resolve_then_hold)
+    worker = Mock(wraps=system.service.validator.executor.invoke)
+    system.service.validator.executor.invoke = worker
+    result = runner.tools.invoke_component(agents['coder'], base['contract_id'], [[1]])
+    assert not result.success and worker.call_count == 0
+    assert any(op['state'] == 'prepared' and op['executor_id'] == 'local-json-component' for op in system.repo.list('operation'))
+
+
+def test_declared_development_mock_cannot_be_confused_with_real_component(system):
+    _, runner, agents = dependency_runner(system, {'state_version': 'stateless-v1', 'execution_context': 'development', 'allow_stub': True})
+    result = runner.tools.invoke_component(agents['coder'], system.contract['contract_id'], [[2, 3]])
+    assert result.success and result.data['mock'] and result.data['state'] == 'development_stub'
+    assert result.data['result'] == 5 and result.data['artifact_id'] is None
+
+
+def test_autonomous_dependency_action_uses_tool_result_as_untrusted_next_turn_data(system, monkeypatch):
+    from app.modules.simulator import autonomous
+    base = approved(system, candidate=system.base, key='base')
+    request = action(system, base)
+    system.service.release(request, approval(system, request)['approval_id'], key='release')
+    _, runner, agents = dependency_runner(system)
+    decision = autonomous.parse_decision(json.dumps({'actions': [{'action': 'invoke_component',
+        'contract_id': base['contract_id'], 'args': [[2, 3]], 'kwargs': {}}], 'report': 'dependency checked'}))
+    assert decision['actions'][0]['contract_id'] == base['contract_id']
+    monkeypatch.setattr(autonomous, '_decide', lambda *args: (decision, 'synthetic model response'))
+    autonomous.worker_turn(runner, agents['coder'], agents['planner'], list(agents.values()), 1, 'compute sum', [])
+    remembered = runner.get_sim_agent(agents['coder'].agent_id).memory.last_tool_result
+    assert remembered.tool_name == 'invoke_component' and remembered.data['result'] == 5
+    assert runner.unread[agents['coder'].agent_id][0]['sender_role'] == 'untrusted component output'
+    forged = autonomous.parse_decision(json.dumps({'actions': [{'action': 'invoke_component',
+        'contract_id': base['contract_id'], 'args': [[2, 3]], 'consumer': 'interface'}]}))
+    assert forged['actions'] == []
+
+
+def test_selection_revision_change_after_resolution_fences_component_dispatch(system, monkeypatch):
+    base = approved(system, candidate=system.base, key='base')
+    request = action(system, base)
+    system.service.release(request, approval(system, request)['approval_id'], key='release')
+    _, runner, agents = dependency_runner(system)
+    original = system.service.registry.resolve
+    def change_selection_after_read(*args, **kwargs):
+        result = original(*args, **kwargs)
+        def mutate(tx):
+            current = tx.get('selection', base['contract_id'])
+            return tx.update('selection', base['contract_id'], current, current['revision'])
+        system.repo.command('test', 'selection-race', 'test.selection', {}, mutate)
+        return result
+    monkeypatch.setattr(system.service.registry, 'resolve', change_selection_after_read)
+    worker = Mock(wraps=system.service.validator.executor.invoke)
+    system.service.validator.executor.invoke = worker
+    result = runner.tools.invoke_component(agents['coder'], base['contract_id'], [[1]])
+    assert not result.success and worker.call_count == 0
 
 
 def test_validation_api_retry_returns_previous_outcome_without_reexecution(system):

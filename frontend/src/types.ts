@@ -598,3 +598,17 @@ export interface MessageReviewRequest extends RevisionRequest {
   verdict: 'release' | 'confirm';
   reason: string;
 }
+
+export interface RuntimeDependency {
+  state_version: string;
+  consumer?: 'interface' | 'implementation' | 'security-critical';
+  execution_context?: 'trusted' | 'development';
+  required_implementation?: string | null;
+  allow_stub?: boolean;
+}
+
+export interface RuntimeComponentCall {
+  contract_id: string;
+  args?: unknown[];
+  kwargs?: Record<string, unknown>;
+}

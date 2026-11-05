@@ -48,6 +48,17 @@ class ToolRegistry:
         self.runner = runner
         self.env = env
 
+    def invoke_component(self, agent: Agent, contract_id: str, args: list | None = None,
+                         kwargs: dict | None = None, *, malicious: bool = False) -> ToolResult:
+        """Reviewed dependencies use their own durable executor and receipts."""
+        from app.schemas import RuntimeComponentCall
+        call = RuntimeComponentCall(contract_id=contract_id, args=args if args is not None else [],
+                                    kwargs=kwargs if kwargs is not None else {})
+        runtime = self.runner.response
+        if runtime is None:
+            return ToolResult('invoke_component', False, error='protected response runtime is required for component invocation')
+        return runtime.invoke_component(agent, call.contract_id, call.args, call.kwargs)
+
     @response_tool
     def read_file(self, agent: Agent, path: str, *, malicious: bool = False) -> ToolResult:
         norm_path = self.env.fs.normalize_path(path)

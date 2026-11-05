@@ -29,6 +29,7 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 | Latest frontend request types | Production build and all four tests passed with generated-Git-link and message-review types. |
 | Local fresh-session recovery | Docker-enabled full backend: 708 passed in 202.57 seconds, no skips. After the final integrity guard was added, current recovery/control/runtime/message suites passed 53 tests, including ten recovery cases across enforce/monitor. One existing deprecation warning remains. |
 | Operator review UI | Security Response review desk connected to authenticated queues, notifications, restriction/message decisions, fresh recovery and candidate validation/review. Synthetic real-browser flows and desktop/mobile inspection passed; frontend build and seven tests pass. See [UI evidence and remaining limits](verification/member4-operator-ui.md). |
+| Simulator dependency boundary | Docker-enabled full backend: 718 passed in 241.87 seconds, no skips. After final non-finite/oversized-input hardening, current focused runtime/control/recovery/message suites passed 56 tests. Frontend build and seven tests passed. One existing backend deprecation warning remains. |
 | Hosted integration | Authentication inspected only. No hosted policies, CI runs, attestation service or deployment configured. |
 | Dependency security | Original frontend audit reported six findings. Tooling updated to Vite 8.3.6, Vitest 4.1.12, React plugin 6.2.1 and PostCSS 8.5.32. Four tests, production build and `npm audit --audit-level=moderate` pass; zero known audit findings. |
 
@@ -42,14 +43,14 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 | S3 | In progress | Virtual-tool/broker gates, local receipts, detector persistence, flow controls and context-epoch fences implemented. Health leases, external cancellation/reconciliation, broader recovery and measured overhead remain. |
 | S4A | In progress | Snapshots, restricted evidence-class metadata, durable capture/reconciliation and immutable worker materialization connected. Automatic generated-bundle capture, retention enforcement, quotas and full crash/expansion matrix remain. |
 | S4B | In progress | Real Git primitives and authenticated quarantine/review/exact-action promotion connected, including successful-effect-before-audit-failure reconciliation. Interactive hunk walkthrough, cleanup lifecycle and full adversarial/race gates remain. |
-| S4C | In progress | Versioned disposable-state contract/implementation registry, current/previous trusted selection, explicit dev mock/held/unavailable, revocation/context checks and sandboxed component invocation implemented. Simulator dependency integration, richer lineage/state classes and full recovery/compatibility evaluation remain. |
+| S4C | In progress | Registry/fallback and sandboxed component invocation are now connected to structured/autonomous simulator tools using immutable server-owned role declarations. Dispatch/completion recheck dependency/selection state; outputs receive conservative lineage before agent handoff. Richer graph/declassification/state classes and full recovery/compatibility evaluation remain. |
 | S5 | In progress | Pinned Docker workers, protected tests, offline Semgrep JSON/SARIF, quotas/teardown and durable validation now feed authenticated review and exact-action release. Full retention/access, broader adversarial/supply-chain gates and image/context patch operations remain. |
 | S6 | Planned | Closed-loop demonstration, semantic/failure/baseline evaluation, all source metrics and handoff. |
 | R1–R7 | Planned | Full hosted review/CI, runtime/broker/egress, provenance/impact, independent evidence, production operations, alternative-runtime evaluations and research validation remain in scope. |
 
 ## Next execution
 
-Finish simulator-dependent component tools and remaining Git/release operator forms, then complete S3 health/cancellation/performance gates and the frozen S6 evaluation. The primary review/notification UI, generated bundle capture and bounded fresh-session recovery are now connected. Preserve R1–R7 and complete all BR gates before claiming any release profile.
+Finish the remaining Git/release operator forms, then S3 health/cancellation/performance gates and the frozen S6 evaluation. Simulator dependency tools now connect declared contracts to the reviewed registry and isolated executor; see [dependency-boundary evidence](verification/member4-simulator-dependencies.md). Preserve R1–R7 and complete all BR gates before claiming any release profile.
 
 ## Current simulator and team-role additions
 

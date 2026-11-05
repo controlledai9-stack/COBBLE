@@ -624,3 +624,17 @@ class GeneratedGitLink(RevisionRequest):
 class MessageReviewRequest(RevisionRequest):
     verdict: Literal['release', 'confirm']
     reason: str = Field(min_length=1, max_length=2000)
+
+
+class RuntimeDependency(ControlRequest):
+    state_version: ControlId
+    consumer: Literal['interface', 'implementation', 'security-critical'] = 'interface'
+    execution_context: Literal['trusted', 'development'] = 'trusted'
+    required_implementation: ControlId | None = None
+    allow_stub: bool = False
+
+
+class RuntimeComponentCall(ControlRequest):
+    contract_id: ControlId
+    args: list[Any] = Field(default_factory=list, max_length=16)
+    kwargs: dict[str, Any] = Field(default_factory=dict, max_length=16)

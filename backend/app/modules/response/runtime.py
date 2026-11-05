@@ -27,7 +27,7 @@ TOOLS = {
 
 
 class ResponseRuntime:
-    def __init__(self, control: ResponseControl, *, quarantine_service=None, recovery_id=None):
+    def __init__(self, control: ResponseControl, *, quarantine_service=None, recovery_id=None, component_dependencies=None):
         self.control, self.repository = control, control.repository
         self.run_id = ""
         self.agents: dict[str, Agent] = {}
@@ -35,6 +35,7 @@ class ResponseRuntime:
         self.runner = None
         self._quarantine_service = quarantine_service
         self.recovery_id = recovery_id
+        self._configured_dependencies = component_dependencies
 
     def quarantine_service(self):
         if self._quarantine_service is None:
@@ -50,9 +51,83 @@ class ResponseRuntime:
         return service.capture(self.run_id, agent.agent_id, files, actor=f'runtime:{self.run_id}',
             key=digest({'agent_id': agent.agent_id, 'files': files}))
 
+    def invoke_component(self, agent, contract_id, args, kwargs):
+        """Use the dedicated component executor, not the virtual-effect wrapper."""
+        from app.modules.response.components import ComponentService
+        from app.modules.response.repository import ControlError
+        from app.modules.simulator.tools import ToolResult
+        if self.agents.get(agent.agent_id) is not agent:
+            raise Forbidden('component caller is not the registered runtime agent')
+        call_id = identifier('dependency-call')
+        try:
+            session = self.repository.get('session', self.run_id)
+            spec = session.get('component_dependencies', {}).get(agent.role, {}).get(contract_id)
+            if spec is None:
+                raise Forbidden('component is not declared for this runtime role')
+            request = {**spec, 'run_id': self.run_id, 'agent_id': agent.agent_id, 'args': args, 'kwargs': kwargs}
+            result = ComponentService(self.quarantine_service()).invoke(contract_id, request,
+                actor=f'runtime:{self.run_id}', key=call_id)
+            success = result['state'] in {'succeeded', 'development_stub'}
+            if success:
+                def handoff(tx):
+                    current_session, principal = self.control._principal(tx, self.run_id, agent.agent_id)
+                    if not self.control.context_current(current_session, principal, agent.agent_id):
+                        raise Forbidden('component recipient context changed before output handoff')
+                    if current_session.get('dependency_digest') != session.get('dependency_digest'):
+                        raise Forbidden('component dependency declaration changed before output handoff')
+                    if result['state'] == 'succeeded':
+                        decision = self.control._authorize(tx, AuthorizationRequest.model_validate(result['action']))
+                    else:
+                        decision = self.control._authorize(tx, AuthorizationRequest(run_id=self.run_id,
+                            agent_id=agent.agent_id, capability='resource.read', resource='contract:' + contract_id,
+                            execution_context=spec['execution_context']))
+                    if decision.decision != 'allow':
+                        raise Forbidden('current recipient policy holds component output')
+                    self._merge_flow(tx, 'principal', principal['principal_id'], [], unknown=True)
+                    return {'call_id': call_id, 'operation_id': result.get('operation_id'),
+                        'contract_id': contract_id, 'output_lineage': 'unreviewed-component-output',
+                        'effect_verified': result.get('verification_status') == 'verified', 'mock': result.get('mock', False)}
+                self.repository.command(f'runtime:{self.run_id}', call_id, 'component.output_handoff',
+                    {'call_id': call_id, 'operation_id': result.get('operation_id'), 'contract_id': contract_id}, handoff)
+            event = self.runner.emit(agent, 'tool_call', 'invoke_component', resource='contract:' + contract_id,
+                status='success' if success else 'failed', pregated=(None,),
+                payload={'contract_id': contract_id, 'component_operation_id': result.get('operation_id'),
+                    'component_state': result['state'], 'mock': result.get('mock', False)})
+            return ToolResult('invoke_component', success, data={
+                'result': result.get('result'), 'state': result['state'], 'artifact_id': result.get('artifact_id'),
+                'implementation_id': result.get('implementation_id'), 'operation_id': result.get('operation_id'),
+                'mock': result.get('mock', False), 'output_lineage': 'unreviewed-component-output'} if success else None,
+                error=None if success else 'component result is failed, held or inconclusive; inspect its operation',
+                gateway_decision='allow', event_id=event.event_id)
+        except ControlError as exc:
+            # An external executor may already have an uncertain effect; this
+            # refusal never claims that execution was independently prevented.
+            event = self.runner.emit(agent, 'tool_call', 'invoke_component', resource='contract:' + contract_id,
+                status='failed', pregated=(None,), payload={'contract_id': contract_id,
+                    'component_error': type(exc).__name__, 'effect_prevention_verified': False})
+            return ToolResult('invoke_component', False, error=str(exc), event_id=event.event_id)
+
     def start(self, run_id: str, agents: list[Agent], config) -> None:
         if self.run_id:
             raise Conflict("runtime controller cannot be reused for another run")
+        import json
+        from pydantic import TypeAdapter, ValidationError
+        from app.config import get_settings
+        from app.schemas import ControlId, RuntimeDependency
+        from app.modules.response.repository import Unavailable, canonical
+        raw = self._configured_dependencies
+        if raw is None:
+            raw = get_settings().response_component_dependencies
+        try:
+            raw = json.loads(raw) if isinstance(raw, str) else raw
+            if len(canonical(raw).encode()) > 65536 or len(raw) > 5:
+                raise ValueError('dependency catalog exceeds budget')
+            parsed = TypeAdapter(dict[ControlId, dict[ControlId, RuntimeDependency]]).validate_python(raw)
+            if set(parsed) - {'planner', 'analyst', 'coder', 'researcher', 'reviewer'} or any(len(values) > 16 for values in parsed.values()):
+                raise ValueError('unsupported dependency roles or count')
+            dependencies = {role: {cid: item.model_dump() for cid, item in entries.items()} for role, entries in parsed.items()}
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise Unavailable('server component dependency catalog is invalid') from exc
         occurrences = Counter()
         assignments = {}
         for agent in agents:
@@ -66,6 +141,12 @@ class ResponseRuntime:
         self.control.register_session(SessionRegistration(run_id=run_id, agents=assignments,
             live_guard=config.live_guard, gateway_mode=config.gateway_mode), actor="runtime-registrar", key=run_id)
         self.run_id, self.agents, self.principals = run_id, {a.agent_id: a for a in agents}, assignments
+        def bind_dependencies(tx):
+            session = tx.get('session', run_id)
+            return tx.update('session', run_id, {**session, 'component_dependencies': dependencies,
+                'dependency_digest': digest(dependencies)}, session['revision'])
+        self.repository.command('runtime-registrar', run_id, 'session.dependencies',
+            {'run_id': run_id, 'component_dependencies': dependencies}, bind_dependencies)
         if config.user_task:
             def unknown_context(tx):
                 for pid in assignments.values():

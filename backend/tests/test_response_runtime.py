@@ -254,3 +254,34 @@ def test_released_spoofed_message_enters_next_prompt_as_untrusted_document(runti
     assert captured[0].presented_as == 'document' and 'sender is UNVERIFIED' in captured[0].text
     assert captured[0].text.endswith('synthetic exact reviewed text')
     assert not runner.broker.get_inbox(agent.agent_id).get_messages(agent.agent_id)
+
+
+def test_component_catalog_rejects_privilege_flags_before_runtime_registration():
+    from app.modules.response.repository import Unavailable
+    repo = ResponseRepository()
+    control = ResponseControl(repo)
+    response = ResponseRuntime(control, component_dependencies={'coder': {'contract-test': {
+        'state_version': 'one', 'raw_command': 'must never run'}}})
+    try:
+        with pytest.raises(Unavailable, match='catalog'):
+            response.start('run-invalid', _make_agents('run-invalid', 'invalid', 5), ScenarioConfig(live_guard='contain'))
+        assert repo.list('principal') == repo.list('session') == []
+    finally:
+        repo.close()
+
+
+def test_undeclared_component_tool_has_no_host_fallback(runtime):
+    response, runner, agents = runtime
+    result = runner.tools.invoke_component(agents['coder'], 'contract-not-declared', [[1]])
+    assert not result.success and 'not declared' in result.error
+    assert response.repository.list('operation') == []
+    assert result.gateway_decision == 'not_checked'
+
+
+def test_autonomous_component_arguments_reject_nonfinite_or_oversized_json():
+    import json
+    from app.modules.simulator.autonomous import parse_decision
+    for value in [float('nan'), float('inf'), 'x' * 70000]:
+        response = parse_decision(json.dumps({'actions': [{'action': 'invoke_component',
+            'contract_id': 'contract-test', 'args': [value]}]}))
+        assert response['actions'] == []

@@ -51,6 +51,7 @@ ALLOWED_TOOLS: dict[str, set[str]] = {
     "read_inbox": set(),
     "access_external": {"target", "resource", "data"},
     "admin_operation": {"operation", "target", "params"},
+    'invoke_component': {'contract_id', 'args', 'kwargs'},
 }
 
 
@@ -145,6 +146,13 @@ class SimulatedAgent:
 
         if not isinstance(args, dict):
             return False, "Tool arguments must be a dictionary", {}
+        if tool_name == 'invoke_component':
+            from app.schemas import RuntimeComponentCall
+            from pydantic import ValidationError
+            try:
+                return True, '', RuntimeComponentCall.model_validate(args).model_dump()
+            except ValidationError:
+                return False, 'Component invocation requires a contract ID and bounded JSON arguments; context comes from the server', {}
 
         allowed_keys = ALLOWED_TOOLS[tool_name]
         sanitized_args: dict[str, Any] = {}
