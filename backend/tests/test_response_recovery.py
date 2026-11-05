@@ -38,7 +38,7 @@ def system(request):
         requires_clean_context=True, reason='injected context'), actor='operator', key='hold')
     principal_id = runtime.principals[agent.agent_id]
     repo.command('test', 'flow', 'test.flow', {}, lambda tx: tx.insert('flow',
-        digest({'kind': 'principal', 'subject': principal_id}), {'sources': [], 'unknown': True}))
+        digest({'kind': 'principal', 'subject': principal_id}), {'sources': [], 'unknown': True, 'output_hold': 'op-known-late-effect'}))
     req = ResumeRequest(run_id=runtime.run_id, incident_id=incident['incident_id'], reason='restart from reviewed baseline',
         expected_revision=2, restriction_ids=[restriction['restriction']['restriction_id']])
     yield control, runtime, runner, agent, req
@@ -71,6 +71,8 @@ def test_fresh_recovery_fences_old_memory_and_releases_only_named_hold(system):
     assert not result.success and not runner.env.fs.has_file('repo/src/stale.py')
     assert runtime.gate_event(agent.agent_id, 'task', action='start')
     assert control.repository.get('principal', runtime.principals[agent.agent_id])['context_epoch'] == 2
+    with control.repository.read() as tx:
+        assert runtime._flow(tx, 'principal', runtime.principals[agent.agent_id])['output_hold'] is None
 
 
 def test_simple_resume_cannot_release_clean_context_hold(system):

@@ -27,7 +27,7 @@ from app.modules.simulator.codework import _clean_json_or_text, _extract_code_bl
 from app.modules.simulator.sandbox import CODE_EXEC_FLAG, _code_exec_allowed, _child_env, _execute_code_safely  # noqa: F401
 from app.modules.simulator.collaboration import _autonomous_user_task_collaboration  # noqa: F401
 from app.modules.simulator.autonomous import autonomous_round
-from app.modules.response.mediation import ACTIVE_RUNTIME
+from app.modules.response.mediation import ACTIVE_RUNTIME, runtime_lifecycle
 
 
 ROUNDS = 2
@@ -75,6 +75,7 @@ def _normal_round(r: AgentRunner, agents: list[Agent], round_no: int) -> None:
 ATTACKS = SCENARIO_ATTACKS
 
 
+@runtime_lifecycle
 def run_simulation(
     config: ScenarioConfig,
     *,
@@ -125,6 +126,8 @@ def run_simulation(
         RecoveryService(response.control).complete_fresh(response)
     response_token = ACTIVE_RUNTIME.set(response)
     try:
+        if response:
+            response.health.start_heartbeat()
         if config.user_task or config.scenario_id == "user_directed":
             task_text = config.user_task or "Collaboratively design and implement a secure data pipeline."
             _autonomous_user_task_collaboration(runner, agents, task_text)

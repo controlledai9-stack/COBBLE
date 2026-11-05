@@ -102,7 +102,7 @@ class RecoveryService:
             fid = digest({'kind': 'principal', 'subject': principal['principal_id']})
             flow = tx.get('flow', fid, required=False)
             if flow:
-                tx.update('flow', fid, {**flow, 'sources': [], 'unknown': False,
+                tx.update('flow', fid, {**flow, 'sources': [], 'unknown': False, 'output_hold': None,
                     'reset_by_recovery': recovery_id}, flow['revision'])
             tx.update('principal', principal['principal_id'], {**principal, 'state': 'active'}, principal['revision'])
             from app.modules.response.notifications import notify

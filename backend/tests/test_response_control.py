@@ -49,6 +49,36 @@ def action(capability="network.external", agent="agent-a", run="run-one"):
     return AuthorizationRequest(run_id=run, agent_id=agent, capability=capability, target="external:test")
 
 
+def test_indexed_pending_scan_preserves_legacy_ownership_and_workspace_fences(tmp_path):
+    from app.modules.response.repository import PENDING_STATES
+    path = str(tmp_path / 'state.db')
+    repo, other = ResponseRepository(path, 'one'), ResponseRepository(path, 'two')
+    try:
+        control = setup_control(repo)
+        def seed(tx):
+            for index, state in enumerate((*PENDING_STATES, 'succeeded', 'failed', 'denied', 'output_held')):
+                tx.insert('operation', f'op-{index}', {'operation_id': f'op-{index}', 'state': state,
+                    'action': {'run_id': 'run-one', 'agent_id': 'agent-a'}})
+            return {'seeded': True}
+        repo.command('test', 'seed', 'test.seed', {}, seed)
+        other.command('test', 'seed', 'test.seed', {}, seed)
+        with repo.read() as tx:
+            operations = tx.pending_operations()
+            assert [op['state'] for op in operations] == list(PENDING_STATES)
+            assert control.pending_operation(tx, 'coder')['operation_id'] == 'op-0'
+            assert control.pending_operation(tx, 'researcher') is None
+            plan = tx.conn.execute("EXPLAIN QUERY PLAN SELECT data FROM response_records INDEXED BY response_pending_state WHERE workspace=? "
+                "AND kind='operation' AND json_extract(data, '$.state') IN (?,?,?,?) ORDER BY record_id",
+                ('one', *PENDING_STATES)).fetchall()
+            assert any('response_pending_state' in row[3] for row in plan)
+        with other.read() as tx:
+            assert len(tx.pending_operations()) == 4  # No cross-workspace duplicate rows.
+        assert repo.verify_audit()['valid'] and other.verify_audit()['valid']
+    finally:
+        repo.close()
+        other.close()
+
+
 def test_transaction_failure_rolls_back_state_command_and_audit(control):
     repo = control.repository
     before = repo.audit()

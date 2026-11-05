@@ -177,9 +177,13 @@ class ResponseControl:
     def _authorize(self, tx: Transaction, req: AuthorizationRequest, *, baseline_allowed: bool = True) -> AuthorizationResult:
         session, principal = self._principal(tx, req.run_id, req.agent_id)
         policy = tx.get("policy", "active")
+        from app.modules.response.health import health_reason
+        runtime_health = health_reason(tx, session, self.clock())
         decision, reason, restrictions = "allow", "permitted by registered capability policy", []
         if policy["integrity"] != "trusted":
             decision, reason = "deny", "control-plane integrity unavailable"
+        elif runtime_health:
+            decision, reason = "deny", runtime_health
         elif not self.context_current(session, principal, req.agent_id):
             decision, reason = "deny", "session/principal stopped, recovering or bound to a stale context"
         elif session["policy_epoch"] != policy["epoch"]:
@@ -261,7 +265,7 @@ class ResponseControl:
 
     @staticmethod
     def pending_operation(tx, principal_id, *, exclude=None):
-        for op in tx.list("operation"):
+        for op in tx.pending_operations():
             if op["operation_id"] == exclude or op["state"] not in {"prepared", "dispatched", "admitted", "reconciliation_required"}:
                 continue
             owner = op.get("principal_id")

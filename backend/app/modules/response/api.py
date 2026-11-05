@@ -120,6 +120,12 @@ def sessions(control: Control, run_id: str | None = Query(None, max_length=128))
     return control.repository.list("session", **({"run_id": run_id} if run_id else {}))
 
 
+@router.get('/runtime-health')
+def runtime_health(control: Control):
+    from app.modules.response.health import public_health
+    return [public_health(record, control.clock()) for record in control.repository.list('health')]
+
+
 @router.post("/incidents")
 def open_incident(req: IncidentCreate, actor: Operator, control: Control, key: RequestKey):
     return control.open_incident(req, actor=actor, key=key)

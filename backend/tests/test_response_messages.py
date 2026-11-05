@@ -76,8 +76,23 @@ def test_missing_content_expiry_and_new_context_cannot_release_message(system):
         messages.decide(record['message_hold_id'], 1, 'release', 'metadata is insufficient', actor='operator', key='missing')
     other = messages.hold(runtime.run_id, agent.agent_id, 'inbox/untrusted', {'claimed_sender': 'planner', 'content': 'exact'})
     messages.decide(other['message_hold_id'], 1, 'release', 'inspect', actor='operator', key='release')
-    now[0] += 301
+    # Keep observer authority current so this tests message-approval expiry,
+    # independently of the shorter executor health lease.
+    for _ in range(60):
+        now[0] += 5
+        runtime.health.renew()
+    now[0] += 1
+    runtime.health.renew()
     assert messages.consume(runtime, agent) == []
+
+
+def test_unavailable_observer_cannot_handoff_a_still_valid_reviewed_message(system):
+    runtime, _, agent, messages, _ = system
+    record = hold(system)
+    messages.decide(record['message_hold_id'], 1, 'release', 'inspect', actor='operator', key='release')
+    runtime.health.close()
+    assert messages.consume(runtime, agent) == []
+    assert runtime.repository.get('message_hold', record['message_hold_id'])['state'] == 'release_pending'
 
 
 def test_context_reset_cannot_inherit_message_release(system):

@@ -49,6 +49,7 @@ KINDS = frozenset({
     "policy", "principal", "session", "incident", "restriction", "approval", "operation",
     "quarantine", "artifact", "validation", "implementation", "contract", "evidence", "health", "flow", "review", "selection", "notification", "message_hold", "recovery",
 })
+PENDING_STATES = ('prepared', 'dispatched', 'admitted', 'reconciliation_required')
 
 
 class Transaction:
@@ -75,6 +76,16 @@ class Transaction:
         ).fetchall()
         return [doc for (raw,) in rows if (doc := json.loads(raw)) is not None
                 and all(doc.get(k) == v for k, v in (filters or {}).items())]
+
+
+    def pending_operations(self) -> list[dict]:
+        # Preserve legacy records without principal_id: ownership is resolved by
+        # the controller. Skip terminal history in SQL before JSON decoding.
+        rows = self.conn.execute(
+            "SELECT data FROM response_records INDEXED BY response_pending_state WHERE workspace=? AND kind='operation' "
+            "AND json_extract(data, '$.state') IN (?,?,?,?) ORDER BY record_id",
+            (self.workspace, *PENDING_STATES)).fetchall()
+        return [json.loads(raw) for (raw,) in rows]
 
     def insert(self, kind: str, identifier: str, data: dict) -> dict:
         self._kind(kind)
@@ -135,6 +146,9 @@ class ResponseRepository:
                 event_hash TEXT NOT NULL, PRIMARY KEY(workspace,sequence));
             CREATE TABLE IF NOT EXISTS response_heads (
                 workspace TEXT PRIMARY KEY, sequence INTEGER NOT NULL, event_hash TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS response_pending_state
+                ON response_records(workspace, json_extract(data, '$.state'), record_id)
+                WHERE kind='operation';
             CREATE TRIGGER IF NOT EXISTS response_audit_no_update BEFORE UPDATE ON response_audit
                 BEGIN SELECT RAISE(ABORT, 'response audit is append-only'); END;
             CREATE TRIGGER IF NOT EXISTS response_audit_no_delete BEFORE DELETE ON response_audit

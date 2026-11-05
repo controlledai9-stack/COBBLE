@@ -1,5 +1,5 @@
 """Human decisions on exact untrusted input; review never authenticates a sender."""
-from app.modules.response.repository import Conflict, Forbidden, digest
+from app.modules.response.repository import Conflict, Forbidden, Unavailable, digest
 from app.modules.response.notifications import notify
 from app.modules.response.control import identifier
 from app.schemas import AuthorizationRequest
@@ -59,6 +59,8 @@ class MessageReview:
         result = []
         for record in self.repository.list('message_hold', run_id=runtime.run_id, agent_id=agent.agent_id, state='release_pending'):
             def apply(tx):
+                if getattr(runtime, 'health', None) is not None:
+                    runtime.health.assert_live(tx)
                 current = tx.get('message_hold', record['message_hold_id'])
                 _, principal = self.control._principal(tx, runtime.run_id, agent.agent_id)
                 decision = self.control._authorize(tx, AuthorizationRequest(run_id=runtime.run_id,
@@ -81,7 +83,7 @@ class MessageReview:
             try:
                 handed = self.repository.command('runtime-message', identifier('handoff'), 'message.handoff',
                     {'message_id': record['message_hold_id'], 'revision': record['revision']}, apply)
-            except (Forbidden, Conflict):
+            except (Forbidden, Conflict, Unavailable):
                 continue
             result.append(handed)
         return result

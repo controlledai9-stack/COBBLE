@@ -36,6 +36,7 @@ class ResponseRuntime:
         self._quarantine_service = quarantine_service
         self.recovery_id = recovery_id
         self._configured_dependencies = component_dependencies
+        self.health = None
 
     def quarantine_service(self):
         if self._quarantine_service is None:
@@ -60,6 +61,8 @@ class ResponseRuntime:
             raise Forbidden('component caller is not the registered runtime agent')
         call_id = identifier('dependency-call')
         try:
+            with self.repository.read() as tx:
+                self.health.assert_live(tx)
             session = self.repository.get('session', self.run_id)
             spec = session.get('component_dependencies', {}).get(agent.role, {}).get(contract_id)
             if spec is None:
@@ -70,6 +73,7 @@ class ResponseRuntime:
             success = result['state'] in {'succeeded', 'development_stub'}
             if success:
                 def handoff(tx):
+                    self.health.assert_live(tx)
                     current_session, principal = self.control._principal(tx, self.run_id, agent.agent_id)
                     if not self.control.context_current(current_session, principal, agent.agent_id):
                         raise Forbidden('component recipient context changed before output handoff')
@@ -153,6 +157,8 @@ class ResponseRuntime:
                     self._merge_flow(tx, "principal", pid, [], unknown=True)
                 return {"run_id": run_id, "input_context": "untrusted"}
             self.repository.command("runtime-registrar", run_id, "context.untrusted", {"run_id": run_id}, unknown_context)
+        from app.modules.response.health import RuntimeHealth
+        self.health = RuntimeHealth(self.control, run_id)
 
     def bind(self, runner) -> None:
         if runner.run_id != self.run_id:
@@ -165,11 +171,12 @@ class ResponseRuntime:
     def _flow(self, tx, kind, subject):
         return tx.get("flow", self._flow_id(kind, subject), required=False) or {"sources": [], "unknown": False}
 
-    def _merge_flow(self, tx, kind, subject, sources, unknown=False):
+    def _merge_flow(self, tx, kind, subject, sources, unknown=False, output_hold=None):
         fid = self._flow_id(kind, subject)
         old = tx.get("flow", fid, required=False)
         combined = sorted(set(sources) | set((old or {}).get("sources", [])))
         doc = {"subject": subject, "kind": kind, "sources": combined[:64],
+               'output_hold': output_hold or (old or {}).get('output_hold'),
                "unknown": unknown or len(combined) > 64 or bool((old or {}).get("unknown")),
                **({"run_id": self.run_id} if kind == "resource" else {})}
         if old:
@@ -193,7 +200,8 @@ class ResponseRuntime:
             if update and (sources or unknown or not known):
                 self._merge_flow(tx, "principal", principal_id, sources, unknown or not known)
         if request.capability == "resource.write" and update and (sources or unknown):
-            self._merge_flow(tx, "resource", request.resource or "", sources, unknown)
+                self._merge_flow(tx, "resource", request.resource or "", sources, unknown,
+                    output_hold=actor.get('output_hold'))
         if request.capability == "network.external":
             if sources or unknown or not known:
                 return "external transfer held by sensitivity or unknown-lineage policy"
@@ -247,6 +255,29 @@ class ResponseRuntime:
                 "arguments_hash": digest(args)})
         return request, baseline_allowed, sensitive, known, action
 
+    @staticmethod
+    def _resource_pending(tx, request):
+        for op in tx.pending_operations():
+            action = op.get('action') or {}
+            if action.get('run_id', op.get('run_id')) != request.run_id:
+                continue  # Virtual files, databases and broker queues are run-scoped.
+            capability, resource = action.get('capability'), action.get('resource')
+            if (request.capability in {'resource.read', 'resource.write'}
+                    and capability in {'resource.read', 'resource.write'}
+                    and (request.capability == 'resource.write' or capability == 'resource.write')
+                    and (resource == request.resource or resource is None and capability == 'resource.write')):
+                return True
+            if (request.parameters.get('tool') == 'read_inbox' and capability == 'message.send'
+                    and action.get('target') == request.agent_id):
+                return True
+        return False
+
+    def _output_held(self, tx, request):
+        resource = self._flow(tx, 'resource', request.resource or '')
+        actor = self._flow(tx, 'principal', self.principals[request.agent_id])
+        return bool(resource.get('output_hold') or actor.get('output_hold')
+                    and request.capability in {'network.external', 'message.send'})
+
     def execute_tool(self, registry, tool_name, agent, args, effect):
         from app.modules.simulator.tools import ToolResult
 
@@ -254,16 +285,21 @@ class ResponseRuntime:
         key = identifier("call")
 
         def admit(tx):
+            self.health.assert_live(tx)
             decision = self.control._authorize(tx, request, baseline_allowed=baseline)
             reason = self._information_flow(tx, request, sensitive=sensitive, known=known)
             principal_id = self.principals[agent.agent_id]
-            if self.control.pending_operation(tx, principal_id):
+            pending = self.control.pending_operation(tx, principal_id) or self._resource_pending(tx, request)
+            held_output = self._output_held(tx, request)
+            if pending:
                 reason = "a prior effect is in flight or requires reconciliation"
+            elif held_output:
+                reason = 'resource/context has a held runtime output; clean recovery or review required'
             permitted = decision.decision == "allow" and reason is None
             if self.control.profile.mode == "monitor":
                 # Monitor cannot authorize code, administrative or unknown tools.
                 permitted = (decision.decision in {"allow", "deny"} and baseline and
-                             reason != "a prior effect is in flight or requires reconciliation" and request.capability in
+                             not pending and not held_output and request.capability in
                              {"resource.read", "resource.write", "message.send", "network.external"})
                 session, principal = self.control._principal(tx, self.run_id, agent.agent_id)
                 policy = tx.get('policy', 'active')
@@ -299,7 +335,10 @@ class ResponseRuntime:
         finally:
             ADMITTED_RUNTIME.reset(token)
         state = "succeeded" if result.success else "denied" if result.gateway_decision == "blocked" else "failed"
-        self._finish(op, state, success=result.success, callback_invoked=True, event_id=result.event_id)
+        completed = self._finish(op, state, success=result.success, callback_invoked=True, event_id=result.event_id)
+        if completed['state'] == 'output_held':
+            return ToolResult(tool_name=tool_name, success=False,
+                error='effect completed under stale runtime authority; output held for review', event_id=result.event_id)
         return result
 
     def observe_event(self, event):
@@ -325,12 +364,57 @@ class ResponseRuntime:
             current = tx.get("operation", op["operation_id"])
             if current["state"] not in {"admitted", "denied"}:
                 raise Conflict("runtime operation already has an outcome")
-            return tx.update("operation", op["operation_id"], {**current, "state": state,
+            outcome, held_reason = state, None
+            if callback_invoked and verified:
+                from app.modules.response.repository import ControlError
+                try:
+                    self.health.assert_live(tx)
+                    session, principal = self.control._principal(tx, self.run_id, current['action']['agent_id'])
+                    policy = tx.get('policy', 'active')
+                    if (not self.control.context_current(session, principal, current['action']['agent_id'])
+                            or principal['revision'] != current['fence'] or policy['epoch'] != current['policy_epoch']
+                            or policy['integrity'] != 'trusted'):
+                        held_reason = 'principal/context/policy authority changed during effect'
+                except ControlError as exc:
+                    held_reason = str(exc)
+                if held_reason:
+                    outcome = 'output_held'
+                    action = current['action']
+                    self._merge_flow(tx, 'principal', current['principal_id'], [], unknown=True,
+                        output_hold=current['operation_id'])
+                    if action['capability'] == 'resource.write' and action.get('resource'):
+                        self._merge_flow(tx, 'resource', action['resource'], [], unknown=True,
+                            output_hold=current['operation_id'])
+                    if action['capability'] == 'message.send' and action.get('target') in self.principals:
+                        self._merge_flow(tx, 'principal', self.principals[action['target']], [], unknown=True,
+                            output_hold=current['operation_id'])
+                        self._merge_flow(tx, 'resource', 'inbox/' + action['target'], [], unknown=True,
+                            output_hold=current['operation_id'])
+                    iid = identifier('inc')
+                    tx.insert('incident', iid, {'incident_id': iid, 'run_id': self.run_id,
+                        'status': 'open', 'phase': 'output_held', 'severity': 'high',
+                        'reason': held_reason, 'finding_kind': 'runtime_authority_changed',
+                        'operation_id': current['operation_id'], 'opened_at': now_iso(), 'owner': 'security-review'})
+                    from app.modules.response.notifications import notify
+                    affected = {current['principal_id']: action['agent_id']}
+                    if action['capability'] == 'message.send' and action.get('target') in self.principals:
+                        affected[self.principals[action['target']]] = action['target']
+                    for pid, aid in affected.items():
+                        principal = tx.get('principal', pid)
+                        tx.update('principal', pid, principal, principal['revision'])
+                        rid = identifier('rst')
+                        tx.insert('restriction', rid, {'restriction_id': rid, 'incident_id': iid,
+                            'principal_id': pid, 'run_id': self.run_id, 'agent_id': aid,
+                            'capabilities': RUNTIME_CAPABILITIES, 'resource': None, 'state': 'active',
+                            'reason': held_reason, 'requires_clean_context': True, 'created_at': now_iso()})
+                        notify(tx, current['operation_id'] + ':' + pid, 'runtime_output_held', self.run_id, aid)
+            return tx.update("operation", op["operation_id"], {**current, "state": outcome,
+                'effect_outcome': state, 'held_reason': held_reason,
                 "success": success, "callback_invoked": callback_invoked, "event_id": event_id,
                 "verification_status": "local_executor" if verified else "unverified",
                 "completed_at": now_iso(), "prevention_verified": state == "denied" and not callback_invoked},
                 current["revision"])
-        self.repository.command(f"runtime:{self.run_id}", op["operation_id"], "runtime.receipt",
+        return self.repository.command(f"runtime:{self.run_id}", op["operation_id"], "runtime.receipt",
             {"state": state, "success": success, "callback_invoked": callback_invoked,
              "verified": verified, "event_id": event_id}, apply)
 
@@ -357,11 +441,20 @@ class ResponseRuntime:
                                    resource=resource, target=target)
         baseline = self.runner.gateway.check(agent, resource=resource, target=target)
         with self.repository.read() as tx:
+            from app.modules.response.repository import Unavailable
+            try:
+                self.health.assert_live(tx)
+            except Unavailable as exc:
+                return str(exc)
             session, principal = self.control._principal(tx, self.run_id, agent_id)
             policy = tx.get('policy', 'active')
             if (not self.control.context_current(session, principal, agent_id)
                     or session['policy_epoch'] != policy['epoch'] or policy['integrity'] != 'trusted'):
                 return 'runtime session/context or policy fence is no longer current'
+            if self._resource_pending(tx, req):
+                return 'resource has an in-flight or unresolved effect'
+            if self._output_held(tx, req):
+                return 'resource/context has a held runtime output'
             decision = self.control._authorize(tx, req, baseline_allowed=baseline.decision not in {"blocked", "would_block"})
             reason = self._information_flow(tx, req, known=bool(resource) if capability == "network.external" else True)
         if self.control.profile.mode != "enforce":
@@ -398,11 +491,14 @@ class ResponseRuntime:
 
     @staticmethod
     def report_for(control, run_id):
-        control.repository.get("session", run_id)
+        session = control.repository.get("session", run_id)
+        from app.modules.response.health import public_health
+        health = (public_health(control.repository.get('health', session['runtime_health_id']), control.clock())
+                  if session.get('runtime_health_id') else None)
         all_operations = control.repository.list("operation", run_id=run_id)
         operations = [op for op in all_operations if op.get("effect_scope") == "local_virtual_tool"]
         return {"run_id": run_id, "scope": "local_virtual_tools", "mode": control.profile.mode,
-            "operations": operations, "counts": dict(Counter(o["state"] for o in operations)),
+            "operations": operations, "counts": dict(Counter(o["state"] for o in operations)), 'health': health,
             "verified_preventions": sum(bool(o.get("prevention_verified")) for o in operations),
             "other_operation_counts": dict(Counter(op["executor_id"] for op in all_operations
                 if op.get("effect_scope") != "local_virtual_tool")),

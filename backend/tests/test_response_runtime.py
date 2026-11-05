@@ -51,6 +51,124 @@ def hold(response, agent, capabilities, *, key="hold"):
         actor="operator", key=key)
 
 
+@pytest.mark.parametrize('mode', ['enforce', 'monitor'])
+def test_expired_runtime_observer_never_invokes_a_tool_body(runtime, mode, monkeypatch):
+    from app.modules.response.control import ControlProfile
+    from app.modules.response.repository import Unavailable
+    response, runner, agents = runtime
+    response.control.profile = ControlProfile(mode=mode)
+    record = response.repository.get('health', response.health.health_id)
+    monkeypatch.setattr(response.control, 'clock', lambda: record['expires_at'])
+    effect = Mock(wraps=runner.env.fs.write_file)
+    runner.env.fs.write_file = effect
+    with pytest.raises(Unavailable, match='lease'):
+        runner.tools.write_file(agents['coder'], 'repo/src/expired.py', 'must not write')
+    effect.assert_not_called()
+    assert response.gate_event(agents['coder'].agent_id, 'resource_access', action='write', resource='repo/src/expired.py')
+
+
+def test_health_lost_during_a_real_effect_holds_output_without_claiming_prevention(runtime, monkeypatch):
+    response, runner, agents = runtime
+    record = response.repository.get('health', response.health.health_id)
+    wall = [record['observed_at']]
+    monkeypatch.setattr(response.control, 'clock', lambda: wall[0])
+    original = runner.env.fs.write_file
+    def write(*args, **kwargs):
+        value = original(*args, **kwargs)
+        wall[0] = record['expires_at']
+        return value
+    runner.env.fs.write_file = write
+    result = runner.tools.write_file(agents['coder'], 'repo/src/inflight.py', 'effect already applied')
+    assert not result.success and result.data is None
+    assert runner.env.fs.read_file('repo/src/inflight.py') == 'effect already applied'
+    operation = response.repository.list('operation')[-1]
+    assert operation['state'] == 'output_held' and operation['effect_outcome'] == 'succeeded'
+    assert operation['callback_invoked'] and not operation['prevention_verified']
+    assert operation['verification_status'] == 'local_executor'
+    holds = response.repository.list('restriction', requires_clean_context=True)
+    assert len(holds) == 1 and holds[0]['agent_id'] == agents['coder'].agent_id
+    assert any(item['kind'] == 'runtime_output_held' for item in response.repository.list('notification'))
+
+
+def test_simulator_setup_failure_closes_runtime_authority(monkeypatch):
+    from app.modules.simulator import engine
+    repo = ResponseRepository()
+    response = ResponseRuntime(ResponseControl(repo))
+    try:
+        monkeypatch.setattr(engine.ENVIRONMENT_REGISTRY, 'create', Mock(side_effect=RuntimeError('setup failed')))
+        with pytest.raises(RuntimeError, match='setup failed'):
+            run_simulation(ScenarioConfig(live_guard='contain'), response=response)
+        assert response.repository.get('health', response.health.health_id)['state'] == 'closed'
+        assert response.health._thread is None
+    finally:
+        repo.close()
+
+
+@pytest.mark.parametrize('mode', ['enforce', 'monitor'])
+def test_restriction_during_write_quarantines_actual_resource_lineage(runtime, mode):
+    from app.modules.response.control import ControlProfile
+    response, runner, agents = runtime
+    response.control.profile = ControlProfile(mode=mode)
+    original = runner.env.fs.write_file
+    def write(*args, **kwargs):
+        value = original(*args, **kwargs)
+        hold(response, agents['coder'], ['resource.write'])
+        return value
+    runner.env.fs.write_file = write
+    result = runner.tools.write_file(agents['coder'], 'repo/src/late.txt', 'late effect')
+    assert not result.success and runner.env.fs.read_file('repo/src/late.txt') == 'late effect'
+    assert not runner.tools.read_file(agents['coder'], 'repo/src/late.txt').success
+    assert runner.tools.read_file(agents['researcher'], 'docs/wiki').success
+    with response.repository.read() as tx:
+        assert response._flow(tx, 'resource', 'repo/src/late.txt')['unknown']
+        assert response._flow(tx, 'principal', response.principals[agents['coder'].agent_id])['unknown']
+
+
+@pytest.mark.parametrize('mode', ['enforce', 'monitor'])
+def test_another_principal_cannot_read_or_overwrite_an_unreceipted_write(runtime, mode):
+    from app.modules.response.control import ControlProfile
+    response, runner, agents = runtime
+    response.control.profile = ControlProfile(mode=mode)
+    original = runner.env.fs.write_file
+    attempted = []
+    def write(*args, **kwargs):
+        value = original(*args, **kwargs)
+        attempted.append(runner.tools.read_file(agents['analyst'], 'repo/src/racing.txt'))
+        attempted.append(runner.tools.write_file(agents['analyst'], 'repo/src/racing.txt', 'racing overwrite'))
+        assert runner.tools.read_file(agents['researcher'], 'docs/wiki').success
+        return value
+    runner.env.fs.write_file = write
+    assert runner.tools.write_file(agents['coder'], 'repo/src/racing.txt', 'admitted write').success
+    assert len(attempted) == 2 and all(not result.success for result in attempted)
+    assert runner.env.fs.read_file('repo/src/racing.txt') == 'admitted write'
+    assert runner.tools.read_file(agents['analyst'], 'repo/src/racing.txt').success
+
+
+@pytest.mark.parametrize('mode', ['enforce', 'monitor'])
+def test_late_message_is_held_at_inbox_before_and_after_a_changed_sender_fence(runtime, mode):
+    from app.modules.response.control import ControlProfile
+    response, runner, agents = runtime
+    response.control.profile = ControlProfile(mode=mode)
+    sender, recipient = agents['coder'], agents['analyst']
+    original = runner.broker.send
+    attempts = []
+    def send(*args, **kwargs):
+        delivery = original(*args, **kwargs)
+        attempts.append(runner.tools.read_inbox(recipient))
+        hold(response, sender, ['message.send'])
+        return delivery
+    runner.broker.send = send
+    result = runner.tools.send_message(sender, recipient.agent_id, 'share', 'late', 'late message')
+    assert not result.success and not attempts[0].success
+    assert runner.broker.get_inbox(recipient.agent_id).count == 1  # Delivery was not undone.
+    assert not runner.tools.read_inbox(recipient).success
+    with response.repository.read() as tx:
+        assert response._flow(tx, 'resource', 'inbox/' + recipient.agent_id)['unknown']
+        assert response._flow(tx, 'principal', response.principals[recipient.agent_id])['unknown']
+    holds = response.repository.list('restriction', requires_clean_context=True)
+    assert {item['agent_id'] for item in holds} == {sender.agent_id, recipient.agent_id}
+
+
 def test_live_guard_denial_prevents_legacy_file_and_database_bodies():
     class DenyingGuard:
         def gate(self, *_args, **_kwargs):
@@ -229,6 +347,11 @@ def test_protected_pipeline_and_api_are_explicit_about_real_effect_scope(monkeyp
             report = client.get(f"/api/response/runs/{result.json()['run']['run_id']}/report", headers=headers)
             assert report.status_code == 200
             assert report.json()["scope"] == "local_virtual_tools"
+            assert report.json()['health']['state'] == 'closed'
+            assert client.get('/api/response/runtime-health').status_code == 401
+            health = client.get('/api/response/runtime-health', headers=headers)
+            assert health.status_code == 200 and health.json()[0]['state'] == 'closed'
+            assert 'owner_hash' not in health.text and 'secret' not in health.text
     finally:
         app.dependency_overrides.pop(get_pipeline, None)
         app.dependency_overrides.pop(get_response_control, None)

@@ -9,6 +9,19 @@ ACTIVE_RUNTIME: ContextVar[object | None] = ContextVar("response_runtime", defau
 ADMITTED_RUNTIME: ContextVar[object | None] = ContextVar("response_admission", default=None)
 
 
+def runtime_lifecycle(function):
+    """Close response authority even when simulator setup/initialization fails."""
+    @wraps(function)
+    def invoke(*args, **kwargs):
+        response = kwargs.get('response')
+        try:
+            return function(*args, **kwargs)
+        finally:
+            if response is not None and response.health is not None:
+                response.health.close()
+    return invoke
+
+
 def response_tool(function):
     """Wrap only the registered simulator tool bodies, preserving their signature."""
     signature = inspect.signature(function)
