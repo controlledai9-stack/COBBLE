@@ -27,13 +27,14 @@ TOOLS = {
 
 
 class ResponseRuntime:
-    def __init__(self, control: ResponseControl, *, quarantine_service=None):
+    def __init__(self, control: ResponseControl, *, quarantine_service=None, recovery_id=None):
         self.control, self.repository = control, control.repository
         self.run_id = ""
         self.agents: dict[str, Agent] = {}
         self.principals: dict[str, str] = {}
         self.runner = None
         self._quarantine_service = quarantine_service
+        self.recovery_id = recovery_id
 
     def quarantine_service(self):
         if self._quarantine_service is None:
@@ -183,6 +184,10 @@ class ResponseRuntime:
                 permitted = (decision.decision in {"allow", "deny"} and baseline and
                              reason != "a prior effect is in flight or requires reconciliation" and request.capability in
                              {"resource.read", "resource.write", "message.send", "network.external"})
+                session, principal = self.control._principal(tx, self.run_id, agent.agent_id)
+                policy = tx.get('policy', 'active')
+                permitted = (permitted and self.control.context_current(session, principal, agent.agent_id)
+                    and session['policy_epoch'] == policy['epoch'] and policy['integrity'] == 'trusted')
             oid = identifier("op")
             if permitted:
                 self._information_flow(tx, request, sensitive=sensitive, known=known, update=True)
@@ -271,6 +276,11 @@ class ResponseRuntime:
                                    resource=resource, target=target)
         baseline = self.runner.gateway.check(agent, resource=resource, target=target)
         with self.repository.read() as tx:
+            session, principal = self.control._principal(tx, self.run_id, agent_id)
+            policy = tx.get('policy', 'active')
+            if (not self.control.context_current(session, principal, agent_id)
+                    or session['policy_epoch'] != policy['epoch'] or policy['integrity'] != 'trusted'):
+                return 'runtime session/context or policy fence is no longer current'
             decision = self.control._authorize(tx, req, baseline_allowed=baseline.decision not in {"blocked", "would_block"})
             reason = self._information_flow(tx, req, known=bool(resource) if capability == "network.external" else True)
         if self.control.profile.mode != "enforce":

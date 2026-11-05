@@ -77,10 +77,16 @@ class ResponseControl:
             if rank[req.gateway_mode] < rank[self.profile.minimum_gateway]:
                 raise Forbidden("run cannot downgrade the protected gateway profile")
             for principal_id in req.agents.values():
-                if tx.get("principal", principal_id)["state"] == "stopped":
+                principal = tx.get("principal", principal_id)
+                if principal["state"] == "stopped":
                     raise Forbidden("stopped principal requires independent recovery before new work")
+                if principal['state'] == 'recovering':
+                    recovery = tx.get('recovery', principal['recovery_id'])
+                    if recovery['fresh_run_id'] != req.run_id:
+                        raise Forbidden('principal is fenced pending its designated fresh recovery session')
             return tx.insert("session", req.run_id, {
                 **req.model_dump(), "state": "active", "policy_epoch": policy["epoch"], "created_at": now_iso(),
+                'context_epochs': {aid: tx.get('principal', pid)['context_epoch'] for aid, pid in req.agents.items()},
             })
         return self.repository.command(actor, key, "session.register", req.model_dump(), apply)
 
@@ -90,6 +96,12 @@ class ResponseControl:
         if agent_id not in session["agents"]:
             raise Forbidden("agent is not registered in this run")
         return session, tx.get("principal", session["agents"][agent_id])
+
+    @staticmethod
+    def context_current(session, principal, agent_id):
+        # Historical sessions predate explicit epochs and belong to epoch one.
+        return (session['state'] == 'active' and principal['state'] == 'active'
+                and session.get('context_epochs', {}).get(agent_id, 1) == principal['context_epoch'])
 
     def open_incident(self, req: IncidentCreate, *, actor: str, key: str) -> dict:
         def apply(tx):
@@ -168,8 +180,8 @@ class ResponseControl:
         decision, reason, restrictions = "allow", "permitted by registered capability policy", []
         if policy["integrity"] != "trusted":
             decision, reason = "deny", "control-plane integrity unavailable"
-        elif session["state"] != "active" or principal["state"] == "stopped":
-            decision, reason = "deny", "session or principal stopped"
+        elif not self.context_current(session, principal, req.agent_id):
+            decision, reason = "deny", "session/principal stopped, recovering or bound to a stale context"
         elif session["policy_epoch"] != policy["epoch"]:
             decision, reason = "deny", "run policy epoch is stale"
         elif not baseline_allowed or req.capability not in principal["capabilities"]:

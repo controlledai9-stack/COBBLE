@@ -118,6 +118,11 @@ def run_simulation(
         response=response,
     )
     runner.register_agents(agents)
+    if response and response.recovery_id:
+        if env is not None or broker is not None or adapter is not None or config.workspace_dir or config.user_task or config.agent_backend != 'deterministic':
+            raise ValueError('recovery requires fresh server-owned deterministic context')
+        from app.modules.response.recovery import RecoveryService
+        RecoveryService(response.control).complete_fresh(response)
     response_token = ACTIVE_RUNTIME.set(response)
     try:
         if config.user_task or config.scenario_id == "user_directed":

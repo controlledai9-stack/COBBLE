@@ -27,6 +27,7 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 | Frontend after quarantine/component request types | Production TypeScript/Vite build and all four tests passed. No operator UI is claimed. |
 | Generated capture and team response backend | Docker-enabled full run: 699 passed in 203.29 seconds, no skips, one existing deprecation warning. An additional next-turn message integration test was added after that run began; the current runtime/message suites then passed 23 tests. |
 | Latest frontend request types | Production build and all four tests passed with generated-Git-link and message-review types. |
+| Local fresh-session recovery | Docker-enabled full backend: 708 passed in 202.57 seconds, no skips. After the final integrity guard was added, current recovery/control/runtime/message suites passed 53 tests, including ten recovery cases across enforce/monitor. One existing deprecation warning remains. |
 | Hosted integration | Authentication inspected only. No hosted policies, CI runs, attestation service or deployment configured. |
 | Dependency security | Original frontend audit reported six findings. Tooling updated to Vite 8.3.6, Vitest 4.1.12, React plugin 6.2.1 and PostCSS 8.5.32. Four tests, production build and `npm audit --audit-level=moderate` pass; zero known audit findings. |
 
@@ -36,8 +37,8 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 | --- | --- | --- |
 | S0 | In progress | [Contract decisions](verification/member4-contracts.md) recorded; runtime/identity/flow/health agreements, host, budgets and evaluation charter still need completion. |
 | S1 | In progress | Repository/restart/concurrency/audit core implemented; complete command/fence/receipt/reconciliation/retention/quota protocols and denial evidence remain. |
-| S2 | In progress | Policy/operator API foundation implemented; full role/object access, clean-context recovery, revocation/profile lifecycle and runtime checks remain. |
-| S3 | In progress | Actual virtual-tool/broker gates, local receipts, detector persistence and minimal flow controls implemented; health leases, clean-context recovery, broader cancellation/reconciliation and measured overhead remain. |
+| S2 | In progress | Policy/operator APIs and local deterministic fresh-session recovery implemented. Full role/object access, broader hosted/LLM recovery, revocation/profile lifecycle and remaining runtime checks are open. |
+| S3 | In progress | Virtual-tool/broker gates, local receipts, detector persistence, flow controls and context-epoch fences implemented. Health leases, external cancellation/reconciliation, broader recovery and measured overhead remain. |
 | S4A | In progress | Snapshots, restricted evidence-class metadata, durable capture/reconciliation and immutable worker materialization connected. Automatic generated-bundle capture, retention enforcement, quotas and full crash/expansion matrix remain. |
 | S4B | In progress | Real Git primitives and authenticated quarantine/review/exact-action promotion connected, including successful-effect-before-audit-failure reconciliation. Interactive hunk walkthrough, cleanup lifecycle and full adversarial/race gates remain. |
 | S4C | In progress | Versioned disposable-state contract/implementation registry, current/previous trusted selection, explicit dev mock/held/unavailable, revocation/context checks and sandboxed component invocation implemented. Simulator dependency integration, richer lineage/state classes and full recovery/compatibility evaluation remain. |
@@ -47,7 +48,7 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 
 ## Next execution
 
-Connect generated simulator bundles and dependent component calls to this workflow; complete S3 health/recovery/performance gates, then the operator demonstration and frozen S6 evaluation. Preserve the outstanding R1–R7 tracks and complete all BR gates before claiming any release profile.
+Finish simulator-dependent component tools and the operator review UI, then complete S3 health/cancellation/performance gates and the frozen S6 evaluation. Generated bundle capture and the bounded local fresh-session recovery path are now connected. Preserve R1–R7 and complete all BR gates before claiming any release profile.
 
 ## Current simulator and team-role additions
 
@@ -60,10 +61,12 @@ The explicit Member 4 responsibilities are tracked as follows:
 | Requirement | Implementation and remaining work |
 | --- | --- |
 | Quarantined message, hijack tripwire, egress hold | Existing detection preserved; persistent pause/egress restrictions connected. SG-026 now persists exact bounded input in a restricted message hold, with transactional notification. Review can confirm the hold or release exact content as untrusted input. |
-| Human review queue | Authenticated queue lists active restrictions, unreleased code quarantines and message holds. Operators can confirm an active restriction, use scoped resume, or decide message release/confirmation. Message release expires after five minutes and requires the same active recipient context and no separate holds. Clean-context recovery and operator UI remain unfinished. |
+| Human review queue | Authenticated queue lists active restrictions, unreleased code quarantines and message holds. Operators can confirm a restriction, use scoped resume, or review messages. A fresh-session-only local recovery path now fences old contexts and releases named clean-context holds after fresh baseline initialization. Broader external/LLM recovery and operator UI remain unfinished. |
 | SG-026 policy | Newly constructed default policies explicitly map SG-026 to block, without pausing the impersonated recipient. Existing persisted custom policies are not silently overwritten; explicit migration remains required. |
 | Pause notifications | Transactional durable local operator notifications accompany restrictions and detector pause/egress signals; generated quarantine also notifies. Authenticated list/acknowledge endpoints exist. Acknowledgement does not resume work. Push/UI delivery remains unfinished. |
 
 These additions are partial progress, not completion of S3/S4/S5 or the entire team-role checklist. No external notification messages are sent.
 
 Message release never verifies the claimed sender or inserts a forged broker send. The next autonomous turn reserves the exact reviewed content as an explicitly untrusted document, conservatively labels recipient context unknown, and leaves `delivery_verified=false`. Reservation prevents automatic replay; a crash-gap handoff cannot be claimed delivered. No later turn after the run ends is fabricated. Missing/oversized original content, expired approval, changed context, current policy denial, unrelated restrictions or uncertain effects remain held.
+
+Local fresh-session recovery now has a durable recovering state, designated new run and context epoch fencing. It checks empty fresh memory/broker state before releasing only named incident restrictions, preserves other holds/artifact quarantine, rejects unknown effects and stops stale runners even in monitor mode. See [bounded recovery contract](verification/member4-recovery.md). Broader health/cancellation/recovery gates remain open.

@@ -355,7 +355,8 @@ def review_queue(control: Control):
         return {'restrictions': tx.list('restriction', filters={'state': 'active'}),
             'quarantines': [q for q in tx.list('quarantine') if q['state'] not in {'promoted', 'rejected'}],
             'messages': [m for m in tx.list('message_hold') if m['state'] in {'held', 'release_pending', 'handoff_reserved'}],
-            'limitations': ['released messages remain untrusted; live next-turn handoff required', 'clean-context recovery is not yet complete']}
+            'limitations': ['released messages remain untrusted; live next-turn handoff required',
+                'fresh-session recovery supports the local deterministic simulator; external cancellation unsupported']}
 
 
 @router.post('/restrictions/{restriction_id}/confirm')
@@ -367,3 +368,16 @@ def confirm_restriction(restriction_id: str, req: ArtifactRevocation, control: C
 def review_message(message_id: str, req: MessageReviewRequest, control: Control, actor: Operator, key: RequestKey):
     from app.modules.response.messages import MessageReview
     return MessageReview(control).decide(message_id, req.expected_revision, req.verdict, req.reason, actor=actor, key=key)
+
+
+@router.post('/agents/{agent_id}/recover-fresh')
+def recover_fresh(agent_id: str, req: ResumeRequest, control: Control, actor: Operator, key: RequestKey):
+    from app.modules.response.recovery import RecoveryService
+    service = RecoveryService(control)
+    record = service.prepare(agent_id, req, actor=actor, key=key)
+    return service.run(record['recovery_id'])
+
+
+@router.get('/recoveries/{recovery_id}')
+def recovery_record(recovery_id: str, control: Control):
+    return control.repository.get('recovery', recovery_id)
