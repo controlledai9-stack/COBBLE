@@ -71,4 +71,7 @@ input[type="checkbox"] {
 .operator-explanation { font-size: 13px; line-height: 1.7; color: #59685f; margin: 15px 0; }
 .operator-empty { padding: 38px 15px; color: #6f7b73; font-size: 13px; line-height: 1.8; }
 .operator-footer { border-top: 1px solid var(--desk-line); padding: 12px 24px; display: grid; gap: 4px; font-size: 11px; color: #78827b; }
+.operator-lifecycle { margin: 18px 24px; padding: 16px; border: 1px solid var(--desk-line); border-radius: 10px; background: #fafbf9; }
+.operator-lifecycle > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--desk-ink); }
+.operator-detail .operator-lifecycle { margin: 24px 0 0; }
 @media (max-width: 700px) { .operator-columns { grid-template-columns: 1fr; } .operator-queue { max-height: 260px; border-right: 0; border-bottom: 1px solid var(--desk-line); } .operator-connect { flex-direction: column; align-items: stretch; } .operator-detail { padding: 18px; } }

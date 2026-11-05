@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, hasOperatorToken, responseApi, setOperatorToken } from '../api';
 import { Banner, Button, Field, inputCls } from '../components/ui';
 import { evidenceText, pathId, type MessageHold, type Notice, type PrincipalState, type Quarantine, type Restriction, type ReviewQueue } from '../lib/response';
+import { CandidateLifecycle, GitIntake } from './GitLifecycle';
 
 type Selection = { kind: 'restriction'; record: Restriction } | { kind: 'message'; record: MessageHold } | { kind: 'code'; record: Quarantine };
 const identity = (item: Selection) => item.kind === 'restriction' ? item.record.restriction_id : item.kind === 'message' ? item.record.message_hold_id : item.record.quarantine_id;
@@ -20,6 +21,9 @@ export function OperatorDesk() {
   const [error, setError] = useState('');
   const [outcome, setOutcome] = useState('');
   const generation = useRef(0);
+  const lifecycleOwner = useRef<string | null>(null);
+  const lifecycleSession = useRef(crypto.randomUUID());
+  const [lifecycleResult, setLifecycleResult] = useState<Record<string, unknown> | null>(null);
   const mounted = useRef(true);
   const pending = useRef<{ signature: string; key: string; path: string; body: unknown; message: string } | null>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -44,7 +48,13 @@ export function OperatorDesk() {
   function disconnect() {
     generation.current++; setOperatorToken(''); setConnected(false); setDraft(''); setWorkspace('');
     setQueue(null); setNotices([]); setSelected(null); setEvidence(null); setPrincipal(null); setReason('');
-    setError(''); setOutcome(''); pending.current = null;
+    setError(''); setOutcome(''); setBusy(false); pending.current = null; lifecycleOwner.current = null;
+    setLifecycleResult(null); lifecycleSession.current = crypto.randomUUID();
+  }
+
+  function lifecycleBusy(value: boolean, owner: string) {
+    if (value) { lifecycleOwner.current = owner; generation.current++; setBusy(true); }
+    else if (lifecycleOwner.current === owner) { lifecycleOwner.current = null; setBusy(false); }
   }
 
   async function connect(event: React.FormEvent) {
@@ -122,6 +132,8 @@ export function OperatorDesk() {
   }
 
   const count = (queue?.restrictions.length ?? 0) + (queue?.messages.length ?? 0) + (queue?.quarantines.length ?? 0);
+  const flowNamespace = lifecycleSession.current;
+  const intakeOwner = `${flowNamespace}:intake`;
   const canDecide = !busy && reason.trim().length > 0 && reason.length <= 2000;
   const items: Selection[] = queue ? [
     ...queue.restrictions.map(record => ({ kind: 'restriction' as const, record })),
@@ -134,7 +146,7 @@ export function OperatorDesk() {
       <div><p className="operator-eyebrow">MEMBER 04 / LIVE RESPONSE</p><h2>Review desk <span className="operator-count">{connected ? count : '—'}</span></h2>
         <p>{connected ? workspace : 'Connect to review paused agents, withheld messages and candidate code.'}</p></div>
       {connected && <div className="flex flex-wrap gap-2"><Button variant="secondary" disabled={busy} onClick={() => { setBusy(true); refresh().catch(f => setError(f.message)).finally(() => setBusy(false)); }}>Refresh</Button>
-        <Button variant="secondary" disabled={busy} onClick={disconnect}>Disconnect</Button></div>}
+        <Button variant="secondary" onClick={disconnect}>Disconnect</Button></div>}
     </header>
     {!connected && <form className="operator-connect" onSubmit={connect}>
       <Field label="Operator token" hint="Kept in memory for this tab. Disconnect or reload to clear it.">
@@ -149,6 +161,8 @@ export function OperatorDesk() {
     </Banner></div>}
     {outcome && <div className="px-5 pb-4"><Banner kind="success">{outcome}</Banner></div>}
     {connected && <>
+      <GitIntake changed={refresh} disabled={busy && lifecycleOwner.current !== intakeOwner} reported={setLifecycleResult} onBusyChange={value => lifecycleBusy(value, intakeOwner)} />
+      {lifecycleResult && <details className="operator-lifecycle" open><summary>Latest workflow result</summary><pre className="operator-evidence" aria-label="Latest workflow result or execution receipt">{evidenceText(lifecycleResult)}</pre></details>}
       <div className="operator-notices" aria-live="polite"><strong>{notices.length} unread notification{notices.length === 1 ? '' : 's'}</strong>
         <span>Updates every 15 seconds while visible. Acknowledgement leaves containment in place.</span>
         {notices.map(n => <div key={n.notification_id} className="operator-notice"><div><b>{n.kind.replace(/_/g, ' ')}</b>
@@ -191,6 +205,9 @@ export function OperatorDesk() {
               <Button disabled={!canDecide || selected.record.state !== 'quarantined' || selected.record.review_state !== 'ready' || evidence === null} onClick={() => act(`/quarantines/${pathId(selected.record.quarantine_id)}/review`, { expected_revision: selected.record.revision, verdict: 'approved', reason }, 'Exact candidate review recorded. Release requires a separate action approval.')}>Approve exact candidate</Button>
             </>}
           </div>
+          {selected.kind === 'code' && <CandidateLifecycle key={`${selected.record.quarantine_id}:${selected.record.revision}`} code={selected.record} changed={refresh}
+            disabled={busy && lifecycleOwner.current !== `${flowNamespace}:candidate:${selected.record.quarantine_id}:${selected.record.revision}`} reported={setLifecycleResult}
+            onBusyChange={value => lifecycleBusy(value, `${flowNamespace}:candidate:${selected.record.quarantine_id}:${selected.record.revision}`)} />}
         </>}
       </div></div>
       <footer className="operator-footer">{queue?.limitations.map(limit => <span key={limit}>{limit}</span>)}</footer>

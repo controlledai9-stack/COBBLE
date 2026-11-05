@@ -178,6 +178,15 @@ def test_generated_snapshot_links_only_to_exact_git_tree(system):
     assert linked['capture_kind'] == 'git' and linked['state'] == 'quarantined'
     assert linked['artifact_id'] == record['artifact_id']
     assert git(system.root, 'rev-parse', linked['branch_ref']) == system.candidate
+    salvaged = system.service.salvage(linked['quarantine_id'], linked['revision'],
+        {'component.py': 'def score(values):\n    return sum(values)  # reviewed\n'}, [], {}, 'reviewed outcome',
+        actor='operator', key='generated-salvage')
+    artifact = system.repo.get('artifact', salvaged['artifact_id'])
+    assert salvaged['manifest'] == artifact['manifest']
+    assert salvaged['manifest'] != record['manifest']
+    assert salvaged['capture_verified'] is True
+    assert salvaged['review_state'] == 'queued' and salvaged['validation_id'] is None
+    assert system.repo.get('quarantine', linked['quarantine_id'])['manifest'] == record['manifest']
 
 
 def test_review_requires_applicable_passing_checks_and_never_releases(system):
@@ -686,7 +695,12 @@ def test_quarantine_api_protects_evidence_and_rejects_client_execution_controls(
     try:
         with TestClient(app) as client:
             assert client.get('/api/response/quarantines').status_code == 401
+            assert client.get('/api/response/repositories').status_code == 401
             headers = {'Authorization': 'Bearer ' + token, 'Idempotency-Key': 'capture-api'}
+            repositories = client.get('/api/response/repositories', headers=headers)
+            assert repositories.status_code == 200
+            assert repositories.json() == [{'repository_id': 'repo', 'trusted_ref': 'refs/heads/main', 'target_commit': system.base}]
+            assert 'path' not in repositories.text and str(system.root) not in repositories.text
             assert client.post('/api/response/quarantines', json={**system.request, 'host_path': 'C:/arbitrary'}, headers=headers).status_code == 422
             captured = client.post('/api/response/quarantines', json=system.request, headers=headers)
             assert captured.status_code == 200

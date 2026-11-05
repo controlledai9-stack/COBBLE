@@ -115,6 +115,7 @@ class QuarantineService:
                         "created_at": now_iso(), "retention_class": "incident-review"})
                 return tx.update("quarantine", record["quarantine_id"], {**current,
                     "candidate_commit": result["candidate_commit"], "artifact_id": result["artifact_id"],
+                    "manifest": result["manifest"], "capture_verified": True,
                     "branch_ref": result["branch_ref"], "patch_artifact_id": patch_ref, "changeset": changeset, "state": "quarantined",
                     "captured_at": now_iso()}, record["revision"])
             return self.repository.command("quarantine-executor", record["quarantine_id"] + ".captured." + str(record["revision"]),
@@ -163,7 +164,9 @@ class QuarantineService:
                 "capture_kind": "salvage", "source_candidate": source["candidate_commit"], "state": "prepared",
                 "review_state": "queued", "release_state": "unreleased", "promotion_state": "not_requested",
                 "created_by": actor, "created_at": now_iso(), "artifact_id": None, "review_id": None,
-                "validation_id": None, "candidate_commit": None})
+                "validation_id": None, "candidate_commit": None, "manifest": None,
+                "capture_verified": False, "captured_at": None, "changeset": None,
+                "branch_ref": None, "patch_artifact_id": None})
         intent = self.repository.command(actor, key, "quarantine.salvage", payload, prepare)
         current = self.repository.get("quarantine", intent["quarantine_id"])
         return self._capture(current) if current["state"] == "prepared" else current

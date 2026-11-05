@@ -195,6 +195,12 @@ def contracts(control: Control):
     return control.repository.list("contract")
 
 
+@router.get('/repositories')
+def repositories(service: Quarantines):
+    return [{'repository_id': name, 'trusted_ref': adapter.trusted_ref, 'target_commit': adapter.target()}
+            for name, adapter in sorted(service.repositories.items())]
+
+
 @router.post("/contracts")
 def register_contract(req: ContractRegistration, service: Quarantines, actor: Operator, key: RequestKey):
     return service.registry.register_contract(req.component, req.version, req.suite_id, req.state_version, actor=actor, key=key)
