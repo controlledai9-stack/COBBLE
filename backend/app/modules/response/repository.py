@@ -47,7 +47,7 @@ def digest(value: Any) -> str:
 
 KINDS = frozenset({
     "policy", "principal", "session", "incident", "restriction", "approval", "operation",
-    "quarantine", "artifact", "validation", "implementation", "contract", "evidence", "health", "flow", "review", "selection", "notification", "message_hold", "recovery",
+    "quarantine", "artifact", "validation", "implementation", "contract", "evidence", "health", "flow", "review", "selection", "notification", "message_hold", "recovery", "work",
 })
 PENDING_STATES = ('prepared', 'dispatched', 'admitted', 'reconciliation_required')
 
@@ -85,6 +85,13 @@ class Transaction:
             "SELECT data FROM response_records INDEXED BY response_pending_state WHERE workspace=? AND kind='operation' "
             "AND json_extract(data, '$.state') IN (?,?,?,?) ORDER BY record_id",
             (self.workspace, *PENDING_STATES)).fetchall()
+        return [json.loads(raw) for (raw,) in rows]
+
+    def active_work(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT data FROM response_records INDEXED BY response_active_work WHERE workspace=? AND kind='work' "
+            "AND json_extract(data, '$.state') IN ('queued','dispatched','reconciliation_required') ORDER BY record_id",
+            (self.workspace,)).fetchall()
         return [json.loads(raw) for (raw,) in rows]
 
     def insert(self, kind: str, identifier: str, data: dict) -> dict:
@@ -149,6 +156,9 @@ class ResponseRepository:
             CREATE INDEX IF NOT EXISTS response_pending_state
                 ON response_records(workspace, json_extract(data, '$.state'), record_id)
                 WHERE kind='operation';
+            CREATE INDEX IF NOT EXISTS response_active_work
+                ON response_records(workspace, json_extract(data, '$.state'), record_id)
+                WHERE kind='work';
             CREATE TRIGGER IF NOT EXISTS response_audit_no_update BEFORE UPDATE ON response_audit
                 BEGIN SELECT RAISE(ABORT, 'response audit is append-only'); END;
             CREATE TRIGGER IF NOT EXISTS response_audit_no_delete BEFORE DELETE ON response_audit

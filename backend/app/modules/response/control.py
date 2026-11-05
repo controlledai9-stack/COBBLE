@@ -128,8 +128,10 @@ class ResponseControl:
             })
             from app.modules.response.notifications import notify
             notify(tx, rid, 'agent_restricted', req.run_id, req.agent_id)
+            from app.modules.response.work import cancel_work
+            cancelled = cancel_work(tx, pid, req.capabilities, req.reason, req.incident_id, resource=req.resource)
             return {"restriction": restriction, "principal_revision": principal["revision"],
-                    "enforcement_verified": False}
+                    "enforcement_verified": False, 'work_cancellation': cancelled}
         return self.repository.command(actor, key, "capability.restrict", req.model_dump(), apply)
 
     def pause(self, agent_id: str, req: AgentControlRequest, *, actor: str, key: str) -> dict:
@@ -146,7 +148,10 @@ class ResponseControl:
                 raise Forbidden("incident belongs to a different run")
             principal = tx.update("principal", principal["principal_id"],
                 {**principal, "state": "stopped", "stop_incident": req.incident_id}, req.expected_revision)
+            from app.modules.response.work import cancel_work
+            cancelled = cancel_work(tx, principal['principal_id'], principal['capabilities'], req.reason, req.incident_id)
             return {"principal": principal, "enforcement_verified": False,
+                    'work_cancellation': cancelled,
                     "note": "new admissions denied; in-flight work is not claimed terminated"}
         return self.repository.command(actor, key, "agent.stop", {"agent_id": agent_id, **req.model_dump()}, apply)
 
@@ -277,6 +282,9 @@ class ResponseControl:
                 owner = (session or {}).get("agents", {}).get(action.get("agent_id"))
             if owner == principal_id:
                 return op
+        for work in tx.active_work():
+            if work['work_id'] != exclude and work['principal_id'] == principal_id:
+                return work
         return None
 
     def mark_operation_unknown(self, operation_id: str, expected_revision: int, *, executor_id: str, key: str) -> dict:

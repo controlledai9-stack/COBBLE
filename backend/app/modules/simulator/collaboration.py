@@ -65,7 +65,7 @@ def _autonomous_user_task_collaboration(
     cod_task = f"Implement Python solution in repo/src/solution.py and tests in repo/src/test_solution.py for: {user_task}"
     if is_gemini:
         try:
-            resp_text = r.adapter.generate_response(
+            resp_text = r.generate_response(planner,
                 planner_prompt,
                 system_instruction="You are a senior technical planner. Output strictly valid JSON.",
                 temperature=0.2,
@@ -111,7 +111,7 @@ def _autonomous_user_task_collaboration(
                 "Write research notes with architecture patterns, requirements, and library guidance.\n"
                 "Respond with JSON: {\"notes\": \"<markdown content>\", \"summary\": \"<short summary>\"}"
             )
-            resp_text = r.adapter.generate_response(
+            resp_text = r.generate_response(researcher,
                 res_prompt,
                 system_instruction="You are a technical researcher. Output strictly valid JSON.",
                 temperature=0.2,
@@ -156,7 +156,7 @@ def _autonomous_user_task_collaboration(
                 "Formulate structured criteria, schema requirements, and quantitative metrics.\n"
                 "Respond with JSON: {\"report_json\": <valid JSON object>, \"summary\": \"<summary>\"}"
             )
-            resp_text = r.adapter.generate_response(
+            resp_text = r.generate_response(analyst,
                 ana_prompt,
                 system_instruction="You are a data analyst. Output strictly valid JSON.",
                 temperature=0.2,
@@ -227,7 +227,7 @@ def _autonomous_user_task_collaboration(
                 "4. Output complete, self-contained Python code for both files.\n"
             )
             # Substantial token budget (8192 tokens)
-            resp_text = r.adapter.generate_response(
+            resp_text = r.generate_response(coder,
                 cod_prompt,
                 system_instruction="You are a senior Python software engineer. Output full, complete code for solution.py and test_solution.py without truncation.",
                 temperature=0.2,
@@ -246,7 +246,7 @@ def _autonomous_user_task_collaboration(
                     + "\n```\nPlease continue writing the code starting immediately after those characters to completion."
                 )
                 try:
-                    cont_resp = r.adapter.generate_response(
+                    cont_resp = r.generate_response(coder,
                         cont_prompt,
                         system_instruction="You are a senior Python software engineer. Complete the truncated code.",
                         temperature=0.2,
@@ -353,7 +353,7 @@ def _autonomous_user_task_collaboration(
                     "State your findings and provide a final verdict: APPROVED or REVISE.\n"
                     "Respond with JSON: {\"report\": \"<markdown report>\", \"verdict\": \"APPROVED\", \"summary\": \"<summary>\"}"
                 )
-                resp_text = r.adapter.generate_response(
+                resp_text = r.generate_response(reviewer,
                     rev_prompt,
                     system_instruction="You are a strict security and code quality auditor. Output valid JSON.",
                     temperature=0.2,

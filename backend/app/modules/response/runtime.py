@@ -379,35 +379,7 @@ class ResponseRuntime:
                     held_reason = str(exc)
                 if held_reason:
                     outcome = 'output_held'
-                    action = current['action']
-                    self._merge_flow(tx, 'principal', current['principal_id'], [], unknown=True,
-                        output_hold=current['operation_id'])
-                    if action['capability'] == 'resource.write' and action.get('resource'):
-                        self._merge_flow(tx, 'resource', action['resource'], [], unknown=True,
-                            output_hold=current['operation_id'])
-                    if action['capability'] == 'message.send' and action.get('target') in self.principals:
-                        self._merge_flow(tx, 'principal', self.principals[action['target']], [], unknown=True,
-                            output_hold=current['operation_id'])
-                        self._merge_flow(tx, 'resource', 'inbox/' + action['target'], [], unknown=True,
-                            output_hold=current['operation_id'])
-                    iid = identifier('inc')
-                    tx.insert('incident', iid, {'incident_id': iid, 'run_id': self.run_id,
-                        'status': 'open', 'phase': 'output_held', 'severity': 'high',
-                        'reason': held_reason, 'finding_kind': 'runtime_authority_changed',
-                        'operation_id': current['operation_id'], 'opened_at': now_iso(), 'owner': 'security-review'})
-                    from app.modules.response.notifications import notify
-                    affected = {current['principal_id']: action['agent_id']}
-                    if action['capability'] == 'message.send' and action.get('target') in self.principals:
-                        affected[self.principals[action['target']]] = action['target']
-                    for pid, aid in affected.items():
-                        principal = tx.get('principal', pid)
-                        tx.update('principal', pid, principal, principal['revision'])
-                        rid = identifier('rst')
-                        tx.insert('restriction', rid, {'restriction_id': rid, 'incident_id': iid,
-                            'principal_id': pid, 'run_id': self.run_id, 'agent_id': aid,
-                            'capabilities': RUNTIME_CAPABILITIES, 'resource': None, 'state': 'active',
-                            'reason': held_reason, 'requires_clean_context': True, 'created_at': now_iso()})
-                        notify(tx, current['operation_id'] + ':' + pid, 'runtime_output_held', self.run_id, aid)
+                    self._hold_outputs(tx, current, held_reason)
             return tx.update("operation", op["operation_id"], {**current, "state": outcome,
                 'effect_outcome': state, 'held_reason': held_reason,
                 "success": success, "callback_invoked": callback_invoked, "event_id": event_id,
@@ -417,6 +389,38 @@ class ResponseRuntime:
         return self.repository.command(f"runtime:{self.run_id}", op["operation_id"], "runtime.receipt",
             {"state": state, "success": success, "callback_invoked": callback_invoked,
              "verified": verified, "event_id": event_id}, apply)
+
+    def _hold_outputs(self, tx, current, reason):
+        action = current['action']
+        self._merge_flow(tx, 'principal', current['principal_id'], [], unknown=True,
+            output_hold=current['operation_id'])
+        if action['capability'] == 'resource.write' and action.get('resource'):
+            self._merge_flow(tx, 'resource', action['resource'], [], unknown=True,
+                output_hold=current['operation_id'])
+        affected = {current['principal_id']: action['agent_id']}
+        if action['capability'] == 'message.send' and action.get('target') in self.principals:
+            pid = self.principals[action['target']]
+            self._merge_flow(tx, 'principal', pid, [], unknown=True, output_hold=current['operation_id'])
+            self._merge_flow(tx, 'resource', 'inbox/' + action['target'], [], unknown=True,
+                output_hold=current['operation_id'])
+            affected[pid] = action['target']
+        iid = identifier('inc')
+        tx.insert('incident', iid, {'incident_id': iid, 'run_id': self.run_id,
+            'status': 'open', 'phase': 'output_held', 'severity': 'high', 'reason': reason,
+            'finding_kind': 'runtime_authority_changed', 'operation_id': current['operation_id'],
+            'opened_at': now_iso(), 'owner': 'security-review'})
+        from app.modules.response.notifications import notify
+        from app.modules.response.work import cancel_work
+        for pid, aid in affected.items():
+            principal = tx.get('principal', pid)
+            tx.update('principal', pid, principal, principal['revision'])
+            rid = identifier('rst')
+            tx.insert('restriction', rid, {'restriction_id': rid, 'incident_id': iid,
+                'principal_id': pid, 'run_id': self.run_id, 'agent_id': aid,
+                'capabilities': RUNTIME_CAPABILITIES, 'resource': None, 'state': 'active',
+                'reason': reason, 'requires_clean_context': True, 'created_at': now_iso()})
+            cancel_work(tx, pid, RUNTIME_CAPABILITIES, reason, iid, exclude=current['operation_id'])
+            notify(tx, current['operation_id'] + ':' + pid, 'runtime_output_held', self.run_id, aid)
 
     def gate_event(self, agent_id, event_type=None, target=None, *, action=None, resource=None, **_):
         """Gate legacy simulated requests; these are NOT execution receipts."""
@@ -480,10 +484,13 @@ class ResponseRuntime:
             tx.update("principal", principal["principal_id"], principal, principal["revision"])
             from app.modules.response.notifications import notify
             notify(tx, rid, 'egress_hold' if containment.scope == 'egress' else 'agent_paused', self.run_id, agent_id)
-            return tx.insert("restriction", rid, {"restriction_id": rid, "incident_id": iid,
+            restriction = tx.insert("restriction", rid, {"restriction_id": rid, "incident_id": iid,
                 "principal_id": principal["principal_id"], "run_id": self.run_id, "agent_id": agent_id,
                 "capabilities": scope, "resource": None, "state": "active", "reason": signal["reason"],
                 "requires_clean_context": containment.trigger == "hijack_tripwire", "created_at": now_iso()})
+            from app.modules.response.work import cancel_work
+            cancel_work(tx, principal['principal_id'], scope, signal['reason'], iid)
+            return restriction
         self.repository.command("live-detector", sid, "signal.contain", signal, apply)
 
     def report(self):
@@ -497,9 +504,11 @@ class ResponseRuntime:
                   if session.get('runtime_health_id') else None)
         all_operations = control.repository.list("operation", run_id=run_id)
         operations = [op for op in all_operations if op.get("effect_scope") == "local_virtual_tool"]
+        model_work = control.repository.list('work', run_id=run_id)
         return {"run_id": run_id, "scope": "local_virtual_tools", "mode": control.profile.mode,
             "operations": operations, "counts": dict(Counter(o["state"] for o in operations)), 'health': health,
             "verified_preventions": sum(bool(o.get("prevention_verified")) for o in operations),
             "other_operation_counts": dict(Counter(op["executor_id"] for op in all_operations
                 if op.get("effect_scope") != "local_virtual_tool")),
+            'model_work_counts': dict(Counter(work['state'] for work in model_work)),
             "limitations": ["simulated events are not effect receipts", "no production network/deployment adapter"]}

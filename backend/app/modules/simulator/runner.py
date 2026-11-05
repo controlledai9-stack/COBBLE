@@ -4,7 +4,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 from typing import Sequence
-from app.adapters.base import AgentAdapter
+from app.adapters.base import AgentAdapter, DeterministicAdapter
 from app.modules.simulator.agent import ROLE_OBJECTIVES, SimulatedAgent
 from app.modules.simulator.broker import BROKER_REGISTRY, MessageBroker
 from app.modules.simulator.environment import SharedEnvironment, get_environment
@@ -18,6 +18,24 @@ from app.modules.response.mediation import ADMITTED_RUNTIME
 
 class AgentRunner:
     """Executes agent actions, routing protected ones through the gateway first."""
+
+    def generate_response(self, agent, prompt, **options):
+        if self.response is None:
+            return self.adapter.generate_response(prompt, **options)
+        from app.modules.response.work import ModelWork
+        return ModelWork(self.response).invoke(agent, self.adapter, 'generate',
+            {'prompt': prompt, 'options': options}, lambda: self.adapter.generate_response(prompt, **options))
+
+    def compose_message(self, sender, recipient, intent, topic):
+        if self.response is None:
+            return self.adapter.compose_message(sender.role, recipient.role, intent, topic)
+        from app.modules.response.work import ModelWork
+        content = ModelWork(self.response).invoke(sender, self.adapter, 'compose',
+            {'sender_role': sender.role, 'recipient_role': recipient.role, 'intent': intent, 'topic': topic},
+            lambda: self.adapter.compose_message(sender.role, recipient.role, intent, topic))
+        # Local template fallback is separately admitted by the subsequent broker
+        # operation. It never consumes a withheld provider reply.
+        return content or DeterministicAdapter().compose_message(sender.role, recipient.role, intent, topic)
 
     def __init__(
         self,
@@ -180,6 +198,8 @@ class AgentRunner:
         if self.response and ADMITTED_RUNTIME.get() is not self.response:
             from app.modules.simulator.tools import ToolResult
             observed = {}
+            if not content_override:
+                content_override = self.compose_message(sender, recipient, intent, topic)
 
             def send():
                 event = self.message(sender, recipient, intent, topic, content_override=content_override,
@@ -192,7 +212,8 @@ class AgentRunner:
                 {"recipient_id": recipient.agent_id, "intent": intent, "topic": topic,
                  "content": content_override, "data_ref": data_ref}, send)
             return observed.get("event") or next(e for e in reversed(self.events) if e.event_id == result.event_id)
-        content = content_override or self.adapter.compose_message(sender.role, recipient.role, intent, topic)
+        content = content_override or (DeterministicAdapter().compose_message(sender.role, recipient.role, intent, topic)
+            if self.response else self.adapter.compose_message(sender.role, recipient.role, intent, topic))
         msg_id = f"msg-{self.run_hex}-{self._sequence_counter + 1:04d}"
         payload: dict = {"intent": intent, "topic": topic, "content": content, "message_id": msg_id}
         if data_ref:

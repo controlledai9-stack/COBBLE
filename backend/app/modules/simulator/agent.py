@@ -213,7 +213,9 @@ class SimulatedAgent:
         )
 
         try:
-            resp = self.adapter.generate_response(
+            generate = (lambda prompt, **options: self.tools.runner.generate_response(self.agent, prompt, **options)
+                        if self.tools.runner.response else self.adapter.generate_response(prompt, **options))
+            resp = generate(
                 prompt,
                 system_instruction=system_instruction,
                 temperature=0.2,

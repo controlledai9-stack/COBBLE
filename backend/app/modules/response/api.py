@@ -126,6 +126,17 @@ def runtime_health(control: Control):
     return [public_health(record, control.clock()) for record in control.repository.list('health')]
 
 
+@router.get('/model-work')
+def model_work(control: Control, run_id: str | None = Query(None, max_length=128),
+               after: str = Query('', max_length=128), limit: int = Query(100, ge=1, le=500)):
+    import json
+    with control.repository.read() as tx:
+        rows = tx.conn.execute("SELECT data FROM response_records WHERE workspace=? AND kind='work' "
+            "AND record_id>? AND (? IS NULL OR json_extract(data,'$.run_id')=?) ORDER BY record_id LIMIT ?",
+            (control.repository.workspace, after, run_id, run_id, limit)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+
 @router.post("/incidents")
 def open_incident(req: IncidentCreate, actor: Operator, control: Control, key: RequestKey):
     return control.open_incident(req, actor=actor, key=key)

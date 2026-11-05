@@ -44,6 +44,7 @@ class Settings:
     response_validator_image: str | None = None
     response_scanner_image: str | None = None
     response_component_dependencies: str = field(default='{}', repr=False)
+    response_model_providers: str = ''
 
 
 def get_settings() -> Settings:
@@ -68,4 +69,5 @@ def get_settings() -> Settings:
         response_validator_image=os.getenv("SWARMGUARD_RESPONSE_VALIDATOR_IMAGE") or None,
         response_scanner_image=os.getenv("SWARMGUARD_RESPONSE_SCANNER_IMAGE") or None,
         response_component_dependencies=os.getenv('SWARMGUARD_RESPONSE_COMPONENT_DEPENDENCIES', '{}'),
+        response_model_providers=os.getenv('SWARMGUARD_RESPONSE_MODEL_PROVIDERS', ''),
     )

@@ -270,7 +270,7 @@ def _decide(r: AgentRunner, agent: Agent, round_no: int, task: str, inbox: list[
     try:
         dependencies = (r.response.repository.get('session', r.run_id).get('component_dependencies', {}).get(agent.role, {})
                         if r.response else {})
-        raw = r.adapter.generate_response(_prompt(agent, round_no, task, inbox, context),
+        raw = r.generate_response(agent, _prompt(agent, round_no, task, inbox, context),
                                           system_instruction=_system(agent, dependencies), temperature=0.4, max_tokens=500)
     except Exception:  # adapter failure: behave like a model that gave no usable answer
         raw = ""
