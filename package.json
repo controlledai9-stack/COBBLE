@@ -16,6 +16,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "node scripts/dev-web.mjs",
+    "audit": "node scripts/full-audit.mjs",
     "build": "node scripts/build.mjs",
     "start": "electron .",
     "relay": "node dist/relay.cjs",
