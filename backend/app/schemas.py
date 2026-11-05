@@ -5,9 +5,9 @@ in `frontend/src/types.ts` mirror them field-for-field; keep both in sync.
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Enumerations
@@ -445,3 +445,88 @@ class Dashboard(BaseModel):
 
 
 SimulationResult.model_rebuild()  # resolves the forward reference to LiveReport
+
+
+# Active response control: additive contracts; legacy batch responses keep their semantics.
+ControlId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:@-]*$")]
+Capability = Literal[
+    "resource.read", "resource.write", "message.send", "network.external", "code.execute", "artifact.consume",
+    "repo.read", "repo.write.feature", "repo.merge.main", "shell.execute", "secret.read",
+    "artifact.publish", "deployment.production",
+]
+
+
+class ControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, allow_inf_nan=False)
+
+
+class PrincipalRegistration(ControlRequest):
+    principal_id: ControlId
+    capabilities: list[Capability] = Field(min_length=1, max_length=32)
+
+
+class SessionRegistration(ControlRequest):
+    run_id: ControlId
+    agents: dict[ControlId, ControlId] = Field(min_length=1, max_length=20)
+    live_guard: Literal["off", "detect", "contain"] = "contain"
+    gateway_mode: GatewayMode = "monitor"
+
+
+class IncidentCreate(ControlRequest):
+    run_id: ControlId
+    severity: Severity = "high"
+    reason: str = Field(min_length=1, max_length=2000)
+    evidence_ids: list[ControlId] = Field(default_factory=list, max_length=100)
+    evidence_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class RestrictionCreate(ControlRequest):
+    run_id: ControlId
+    agent_id: ControlId
+    incident_id: ControlId
+    capabilities: list[Capability] = Field(min_length=1, max_length=32)
+    resource: Optional[str] = Field(None, max_length=512)
+    reason: str = Field(min_length=1, max_length=2000)
+    expected_revision: int = Field(ge=1)
+    requires_clean_context: bool = False
+
+
+class AgentControlRequest(ControlRequest):
+    run_id: ControlId
+    incident_id: ControlId
+    reason: str = Field(min_length=1, max_length=2000)
+    expected_revision: int = Field(ge=1)
+
+
+class ResumeRequest(AgentControlRequest):
+    restriction_ids: list[ControlId] = Field(min_length=1, max_length=100)
+
+
+class AuthorizationRequest(ControlRequest):
+    run_id: ControlId
+    agent_id: ControlId
+    capability: Capability
+    resource: Optional[str] = Field(None, max_length=512)
+    target: Optional[str] = Field(None, max_length=512)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    artifact_id: Optional[ControlId] = None
+    execution_context: Literal["trusted", "candidate", "sandbox", "development"] = "trusted"
+
+
+class AuthorizationResult(ControlRequest):
+    decision_id: str
+    decision: Literal["allow", "deny", "review", "sandbox_only"]
+    reason: str
+    mode: Literal["monitor", "enforce"]
+    policy_epoch: int
+    principal_revision: int
+    expires_at: float
+    restriction_ids: list[str] = Field(default_factory=list)
+    enforcement_verified: bool = False
+
+
+class ActionApprovalCreate(ControlRequest):
+    action: AuthorizationRequest
+    executor_id: ControlId
+    expires_in_seconds: int = Field(300, ge=1, le=3600)
+    reason: str = Field(min_length=1, max_length=2000)

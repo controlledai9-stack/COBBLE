@@ -433,3 +433,82 @@ export interface ModuleInfo {
   output?: ModuleInfoPart;
   extra?: ModuleInfoPart;
 }
+
+// Additive active-response contracts mirrored from backend/app/schemas.py.
+export type Capability =
+  | 'resource.read' | 'resource.write' | 'message.send' | 'network.external'
+  | 'code.execute' | 'artifact.consume' | 'repo.read' | 'repo.write.feature'
+  | 'repo.merge.main' | 'shell.execute' | 'secret.read' | 'artifact.publish'
+  | 'deployment.production';
+
+export interface PrincipalRegistration {
+  principal_id: string;
+  capabilities: Capability[];
+}
+
+export interface SessionRegistration {
+  run_id: string;
+  agents: Record<string, string>;
+  live_guard?: 'off' | 'detect' | 'contain';
+  gateway_mode?: GatewayMode;
+}
+
+export interface IncidentCreate {
+  run_id: string;
+  severity?: Severity;
+  reason: string;
+  evidence_ids?: string[];
+  evidence_summary?: Record<string, unknown>;
+}
+
+export interface RestrictionCreate {
+  run_id: string;
+  agent_id: string;
+  incident_id: string;
+  capabilities: Capability[];
+  resource?: string | null;
+  reason: string;
+  expected_revision: number;
+  requires_clean_context?: boolean;
+}
+
+export interface AgentControlRequest {
+  run_id: string;
+  incident_id: string;
+  reason: string;
+  expected_revision: number;
+}
+
+export interface ResumeRequest extends AgentControlRequest {
+  restriction_ids: string[];
+}
+
+export interface AuthorizationRequest {
+  run_id: string;
+  agent_id: string;
+  capability: Capability;
+  resource?: string | null;
+  target?: string | null;
+  parameters?: Record<string, unknown>;
+  artifact_id?: string | null;
+  execution_context?: 'trusted' | 'candidate' | 'sandbox' | 'development';
+}
+
+export interface AuthorizationResult {
+  decision_id: string;
+  decision: 'allow' | 'deny' | 'review' | 'sandbox_only';
+  reason: string;
+  mode: 'monitor' | 'enforce';
+  policy_epoch: number;
+  principal_revision: number;
+  expires_at: number;
+  restriction_ids: string[];
+  enforcement_verified: boolean;
+}
+
+export interface ActionApprovalCreate {
+  action: AuthorizationRequest;
+  executor_id: string;
+  expires_in_seconds?: number;
+  reason: string;
+}

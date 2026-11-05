@@ -36,6 +36,9 @@ class Settings:
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_api_key: str | None = None
     cors_origins: list[str] = field(default_factory=list)
+    response_mode: str = "off"
+    response_operator_token: str | None = field(default=None, repr=False)
+    response_minimum_gateway: str = "monitor"
 
 
 def get_settings() -> Settings:
@@ -52,4 +55,7 @@ def get_settings() -> Settings:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         cors_origins=[o.strip() for o in os.getenv("SWARMGUARD_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()],
+        response_mode=os.getenv("SWARMGUARD_RESPONSE_MODE", "off").lower(),
+        response_operator_token=os.getenv("SWARMGUARD_RESPONSE_OPERATOR_TOKEN") or None,
+        response_minimum_gateway=os.getenv("SWARMGUARD_RESPONSE_MINIMUM_GATEWAY", "monitor").lower(),
     )

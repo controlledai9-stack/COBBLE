@@ -12,6 +12,8 @@ from app.adapters import available_adapters
 from app.config import get_settings
 from app.module_info import MODULES, module_info
 from app.modules.simulator.world import SCENARIOS
+from app.modules.response.api import operator as response_operator, router as response_router
+from app.modules.response.repository import ControlError
 from app.schemas import (
     AGENT_COUNTS, BaselineTrainRequest, CollectRequest, ReplayRequest, DetectionRule, DetectRequest, EvaluateRequest, RespondRequest, ResponsePolicy,
     ScenarioConfig, SuiteRequest,
@@ -31,6 +33,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SwarmGuard", version="0.1.0", lifespan=lifespan)
+app.include_router(response_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
@@ -50,6 +53,28 @@ async def bad_request(_: Request, exc: ValueError):
 
 
 P = Depends(get_pipeline)
+
+
+@app.exception_handler(ControlError)
+async def response_control_error(_: Request, exc: ControlError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
+
+@app.middleware("http")
+async def protect_legacy_policy_writes(request: Request, call_next):
+    # These routes can change detector/response policy. The opt-in protected
+    # profile must not be bypassed through an older unauthenticated endpoint.
+    if (get_settings().response_mode != "off" and request.method in {"PUT", "PATCH", "DELETE"}
+            and request.url.path.startswith(("/api/detection-rules/", "/api/response-policies/"))):
+        from fastapi.security import HTTPAuthorizationCredentials
+        header = request.headers.get("Authorization", "").split(" ", 1)
+        credentials = HTTPAuthorizationCredentials(scheme=header[0], credentials=header[1]) if len(header) == 2 else None
+        try:
+            response_operator(credentials)
+        except (HTTPException, ControlError) as exc:
+            return JSONResponse(status_code=exc.status_code,
+                                content={"detail": exc.detail if isinstance(exc, HTTPException) else str(exc)})
+    return await call_next(request)
 
 
 # ------------------------------------------------------------------ meta
@@ -126,6 +151,10 @@ def run_pipeline(run_id: str, p: Pipeline = P):
 # ------------------------------------------------------------------ modules
 @app.post("/api/simulate")
 def simulate(config: ScenarioConfig, p: Pipeline = P):
+    if get_settings().response_mode != "off":
+        # Until the trusted runtime controller is connected, fail closed rather
+        # than running legacy simulation under an apparent protected profile.
+        raise HTTPException(503, "protected response runtime integration is not yet available")
     if config.workspace_dir:
         # Agents write files into the workspace; only local scripts may choose where that is on disk.
         raise HTTPException(400, "workspace_dir can't be set through the API")
