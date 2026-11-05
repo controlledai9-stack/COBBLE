@@ -46,10 +46,12 @@ class ArtifactStore:
             raise ValueError("candidate path is unsafe or not portable")
         return name
 
-    def _manifest(self, files: dict[str, bytes]) -> dict:
+    def _manifest(self, files: dict[str, bytes], file_modes: dict[str, str] | None = None) -> dict:
         if not files or len(files) > self.max_files:
             raise ValueError("candidate file count exceeds budget")
         aliases, total, entries = set(), 0, []
+        if file_modes and not set(file_modes) <= set(files):
+            raise ValueError("mode metadata names an absent candidate file")
         for name, content in sorted(files.items()):
             self.validate_path(name)
             alias = name.casefold()
@@ -63,12 +65,15 @@ class ArtifactStore:
             total += len(content)
             if total > self.max_bytes:
                 raise ValueError("candidate expanded size exceeds budget")
-            entries.append({"path": name, "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()})
-        return {"version": 1, "files": entries, "total_bytes": total}
+            mode = (file_modes or {}).get(name, "100644")
+            if mode not in {"100644", "100755"}:
+                raise ValueError("unsupported candidate file mode")
+            entries.append({"path": name, "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest(), "mode": mode})
+        return {"version": 2, "files": entries, "total_bytes": total}
 
-    def capture(self, files: dict[str, bytes | str]) -> dict:
+    def capture(self, files: dict[str, bytes | str], *, file_modes: dict[str, str] | None = None) -> dict:
         raw = {name: value.encode("utf-8") if isinstance(value, str) else value for name, value in files.items()}
-        manifest = self._manifest(raw)
+        manifest = self._manifest(raw, file_modes)
         artifact_id = "sha256-" + digest(manifest)
         final = self._object(artifact_id)
         if final.exists():
@@ -152,10 +157,11 @@ class ArtifactStore:
                         content[name] = data
                     else:
                         raise Conflict("artifact contains a non-regular file")
-            if self._manifest(content) != manifest:
+            modes = {entry["path"]: entry["mode"] for entry in manifest["files"]}
+            if self._manifest(content, modes) != manifest:
                 raise Conflict("artifact bytes do not match their reviewed identity")
             return content
-        except (ValueError, OSError, TypeError) as exc:
+        except (ValueError, OSError, TypeError, KeyError) as exc:
             raise Conflict("artifact cannot be materialized safely") from exc
 
     def _remove_stage(self, path: Path) -> None:
