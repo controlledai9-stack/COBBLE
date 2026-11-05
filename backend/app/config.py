@@ -39,6 +39,10 @@ class Settings:
     response_mode: str = "off"
     response_operator_token: str | None = field(default=None, repr=False)
     response_minimum_gateway: str = "monitor"
+    response_root: str = str(BACKEND_DIR / "data" / "response")
+    response_repositories: str = field(default="{}", repr=False)
+    response_validator_image: str | None = None
+    response_scanner_image: str | None = None
 
 
 def get_settings() -> Settings:
@@ -58,4 +62,8 @@ def get_settings() -> Settings:
         response_mode=os.getenv("SWARMGUARD_RESPONSE_MODE", "off").lower(),
         response_operator_token=os.getenv("SWARMGUARD_RESPONSE_OPERATOR_TOKEN") or None,
         response_minimum_gateway=os.getenv("SWARMGUARD_RESPONSE_MINIMUM_GATEWAY", "monitor").lower(),
+        response_root=os.getenv("SWARMGUARD_RESPONSE_ROOT", str(BACKEND_DIR / "data" / "response")),
+        response_repositories=os.getenv("SWARMGUARD_RESPONSE_REPOSITORIES", "{}"),
+        response_validator_image=os.getenv("SWARMGUARD_RESPONSE_VALIDATOR_IMAGE") or None,
+        response_scanner_image=os.getenv("SWARMGUARD_RESPONSE_SCANNER_IMAGE") or None,
     )

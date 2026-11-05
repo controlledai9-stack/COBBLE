@@ -182,6 +182,18 @@ class GitQuarantineAdapter:
     def diff(self, base_sha: str, candidate_sha: str) -> bytes:
         return self._git("diff", "--no-ext-diff", "--no-textconv", "--binary", self.commit(base_sha), self.commit(candidate_sha), "--")
 
+    def describe(self, base_sha: str, candidate_sha: str) -> dict:
+        base, candidate = self.commit(base_sha), self.commit(candidate_sha)
+        metadata = self._git("show", "--no-patch", "--format=%an%x00%ae%x00%aI", candidate).decode("utf-8").strip().split("\0")
+        if len(metadata) != 3 or any(len(field) > 512 for field in metadata):
+            raise Conflict("candidate authorship metadata exceeds its evidence budget")
+        changed = self._git("diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", base, candidate, "--")
+        paths = [name.decode("utf-8") for name in changed.split(b"\0") if name]
+        if len(paths) > self.artifacts.max_files * 2 or any(len(path) > 240 for path in paths):
+            raise Conflict("changeset evidence exceeds its path budget")
+        return {"author": {"name": metadata[0], "email": metadata[1], "authored_at": metadata[2]},
+                "affected_paths": paths, "base_commit": base, "candidate_commit": candidate}
+
     def salvage(self, incident_id: str, base_sha: str, candidate_sha: str,
                 reviewed_files: dict[str, bytes | str], *, deleted_paths: list[str] | None = None,
                 reviewed_modes: dict[str, str] | None = None) -> dict:

@@ -530,3 +530,85 @@ class ActionApprovalCreate(ControlRequest):
     executor_id: ControlId
     expires_in_seconds: int = Field(300, ge=1, le=3600)
     reason: str = Field(min_length=1, max_length=2000)
+
+
+CommitId = Annotated[str, Field(pattern=r"^(?:[a-f0-9]{40}|[a-f0-9]{64})$")]
+
+
+class ContractRegistration(ControlRequest):
+    component: ControlId
+    version: ControlId
+    suite_id: Literal["sum-json-v1"]
+    state_version: ControlId
+
+
+class QuarantineIntake(ControlRequest):
+    repository_id: ControlId
+    base_commit: CommitId
+    candidate_commit: CommitId
+    run_id: ControlId
+    agent_id: ControlId
+    incident_id: ControlId
+    contract_id: ControlId
+
+
+class RevisionRequest(ControlRequest):
+    expected_revision: int = Field(ge=1)
+
+
+class QuarantineReview(RevisionRequest):
+    verdict: Literal["approved", "rejected"]
+    reason: str = Field(min_length=1, max_length=2000)
+    expires_in_seconds: int = Field(3600, ge=1, le=3600)
+
+
+class QuarantineSalvage(RevisionRequest):
+    files: dict[str, Annotated[str, Field(max_length=262144)]] = Field(min_length=1, max_length=64)
+    deleted_paths: list[str] = Field(default_factory=list, max_length=64)
+    modes: dict[str, Literal["100644", "100755"]] = Field(default_factory=dict, max_length=64)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class ReleaseIntent(RevisionRequest):
+    run_id: ControlId
+    agent_id: ControlId
+    kind: Literal["registry", "git"]
+    selection_revision: int = Field(ge=0)
+    expected_target: CommitId | None = None
+
+
+class ReleaseParameters(ControlRequest):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    quarantine_id: ControlId
+    quarantine_revision: int = Field(ge=1)
+    contract_id: ControlId
+    kind: Literal["registry", "git"]
+    review_id: ControlId
+    validation_digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    candidate_commit: CommitId
+    expected_target: CommitId | None
+    selection_revision: int = Field(ge=0)
+
+
+class ReleaseRequest(ControlRequest):
+    action: AuthorizationRequest
+    approval_id: ControlId
+
+
+class RegistryResolution(ControlRequest):
+    run_id: ControlId
+    agent_id: ControlId
+    state_version: ControlId
+    execution_context: Literal["trusted", "development"] = "trusted"
+    consumer: Literal["unaffected", "interface", "implementation", "security-critical"] = "interface"
+    required_implementation: ControlId | None = None
+    allow_stub: bool = False
+
+
+class ArtifactRevocation(RevisionRequest):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class ComponentInvocation(RegistryResolution):
+    args: list[Any] = Field(default_factory=list, max_length=16)
+    kwargs: dict[str, Any] = Field(default_factory=dict, max_length=16)

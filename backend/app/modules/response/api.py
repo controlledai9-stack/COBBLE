@@ -6,6 +6,9 @@ system. Reads are protected alongside writes, and workspace comes from the serve
 from __future__ import annotations
 
 import secrets
+import hashlib
+import json
+from pathlib import Path
 from functools import lru_cache
 from typing import Annotated
 
@@ -14,10 +17,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import get_settings
 from app.modules.response.control import ControlProfile, ResponseControl
-from app.modules.response.repository import ResponseRepository, Unavailable
+from app.modules.response.repository import ResponseRepository, Unavailable, digest
+from app.modules.response.quarantine import QuarantineService
 from app.schemas import (
     ActionApprovalCreate, AgentControlRequest, AuthorizationRequest, IncidentCreate,
     PrincipalRegistration, RestrictionCreate, ResumeRequest, SessionRegistration,
+    ArtifactRevocation, ContractRegistration, QuarantineIntake, QuarantineReview, QuarantineSalvage,
+    RegistryResolution, ReleaseIntent, ReleaseRequest, RevisionRequest,
+    ComponentInvocation,
 )
 from app.storage import get_store
 
@@ -54,6 +61,40 @@ def get_response_control() -> ResponseControl:
 Operator = Annotated[str, Depends(operator)]
 Control = Annotated[ResponseControl, Depends(get_response_control)]
 RequestKey = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)]
+
+
+def get_quarantine_service(control: Control) -> QuarantineService:
+    from app.modules.response.adapters.docker import DockerJsonExecutor
+    from app.modules.response.adapters.git import GitQuarantineAdapter
+    from app.modules.response.adapters.semgrep import SemgrepScanner
+    from app.modules.response.artifacts import ArtifactStore
+    from app.modules.response.validation import ValidationService
+    settings = get_settings()
+    root = Path(settings.response_root).absolute() / digest({"workspace": control.repository.workspace})
+    artifacts = ArtifactStore(root / "artifacts")
+    try:
+        configured = json.loads(settings.response_repositories)
+        if not isinstance(configured, dict) or len(configured) > 16:
+            raise ValueError("repository configuration exceeds budget")
+        repositories = {}
+        for name, config in configured.items():
+            if not isinstance(name, str) or not isinstance(config, dict) or set(config) - {"path", "trusted_ref"}:
+                raise ValueError("invalid repository configuration")
+            repositories[name] = GitQuarantineAdapter(config["path"], root / "worktrees" / digest({"repository": name}),
+                artifacts, trusted_ref=config.get("trusted_ref", "refs/heads/main"))
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        raise Unavailable("server repository configuration is invalid") from exc
+    validator = None
+    if settings.response_validator_image and settings.response_scanner_image:
+        worker = DockerJsonExecutor(artifacts, root / "jobs", settings.response_validator_image, workspace=control.repository.workspace)
+        rules = Path(__file__).resolve().parents[3] / "validator" / "rules.yaml"
+        scanner = SemgrepScanner(artifacts, root / "scans", settings.response_scanner_image,
+            workspace=control.repository.workspace, rules_digest=hashlib.sha256(rules.read_bytes()).hexdigest())
+        validator = ValidationService(control.repository, worker, scanner=scanner, clock=control.clock)
+    return QuarantineService(control, artifacts, repositories, validator=validator)
+
+
+Quarantines = Annotated[QuarantineService, Depends(get_quarantine_service)]
 router = APIRouter(prefix="/api/response", tags=["Active response control"], dependencies=[Depends(operator)])
 
 
@@ -147,3 +188,130 @@ def operation(operation_id: str, control: Control):
 def runtime_report(run_id: str, control: Control):
     from app.modules.response.runtime import ResponseRuntime
     return ResponseRuntime.report_for(control, run_id)
+
+
+@router.get("/contracts")
+def contracts(control: Control):
+    return control.repository.list("contract")
+
+
+@router.post("/contracts")
+def register_contract(req: ContractRegistration, service: Quarantines, actor: Operator, key: RequestKey):
+    return service.registry.register_contract(req.component, req.version, req.suite_id, req.state_version, actor=actor, key=key)
+
+
+@router.post("/contracts/{contract_id}/validation-context")
+def bind_validation_context(contract_id: str, service: Quarantines, actor: Operator, key: RequestKey):
+    return service.bind_context(contract_id, actor=actor, key=key)
+
+
+@router.post("/contracts/{contract_id}/resolve")
+def resolve_implementation(contract_id: str, req: RegistryResolution, service: Quarantines, actor: Operator):
+    return service.registry.resolve(contract_id, actor=actor, **req.model_dump())
+
+
+@router.get("/contracts/{contract_id}/selection")
+def implementation_selection(contract_id: str, control: Control):
+    return control.repository.get("selection", contract_id)
+
+
+@router.get("/implementations/{implementation_id}")
+def implementation(implementation_id: str, control: Control):
+    return control.repository.get("implementation", implementation_id)
+
+
+@router.get("/reviews/{review_id}")
+def review_record(review_id: str, control: Control):
+    return control.repository.get("review", review_id)
+
+
+@router.post("/quarantines")
+def capture_quarantine(req: QuarantineIntake, service: Quarantines, actor: Operator, key: RequestKey):
+    return service.capture(req.model_dump(), actor=actor, key=key)
+
+
+@router.get("/quarantines")
+def quarantines(control: Control, run_id: str | None = Query(None, max_length=128)):
+    return control.repository.list("quarantine", **({"run_id": run_id} if run_id else {}))
+
+
+@router.get("/quarantines/{quarantine_id}")
+def quarantine(quarantine_id: str, control: Control):
+    return control.repository.get("quarantine", quarantine_id)
+
+
+@router.get("/quarantines/{quarantine_id}/diff")
+def quarantine_diff(quarantine_id: str, service: Quarantines):
+    return service.diff(quarantine_id)
+
+
+@router.post("/quarantines/{quarantine_id}/validate")
+def validate_quarantine(quarantine_id: str, req: RevisionRequest, service: Quarantines, actor: Operator, key: RequestKey):
+    return service.validate(quarantine_id, req.expected_revision, actor=actor, key=key)
+
+
+@router.post("/quarantines/{quarantine_id}/review")
+def review_quarantine(quarantine_id: str, req: QuarantineReview, service: Quarantines, actor: Operator, key: RequestKey):
+    return service.review(quarantine_id, req.expected_revision, req.verdict, req.reason,
+        actor=actor, key=key, expires_in=req.expires_in_seconds)
+
+
+@router.post("/quarantines/{quarantine_id}/salvage")
+def salvage_quarantine(quarantine_id: str, req: QuarantineSalvage, service: Quarantines, actor: Operator, key: RequestKey):
+    return service.salvage(quarantine_id, req.expected_revision, req.files, req.deleted_paths, req.modes,
+                           req.reason, actor=actor, key=key)
+
+
+@router.post("/quarantines/{quarantine_id}/reconcile")
+def reconcile_capture(quarantine_id: str, req: RevisionRequest, service: Quarantines):
+    return service.reconcile_capture(quarantine_id, req.expected_revision)
+
+
+@router.post("/quarantines/{quarantine_id}/release-intent")
+def release_intent(quarantine_id: str, req: ReleaseIntent, service: Quarantines):
+    action = service.action(quarantine_id, **req.model_dump())
+    return {"action": action, "executor_id": "local-" + req.kind + "-release", "approval_required": True}
+
+
+@router.post("/releases")
+def release_quarantine(req: ReleaseRequest, service: Quarantines, key: RequestKey):
+    return service.release(req.action, req.approval_id, key=key)
+
+
+@router.post("/operations/{operation_id}/reconcile-release")
+def reconcile_release(operation_id: str, req: RevisionRequest, service: Quarantines):
+    return service.reconcile_release(operation_id, req.expected_revision)
+
+
+@router.get("/validations/{validation_id}")
+def validation(validation_id: str, control: Control):
+    return control.repository.get("validation", validation_id)
+
+
+@router.post("/validations/{validation_id}/reconcile")
+def reconcile_validation(validation_id: str, req: RevisionRequest, service: Quarantines, actor: Operator, key: RequestKey):
+    if service.validator is None:
+        raise Unavailable("isolated validator is not configured")
+    return service.validator.reconcile(validation_id, req.expected_revision, actor=actor, key=key)
+
+
+@router.get("/artifacts/{artifact_id}")
+def artifact(artifact_id: str, control: Control):
+    return control.repository.get("artifact", artifact_id)
+
+
+@router.post("/artifacts/{artifact_id}/revoke")
+def revoke_artifact(artifact_id: str, req: ArtifactRevocation, service: Quarantines, actor: Operator, key: RequestKey):
+    return service.registry.revoke(artifact_id, req.expected_revision, req.reason, actor=actor, key=key)
+
+
+@router.post("/contracts/{contract_id}/invoke")
+def invoke_component(contract_id: str, req: ComponentInvocation, service: Quarantines, actor: Operator, key: RequestKey):
+    from app.modules.response.components import ComponentService
+    return ComponentService(service).invoke(contract_id, req.model_dump(), actor=actor, key=key)
+
+
+@router.post("/operations/{operation_id}/reconcile-component")
+def reconcile_component(operation_id: str, req: RevisionRequest, service: Quarantines, actor: Operator, key: RequestKey):
+    from app.modules.response.components import ComponentService
+    return ComponentService(service).reconcile(operation_id, req.expected_revision, actor=actor, key=key)

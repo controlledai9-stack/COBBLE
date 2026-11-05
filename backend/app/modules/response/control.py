@@ -178,11 +178,15 @@ class ResponseControl:
                     restrictions.append(item["restriction_id"])
             if restrictions:
                 decision, reason = "deny", "active incident restriction"
-            elif req.capability == "artifact.consume" and not req.artifact_id:
+            elif req.capability in {"artifact.consume", "artifact.publish", "repo.merge.main", "deployment.production", "secret.read"}:
+                flow = tx.get("flow", digest({"kind": "principal", "subject": principal["principal_id"]}), required=False)
+                if flow and (flow["unknown"] or flow["sources"]):
+                    decision, reason = "deny", "principal context requires reviewed clean recovery"
+            if decision == "allow" and req.capability == "artifact.consume" and not req.artifact_id:
                 decision, reason = "deny", "artifact consumption requires an exact registered artifact identity"
-            elif req.artifact_id:
-                artifact = tx.get("artifact", req.artifact_id, required=False)
-                if not artifact or artifact.get("trust_state") != "trusted":
+            elif decision == "allow" and req.artifact_id:
+                from app.modules.response.registry import eligible_artifact
+                if not eligible_artifact(tx, req.artifact_id, now=self.clock(), contract_id=req.parameters.get("contract_id")):
                     decision, reason = "deny", "artifact has no trusted execution eligibility"
             if decision == "allow" and req.capability in {"code.execute", "shell.execute"}:
                 decision, reason = "sandbox_only", "code may execute only through the isolated validator"
@@ -213,9 +217,12 @@ class ResponseControl:
             })
         return self.repository.command(actor, key, "approval.issue", req.model_dump(), apply)
 
-    def prepare_operation(self, action: AuthorizationRequest, approval_id: str, *, executor_id: str, key: str) -> dict:
+    def prepare_operation(self, action: AuthorizationRequest, approval_id: str, *, executor_id: str, key: str,
+                          precondition=None) -> dict:
         """Trusted executor admission only. Returns durable intent, never success."""
         def apply(tx):
+            if precondition:
+                precondition(tx)
             decision = self._authorize(tx, action)
             approval = tx.get("approval", approval_id)
             if decision.decision not in {"allow", "review"}:

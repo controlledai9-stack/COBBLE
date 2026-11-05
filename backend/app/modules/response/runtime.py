@@ -292,8 +292,11 @@ class ResponseRuntime:
     @staticmethod
     def report_for(control, run_id):
         control.repository.get("session", run_id)
-        operations = control.repository.list("operation", run_id=run_id)
+        all_operations = control.repository.list("operation", run_id=run_id)
+        operations = [op for op in all_operations if op.get("effect_scope") == "local_virtual_tool"]
         return {"run_id": run_id, "scope": "local_virtual_tools", "mode": control.profile.mode,
             "operations": operations, "counts": dict(Counter(o["state"] for o in operations)),
             "verified_preventions": sum(bool(o.get("prevention_verified")) for o in operations),
+            "other_operation_counts": dict(Counter(op["executor_id"] for op in all_operations
+                if op.get("effect_scope") != "local_virtual_tool")),
             "limitations": ["simulated events are not effect receipts", "no production network/deployment adapter"]}

@@ -47,7 +47,7 @@ def digest(value: Any) -> str:
 
 KINDS = frozenset({
     "policy", "principal", "session", "incident", "restriction", "approval", "operation",
-    "quarantine", "artifact", "validation", "implementation", "contract", "evidence", "health", "flow",
+    "quarantine", "artifact", "validation", "implementation", "contract", "evidence", "health", "flow", "review", "selection",
 })
 
 
@@ -163,6 +163,23 @@ class ResponseRepository:
     def list(self, kind: str, **filters) -> list[dict]:
         with self.read() as tx:
             return tx.list(kind, filters=filters)
+
+    def completed_command(self, actor: str, key: str, action: str, payload: dict) -> dict | None:
+        """Read a historical idempotent result before rechecking mutable subjects.
+
+        This never authorizes a new effect. Callers must dispatch effects only
+        through command() and return this result solely as a previous outcome.
+        """
+        with self.read():
+            self._check_head()
+            row = self._conn.execute(
+                "SELECT request_hash,result FROM response_commands WHERE workspace=? AND actor=? AND action=? AND request_key=?",
+                (self.workspace, actor, action, key)).fetchone()
+            if not row:
+                return None
+            if row[0] != digest(payload):
+                raise Conflict("idempotency key already used for a different request")
+            return json.loads(row[1])
 
     def command(self, actor: str, key: str, action: str, payload: dict,
                 apply: Callable[[Transaction], dict]) -> dict:

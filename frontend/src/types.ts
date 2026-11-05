@@ -512,3 +512,77 @@ export interface ActionApprovalCreate {
   expires_in_seconds?: number;
   reason: string;
 }
+
+export interface ContractRegistration {
+  component: string;
+  version: string;
+  suite_id: 'sum-json-v1';
+  state_version: string;
+}
+
+export interface QuarantineIntake {
+  repository_id: string;
+  base_commit: string;
+  candidate_commit: string;
+  run_id: string;
+  agent_id: string;
+  incident_id: string;
+  contract_id: string;
+}
+
+export interface RevisionRequest { expected_revision: number }
+
+export interface QuarantineReview extends RevisionRequest {
+  verdict: 'approved' | 'rejected';
+  reason: string;
+  expires_in_seconds?: number;
+}
+
+export interface QuarantineSalvage extends RevisionRequest {
+  files: Record<string, string>;
+  deleted_paths?: string[];
+  modes?: Record<string, '100644' | '100755'>;
+  reason: string;
+}
+
+export interface ReleaseIntent extends RevisionRequest {
+  run_id: string;
+  agent_id: string;
+  kind: 'registry' | 'git';
+  selection_revision: number;
+  expected_target?: string | null;
+}
+
+export interface ReleaseParameters {
+  quarantine_id: string;
+  quarantine_revision: number;
+  contract_id: string;
+  kind: 'registry' | 'git';
+  review_id: string;
+  validation_digest: string;
+  candidate_commit: string;
+  expected_target: string | null;
+  selection_revision: number;
+}
+
+export interface ReleaseRequest {
+  action: AuthorizationRequest;
+  approval_id: string;
+}
+
+export interface RegistryResolution {
+  run_id: string;
+  agent_id: string;
+  state_version: string;
+  execution_context?: 'trusted' | 'development';
+  consumer?: 'unaffected' | 'interface' | 'implementation' | 'security-critical';
+  required_implementation?: string | null;
+  allow_stub?: boolean;
+}
+
+export interface ArtifactRevocation extends RevisionRequest { reason: string }
+
+export interface ComponentInvocation extends RegistryResolution {
+  args?: unknown[];
+  kwargs?: Record<string, unknown>;
+}

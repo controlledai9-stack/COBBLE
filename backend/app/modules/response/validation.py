@@ -152,7 +152,7 @@ class ValidationService:
             if current["state"] != "running" or current["lease_until"] <= self.clock():
                 raise Conflict("validation no longer has an active lease")
             result = {**current, "state": state if applicable else "stale", "completed_at": now_iso(),
-                      "applicable": applicable, "eligibility_granted": False}
+                      "completed_at_epoch": self.clock(), "applicable": applicable, "eligibility_granted": False}
             result["result_digest"] = digest(result)
             return tx.update("validation", current["validation_id"], result, record["revision"])
         return self.repository.command("validator", record["validation_id"] + ".finish", "validation.finish",
