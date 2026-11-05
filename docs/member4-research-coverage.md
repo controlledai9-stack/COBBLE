@@ -227,7 +227,7 @@ For implementation tracking, extend each row with owner, state (`planned`, `in p
 
 ## J. Additional critical design-review requirements
 
-These are engineering improvements identified after source-coverage verification, not additions attributed to the original research. All are planned; full scenarios/acceptance evidence are specified in the [review](member4-plan-review.md) and made binding by plan Section 17. Original requirement counts and mappings are unchanged.
+These are engineering improvements identified after source-coverage verification, not additions attributed to the original research. Full scenarios/acceptance evidence are specified in the [review](member4-plan-review.md) and made binding by plan Section 17. Partial implementation and test evidence now exist in the [implementation status](member4-implementation-status.md); no entire BR gate is yet verified. Original requirement counts and mappings are unchanged.
 
 | Review ID | New requirement | Verification scope |
 | --- | --- | --- |
