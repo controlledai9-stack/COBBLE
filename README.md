@@ -21,7 +21,7 @@ No local LLM is needed. The model API is optional and capped.
 
 ## Setup
 
-You need Python 3.11+ and Node 18+.
+You need Python 3.11+ and Node 20.19+ (20.x), or Node 22.12+.
 
 ```bash
 cd backend
