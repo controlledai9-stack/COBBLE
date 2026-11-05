@@ -24,6 +24,30 @@ export function clampCompanionBounds(
   };
 }
 
+export function adjustAwayFromMainLogo(
+  bounds: { x: number; y: number; width: number; height: number },
+  mainBounds?: { x: number; y: number; width: number; height: number },
+) {
+  if (!mainBounds) return bounds;
+  // Exclusion box around main window's top-left logo and sidebar header
+  const logoX2 = mainBounds.x + 220;
+  const logoY2 = mainBounds.y + 110;
+  const overlaps =
+    bounds.x < logoX2 &&
+    bounds.x + bounds.width > mainBounds.x &&
+    bounds.y < logoY2 &&
+    bounds.y + bounds.height > mainBounds.y;
+
+  if (overlaps) {
+    return {
+      ...bounds,
+      x: mainBounds.x + mainBounds.width - bounds.width - 30,
+      y: mainBounds.y + 50,
+    };
+  }
+  return bounds;
+}
+
 /** Both the cursor and window positions come from Electron, in screen DIP. */
 export class CompanionDrag {
   private origin: {

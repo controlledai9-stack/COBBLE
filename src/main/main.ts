@@ -19,6 +19,7 @@ import {
   CompanionDrag,
   CompanionMachine,
   clampCompanionBounds,
+  adjustAwayFromMainLogo,
 } from "./companion";
 import { transcribe } from "./voice";
 import { connectIde, prepareIde } from "./integration";
@@ -49,8 +50,12 @@ let companionAnchor = { x: 0, y: 0 };
 const devUrl = process.env.COBBLE_RENDERER_URL;
 const companionSmoke = process.env.COBBLE_COMPANION_SMOKE_TEST === "1";
 const shutdownSmoke = process.env.COBBLE_SHUTDOWN_SMOKE_TEST === "1";
+const screenshotSmoke = process.env.COBBLE_CAPTURE_SCREENSHOTS === "1";
 const smoke =
-  process.env.COBBLE_SMOKE_TEST === "1" || companionSmoke || shutdownSmoke;
+  process.env.COBBLE_SMOKE_TEST === "1" ||
+  companionSmoke ||
+  shutdownSmoke ||
+  screenshotSmoke;
 if (smoke)
   app.setPath(
     "userData",
@@ -132,13 +137,25 @@ else {
         backgroundThrottling: !smoke,
         offscreen: smoke,
       };
+      Menu.setApplicationMenu(null);
       main = new BrowserWindow({
         width: 1180,
         height: 820,
         minWidth: 850,
         minHeight: 620,
         title: "Cobble",
-        backgroundColor: "#f6f7f2",
+        backgroundColor: "#09090b",
+        autoHideMenuBar: true,
+        titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+        ...(process.platform === "win32"
+          ? {
+              titleBarOverlay: {
+                color: "#00000000",
+                symbolColor: "#a1a1aa",
+                height: 38,
+              },
+            }
+          : {}),
         show: !smoke,
         webPreferences: options,
       });
@@ -151,6 +168,9 @@ else {
         skipTaskbar: true,
         alwaysOnTop: true,
         show: false,
+        backgroundMaterial:
+          process.platform === "win32" ? "acrylic" : undefined,
+        vibrancy: process.platform === "darwin" ? "under-window" : undefined,
         webPreferences: { ...options, backgroundThrottling: false },
       });
       companion.setIgnoreMouseEvents(true, { forward: true });
@@ -161,12 +181,18 @@ else {
         const bounds = companion.getBounds();
         const display = screen.getDisplayMatching(bounds);
         const clampedBounds = clampCompanionBounds(bounds, display.workArea);
-        if (bounds.x !== clampedBounds.x || bounds.y !== clampedBounds.y) {
-          companion.setBounds(clampedBounds);
+        const safeBounds = adjustAwayFromMainLogo(
+          clampedBounds,
+          main && !main.isDestroyed() && main.isVisible()
+            ? main.getBounds()
+            : undefined,
+        );
+        if (bounds.x !== safeBounds.x || bounds.y !== safeBounds.y) {
+          companion.setBounds(safeBounds);
         }
         const collapsed = {
-          x: clampedBounds.x + clampedBounds.width - 160,
-          y: clampedBounds.y + clampedBounds.height - 110,
+          x: safeBounds.x + safeBounds.width - 160,
+          y: safeBounds.y + safeBounds.height - 110,
           width: 160,
           height: 110,
         };
@@ -508,6 +534,9 @@ else {
           skipTaskbar: false,
           alwaysOnTop: true,
           show: false,
+          backgroundMaterial:
+            process.platform === "win32" ? "acrylic" : undefined,
+          vibrancy: process.platform === "darwin" ? "under-window" : undefined,
           webPreferences: {
             ...options,
             offscreen: false,
@@ -776,6 +805,20 @@ else {
               ? { x: point.x * zoom, y: point.y * zoom }
               : undefined;
           if (command === "show") {
+            const currentBounds = companion.getBounds();
+            const safeBounds = adjustAwayFromMainLogo(
+              currentBounds,
+              main && !main.isDestroyed() && main.isVisible()
+                ? main.getBounds()
+                : undefined,
+            );
+            if (
+              safeBounds.x !== currentBounds.x ||
+              safeBounds.y !== currentBounds.y
+            ) {
+              companion.setBounds(safeBounds);
+              companionAnchor = { x: safeBounds.x, y: safeBounds.y };
+            }
             companion.showInactive();
             machine.interact();
           } else if (command === "hide") companion.hide();
@@ -913,8 +956,14 @@ else {
         restored,
         screen.getDisplayMatching(restored).workArea,
       );
-      companionAnchor = { x: initialBounds.x, y: initialBounds.y };
-      companion.setBounds(initialBounds);
+      const safeBounds = adjustAwayFromMainLogo(
+        initialBounds,
+        main && !main.isDestroyed() && main.isVisible()
+          ? main.getBounds()
+          : undefined,
+      );
+      companionAnchor = { x: safeBounds.x, y: safeBounds.y };
+      companion.setBounds(safeBounds);
       if (!smoke) companion.showInactive();
       const pixels = Buffer.alloc(16 * 16 * 4);
       for (let i = 0; i < pixels.length; i += 4) {
@@ -961,6 +1010,9 @@ else {
         } else if (companionSmoke) {
           const { runCompanionSmoke } = await import("./companion-smoke");
           await runCompanionSmoke(companion);
+        } else if (screenshotSmoke) {
+          const { runScreenshotCapture } = await import("./screenshot-capture");
+          await runScreenshotCapture(main, service);
         } else {
           const { runSmoke } = await import("./smoke");
           await runSmoke(main, companion, service);

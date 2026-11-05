@@ -458,22 +458,38 @@ export function WorkAreas({ state, act }: { state: AppState; act: Act }) {
           </div>
           <fieldset className="clean-fieldset">
             <legend>This area depends on these other work areas</legend>
-            {(team.graph?.modules ?? [])
-              .filter((m) => m.id !== id)
-              .map((m) => (
-                <label className="checkbox" key={m.id}>
-                  <input
-                    type="checkbox"
-                    checked={dependsOn.includes(m.id)}
-                    onChange={() => setDependsOn(toggle(dependsOn, m.id))}
-                  />
-                  {m.name}
-                </label>
-              ))}
+            {(team.graph?.modules ?? []).filter((m) => m.id !== id).length === 0 ? (
+              <p className="small muted" style={{ margin: "6px 0", fontStyle: "italic" }}>
+                No other work areas defined yet. Create other modules (e.g. Frontend, API) to link cross-area dependencies.
+              </p>
+            ) : (
+              (team.graph?.modules ?? [])
+                .filter((m) => m.id !== id)
+                .map((m) => (
+                  <label className="checkbox" key={m.id}>
+                    <input
+                      type="checkbox"
+                      checked={dependsOn.includes(m.id)}
+                      onChange={() => setDependsOn(toggle(dependsOn, m.id))}
+                    />
+                    {m.name}
+                  </label>
+                ))
+            )}
           </fieldset>
-          <button disabled={!owners.length}>
-            {id ? "Update work area" : "Add work area"}
-          </button>
+          <div className="form-actions" style={{ marginTop: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+            <button
+              disabled={!owners.length}
+              className={owners.length ? "primary" : "secondary"}
+            >
+              {id ? "Update work area" : "Add work area"}
+            </button>
+            {!owners.length && (
+              <span className="small muted">
+                Select at least one assigned teammate above.
+              </span>
+            )}
+          </div>
         </form>
       )}
     </section>

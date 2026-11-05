@@ -21,6 +21,10 @@ export function PebbleAnimation({
     () => matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const [failed, setFailed] = useState(false);
+  const [prolongedSleep, setProlongedSleep] = useState(false);
+  const [windowFocused, setWindowFocused] = useState(
+    () => typeof document !== "undefined" && document.hasFocus ? document.hasFocus() : true,
+  );
 
   useEffect(() => {
     const query = matchMedia("(prefers-reduced-motion: reduce)");
@@ -29,9 +33,22 @@ export function PebbleAnimation({
     return () => query.removeEventListener("change", update);
   }, []);
 
+  // Track window focus/blur to pause decoding when unfocused
+  useEffect(() => {
+    const onFocus = () => setWindowFocused(true);
+    const onBlur = () => setWindowFocused(false);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   useEffect(() => {
     const before = previous.current;
     previous.current = mode;
+    setProlongedSleep(false);
     if (mode === "dragging") {
       setClip(before === "dragging" ? `drag-${direction}` : "elastic-swoop");
     } else if (mode === "idle") {
@@ -46,20 +63,35 @@ export function PebbleAnimation({
   useEffect(() => {
     if (attention !== lastAttention.current) {
       lastAttention.current = attention;
+      setProlongedSleep(false);
       if (attention && mode === "normal") setClip("curious-bounce");
     }
   }, [attention, mode]);
+
+  // When resting in sleep clip for > 8s, throttle to static image frame to cut CPU/GPU decoding
+  useEffect(() => {
+    if (clip !== "sleep") {
+      setProlongedSleep(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setProlongedSleep(true);
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [clip]);
 
   useEffect(() => {
     setFailed(false);
     const player = video.current;
     let active = true;
     const sync = () => {
-      if (document.hidden || reduced) player?.pause();
-      else
+      if (document.hidden || !windowFocused || reduced || prolongedSleep) {
+        player?.pause();
+      } else {
         void player?.play().catch(() => {
           if (active) setFailed(true);
         });
+      }
     };
     sync();
     document.addEventListener("visibilitychange", sync);
@@ -68,7 +100,7 @@ export function PebbleAnimation({
       document.removeEventListener("visibilitychange", sync);
       player?.pause();
     };
-  }, [clip, reduced]);
+  }, [clip, reduced, windowFocused, prolongedSleep]);
 
   const asset = pebbleClips[clip];
   return (
@@ -88,7 +120,7 @@ export function PebbleAnimation({
           <rect width="200" height="194" fill="transparent" />
         </g>
       </svg>
-      {reduced || failed ? (
+      {reduced || failed || prolongedSleep ? (
         <img
           className="pebble-motion-media"
           src={asset.still}

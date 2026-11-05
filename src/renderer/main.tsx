@@ -17,6 +17,9 @@ import {
   WorkAreas,
   AgentConnections,
 } from "./collaboration-panel";
+import { AlertTriagePanel } from "./alert-triage";
+import { ProposalVoteView } from "./proposal-vote";
+import { OwnershipMapView } from "./ownership-map";
 import { RevertDialog } from "./revert-dialog";
 import {
   IconHome,
@@ -43,6 +46,7 @@ import {
 import { PebbleAnimation } from "./pebble-animation";
 import { HostingPanel } from "./hosting-panel";
 import { ModalShell } from "./modal-shell";
+import { createBrowserMockApi } from "./browser-mock";
 import "./styles.css";
 import "./hosting-panel.css";
 declare global {
@@ -80,6 +84,7 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    (window as unknown as { __setCobbleTheme?: (t: "light" | "dark") => void }).__setCobbleTheme = setTheme;
     const handleStorage = (e: StorageEvent) => {
       if (
         e.key === "cobble-theme" &&
@@ -89,7 +94,10 @@ function App() {
       }
     };
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
+    return () => {
+      delete (window as unknown as { __setCobbleTheme?: (t: "light" | "dark") => void }).__setCobbleTheme;
+      window.removeEventListener("storage", handleStorage);
+    };
   }, []);
 
   const toggleTheme = () => {
@@ -98,6 +106,9 @@ function App() {
 
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<Tab>("Home");
+  const [teamSubTab, setTeamSubTab] = useState<
+    "plan" | "ownership" | "proposals" | "alerts"
+  >("plan");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -178,8 +189,7 @@ function App() {
   };
   useEffect(() => {
     if (!window.cobble) {
-      setError("Open Cobble through the desktop app using npm run dev.");
-      return;
+      window.cobble = createBrowserMockApi();
     }
     window.cobble
       .state()
@@ -473,45 +483,117 @@ function App() {
               <>
                 <div className="status-grid">
                   <Status
-                    label="WORKSPACE"
+                    label="WORKSPACE & ANCHOR"
+                    badge={{
+                      text: ideConnected(state) ? "Linked" : "Not Paired",
+                      variant: ideConnected(state) ? "success" : "neutral",
+                    }}
                     value={
                       ideConnected(state)
-                        ? "Connected"
+                        ? (state.ide.editor ?? "Connected")
                         : state.ide.state === "lost"
                           ? "Connection lost"
                           : "Not paired"
                     }
-                    detail={state.ide.editor ?? "Connect your editor in Teams"}
-                  />
-                  <Status
-                    label="SAVED CHANGES"
-                    value={
+                    detail={
                       state.paused
-                        ? "Paused"
+                        ? "File observation paused"
                         : state.watching
-                          ? "Watching"
+                          ? "Live file watcher active"
                           : team?.workspace
                             ? "Folder unavailable"
-                            : "Waiting for a folder"
-                    }
-                    detail={
-                      ideConnected(state)
-                        ? "IDE and folder linked"
-                        : team?.workspace
-                          ? "Folder watcher only"
-                          : "Choose a workspace in Teams"
+                            : "Choose a workspace in Teams"
                     }
                   />
                   <Status
-                    label="TEAM SYNC"
+                    label="PLAN & MILESTONES"
+                    onClick={() => {
+                      setTeamSubTab("plan");
+                      setTab("Teams");
+                    }}
+                    badge={
+                      team?.items?.length
+                        ? { text: `v${team.version}`, variant: "info" }
+                        : { text: "Draft", variant: "neutral" }
+                    }
+                    value={
+                      team?.items?.length
+                        ? `${team.items.length} Plan Item${team.items.length === 1 ? "" : "s"}`
+                        : "No Plan Items"
+                    }
+                    detail={
+                      team?.items?.length
+                        ? `${team.items.filter((i) => i.kind === "milestone").length} milestones · ${team.items.filter((i) => i.kind === "feature").length} features`
+                        : "Define plan items in Workspace & Plan"
+                    }
+                  />
+                  <Status
+                    label="REVIEW & PROPOSALS"
+                    onClick={() => {
+                      setTeamSubTab("proposals");
+                      setTab("Teams");
+                    }}
+                    badge={
+                      !state.watching || !team?.workspace
+                        ? {
+                            text: state.paused ? "Paused" : "Not Watching",
+                            variant: "neutral",
+                          }
+                        : (state.proposals?.length ?? 0) > 0
+                          ? {
+                              text: `${state.proposals.length} Pending`,
+                              variant: "warning",
+                            }
+                          : {
+                              text: "In Sync",
+                              variant: "success",
+                            }
+                    }
+                    value={
+                      !state.watching || !team?.workspace
+                        ? state.paused
+                          ? "Observation Paused"
+                          : "Not Watching"
+                        : (state.proposals?.length ?? 0) > 0
+                          ? `${state.proposals.length} Active Proposal${state.proposals.length === 1 ? "" : "s"}`
+                          : "Clean Working Tree"
+                    }
+                    detail={
+                      !state.watching || !team?.workspace
+                        ? "Connect an editor and resume observation to detect conflicts."
+                        : state.activities.filter((a) => a.alert).length > 0
+                          ? `${state.activities.filter((a) => a.alert).length} file changes flagged for review`
+                          : "Zero unreviewed change blockers"
+                    }
+                  />
+                  <Status
+                    label="MESH & HOSTING"
+                    badge={{
+                      text:
+                        state.network.role === "host"
+                          ? "Primary Host"
+                          : state.network.role === "client"
+                            ? "Peer Node"
+                            : "Local Only",
+                      variant:
+                        state.network.role === "host"
+                          ? "success"
+                          : state.network.role === "client"
+                            ? "info"
+                            : "neutral",
+                    }}
                     value={
                       state.network.role === "local"
-                        ? "Local only"
+                        ? "Local Standby"
                         : state.network.role === "host"
-                          ? "Hosting"
-                          : "Client"
+                          ? "Hosting Cluster"
+                          : "Connected Client"
                     }
-                    detail={state.network.state}
+                    detail={
+                      state.hosting.phase
+                        ? `Hosting phase: ${state.hosting.phase}`
+                        : state.network.state
+                    }
                   />
                 </div>
                 <section className="panel">
@@ -651,7 +733,7 @@ function App() {
                     <span className="eyebrow">OUR DIRECTION</span>
                     <h2>
                       {team
-                        ? `${team.items.length} pieces. One shared plan.`
+                        ? `${team.items.length} piece${team.items.length === 1 ? "" : "s"}. One shared plan.`
                         : "Every good build starts somewhere."}
                     </h2>
                     <p>
@@ -702,6 +784,8 @@ function App() {
                 notice={setNotice}
                 externalModal={teamModal}
                 onClearModal={() => setTeamModal(null)}
+                activeSubTab={teamSubTab}
+                onSubTabChange={setTeamSubTab}
               />
             )}
             {tab === "Invites" && (
@@ -764,7 +848,7 @@ function App() {
                 <section className="panel">
                   <h2>Your profile</h2>
                   <ProfileForm state={state} act={act} busy={busy} />
-                  <p className="small">Device ID · {state.profile.id}</p>
+                  <p className="small profile-device-id">Device ID · {state.profile.id}</p>
                   <label>
                     Theme appearance
                     <select
@@ -795,16 +879,16 @@ function App() {
                   </label>
                 </section>
                 <section className="panel">
-                  <span className="eyebrow">COMPANION ART</span>
-                  <h2>Ready for its own personality.</h2>
+                  <span className="eyebrow">COMPANION CO-PILOT</span>
+                  <h2>Ambient desktop presence.</h2>
                   <p>
-                    The normal, idle, and dragging poses have code hooks. Your
-                    artist's assets can be added later without changing the app
-                    logic.
+                    Pebble acts as your desktop co-pilot, reacting to active
+                    branch changes and alerting you to out-of-plan edits
+                    without disrupting your development flow.
                   </p>
                   <p className="small">
-                    Idle controls dock to the nearest screen edge after 45
-                    seconds. Editor-window anchoring is not enabled yet.
+                    Controls dock softly to the screen edge when idle. All
+                    activity processing remains strictly local.
                   </p>
                   <h3>Local voice</h3>
                   <p className="small">
@@ -857,19 +941,73 @@ function Status({
   label,
   value,
   detail,
+  badge,
+  progress,
+  onClick,
 }: {
   label: string;
   value: string;
   detail: string;
+  badge?: {
+    text: string;
+    variant?: "success" | "warning" | "info" | "neutral";
+  };
+  progress?: {
+    current: number;
+    total: number;
+    label?: string;
+  };
+  onClick?: () => void;
 }) {
   return (
-    <div className="status-card">
-      <span className="eyebrow">{label}</span>
+    <div
+      className={`status-card ${onClick ? "interactive" : ""}`}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+    >
+      <div className="status-card-header">
+        <span className="eyebrow">{label}</span>
+        {badge && (
+          <span
+            className={`status-badge status-badge-${badge.variant ?? "neutral"}`}
+          >
+            {badge.text}
+          </span>
+        )}
+      </div>
       <h2>{value}</h2>
+      {progress && (
+        <div className="status-metric-track" aria-label={progress.label}>
+          <div
+            className="status-metric-fill"
+            style={{
+              width: `${Math.min(100, Math.max(0, progress.total > 0 ? (progress.current / progress.total) * 100 : 0))}%`,
+            }}
+          />
+        </div>
+      )}
       <small>{detail}</small>
     </div>
   );
 }
+function maskEmail(addr: string): string {
+  if (!addr || !addr.includes("@")) return addr;
+  const [user, domain] = addr.split("@");
+  if (user.length <= 2) return `${user[0]}*@${domain}`;
+  return `${user.slice(0, 2)}${"•".repeat(Math.max(3, user.length - 2))}@${domain}`;
+}
+
 function ProfileForm({
   state,
   act,
@@ -881,6 +1019,7 @@ function ProfileForm({
 }) {
   const [name, setName] = useState(state.profile?.name ?? "");
   const [email, setEmail] = useState(state.profile?.email ?? "");
+  const [revealEmail, setRevealEmail] = useState(false);
   const [speak, setSpeak] = useState(state.profile?.speak ?? false);
   return (
     <form
@@ -900,12 +1039,25 @@ function ProfileForm({
         />
       </label>
       <label>
-        Email <span className="muted">(optional, display only)</span>
+        <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Email <span className="muted">(display only · masked for privacy)</span></span>
+          {email && (
+            <button
+              type="button"
+              className="text-button"
+              style={{ fontSize: "11px", padding: "0 4px", height: "auto" }}
+              onClick={() => setRevealEmail(!revealEmail)}
+            >
+              {revealEmail ? "Mask" : "Reveal"}
+            </button>
+          )}
+        </span>
         <input
-          type="email"
+          type={revealEmail ? "email" : "text"}
           maxLength={254}
-          value={email}
+          value={revealEmail ? email : maskEmail(email)}
           onChange={(e) => setEmail(e.target.value)}
+          onFocus={() => setRevealEmail(true)}
           placeholder="you@example.com"
         />
       </label>
@@ -919,16 +1071,18 @@ function ProfileForm({
           Speak short chat confirmations
         </label>
       )}
-      <button disabled={busy}>
-        {state.profile ? (
-          "Save profile"
-        ) : (
-          <>
-            <span>Get started</span>
-            <IconArrowRight />
-          </>
-        )}
-      </button>
+      <div className="profile-form-actions">
+        <button disabled={busy} className="primary">
+          {state.profile ? (
+            "Save profile"
+          ) : (
+            <>
+              <span>Get started</span>
+              <IconArrowRight />
+            </>
+          )}
+        </button>
+      </div>
     </form>
   );
 }
@@ -1067,6 +1221,8 @@ function Teams({
   notice,
   externalModal,
   onClearModal,
+  activeSubTab,
+  onSubTabChange,
 }: {
   state: AppState;
   act: (a: Action) => Promise<boolean>;
@@ -1075,6 +1231,8 @@ function Teams({
   notice: (s: string) => void;
   externalModal?: "workspace" | "apps" | "create" | "join" | null;
   onClearModal?: () => void;
+  activeSubTab?: "plan" | "ownership" | "proposals" | "alerts";
+  onSubTabChange?: (tab: "plan" | "ownership" | "proposals" | "alerts") => void;
 }) {
   const team = state.teams.find((t) => t.id === state.activeTeamId);
   const [localModal, setLocalModal] = useState<
@@ -1095,6 +1253,16 @@ function Teams({
   const [join, setJoin] = useState(false);
   const [edit, setEdit] = useState(false);
   const [editPlan, setEditPlan] = useState("");
+  const [internalSubTab, setInternalSubTab] = useState<
+    "plan" | "ownership" | "proposals" | "alerts"
+  >("plan");
+  const subTab = activeSubTab ?? internalSubTab;
+  const setSubTab = (tab: "plan" | "ownership" | "proposals" | "alerts") => {
+    setInternalSubTab(tab);
+    onSubTabChange?.(tab);
+  };
+  const [activeRevertPreview, setActiveRevertPreview] =
+    useState<RevertPreview | null>(null);
   const [pair, setPair] = useState("");
   const [hostMode, setHostMode] = useState<"direct" | "internet" | "lan">(
     "direct",
@@ -1470,102 +1638,207 @@ function Teams({
               />
             </ModalShell>
           )}
-          <section className="panel plan-hero-card">
-            <div className="plan-toolbar">
-              <div className="plan-toolbar-left">
-                <span className="eyebrow">
-                  VERSION {team.version} · ACTIVE DIRECTION
+          <div
+            className="teams-segmented-control"
+            role="tablist"
+            aria-label="Workspace Sections"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={subTab === "plan"}
+              className={`segmented-btn ${subTab === "plan" ? "active" : ""}`}
+              onClick={() => setSubTab("plan")}
+            >
+              <span>The Core Plan</span>
+              <span className="count-pill">v{team.version}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={subTab === "ownership"}
+              className={`segmented-btn ${subTab === "ownership" ? "active" : ""}`}
+              onClick={() => setSubTab("ownership")}
+            >
+              <span>Ownership Map</span>
+              <span className="count-pill">
+                {team.graph?.modules?.length ?? 0}
+              </span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={subTab === "proposals"}
+              className={`segmented-btn ${subTab === "proposals" ? "active" : ""}`}
+              onClick={() => setSubTab("proposals")}
+            >
+              <span>Merge Proposals</span>
+              {(state.proposals?.length ?? 0) > 0 && (
+                <span className="count-pill warning">
+                  {state.proposals.length}
                 </span>
-                <h2>The core plan</h2>
-              </div>
-              <div className="plan-toolbar-actions">
-                {team.ownerId === state.profile?.id && (
-                  <button
-                    className="secondary"
-                    onClick={() => {
-                      setEditPlan(team.plan);
-                      setEdit(!edit);
+              )}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={subTab === "alerts"}
+              className={`segmented-btn ${subTab === "alerts" ? "active" : ""}`}
+              onClick={() => setSubTab("alerts")}
+            >
+              <span>Alert Triage</span>
+              {state.activities.filter((a) => a.alert).length > 0 && (
+                <span className="count-pill danger">
+                  {state.activities.filter((a) => a.alert).length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {subTab === "plan" && (
+            <>
+              <section className="panel plan-hero-card">
+                <div className="plan-toolbar">
+                  <div className="plan-toolbar-left">
+                    <span className="eyebrow">
+                      VERSION {team.version} · ACTIVE DIRECTION
+                    </span>
+                    <h2>The core plan</h2>
+                  </div>
+                  <div className="plan-toolbar-actions">
+                    {team.ownerId === state.profile?.id && (
+                      <button
+                        className={edit ? "secondary" : "primary"}
+                        onClick={() => {
+                          setEditPlan(team.plan);
+                          setEdit(!edit);
+                        }}
+                      >
+                        {edit ? "Cancel editing" : "Edit plan"}
+                      </button>
+                    )}
+                    <button
+                      className="secondary"
+                      onClick={() => setModal("workspace")}
+                    >
+                      Workspace & Hosting
+                    </button>
+                    <button
+                      className="secondary"
+                      onClick={() => setModal("apps")}
+                    >
+                      Connected IDEs & Agents
+                    </button>
+                  </div>
+                </div>
+                <div className="plan-meta-row">
+                  <span className="plan-meta-item">
+                    <strong>Project folder:</strong>{" "}
+                    {team.workspace
+                      ? team.workspace.split(/[/\\]/).pop()
+                      : "None"}
+                  </span>
+                  <span className="plan-meta-item">
+                    <strong>Milestones:</strong> {team.items.length} piece
+                    {team.items.length === 1 ? "" : "s"}
+                  </span>
+                  <span className="plan-meta-item">
+                    <strong>Team:</strong> {state.members.length} / 8 members
+                  </span>
+                  <span className="plan-meta-item">
+                    <strong>Verified project connections: </strong>
+                    {(state.ide.connections ?? []).length
+                      ? (state.ide.connections ?? [])
+                          .map(
+                            (c) =>
+                              `${c.editor}${c.focused ? " (focused)" : ""}`,
+                          )
+                          .join(", ")
+                      : state.ide.editor
+                        ? state.ide.editor
+                        : "Waiting for editor confirmation"}
+                  </span>
+                </div>
+                {edit ? (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      await act({
+                        type: "updatePlan",
+                        teamId: team.id,
+                        expectedVersion: team.version,
+                        plan: editPlan,
+                      });
                     }}
                   >
-                    {edit ? "Cancel editing" : "Edit plan"}
-                  </button>
-                )}
-                <button
-                  className="secondary"
-                  onClick={() => setModal("workspace")}
-                >
-                  Workspace & Hosting
-                </button>
-                <button className="secondary" onClick={() => setModal("apps")}>
-                  Connected IDEs & Agents
-                </button>
-              </div>
-            </div>
-            <div className="plan-meta-row">
-              <span className="plan-meta-item">
-                <strong>Project folder:</strong>{" "}
-                {team.workspace ? team.workspace.split(/[/\\]/).pop() : "None"}
-              </span>
-              <span className="plan-meta-item">
-                <strong>Milestones:</strong> {team.items.length} pieces
-              </span>
-              <span className="plan-meta-item">
-                <strong>Team:</strong> {state.members.length} / 8 members
-              </span>
-              <span className="plan-meta-item">
-                <strong>Verified project connections: </strong>
-                {(state.ide.connections ?? []).length
-                  ? (state.ide.connections ?? [])
-                      .map((c) => `${c.editor}${c.focused ? " (focused)" : ""}`)
-                      .join(", ")
-                  : state.ide.editor
-                    ? state.ide.editor
-                    : "Waiting for editor confirmation"}
-              </span>
-            </div>
-            {edit ? (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  await act({
-                    type: "updatePlan",
-                    teamId: team.id,
-                    expectedVersion: team.version,
-                    plan: editPlan,
-                  });
-                }}
-              >
-                <textarea
-                  rows={12}
-                  required
-                  value={editPlan}
-                  onChange={(e) => setEditPlan(e.target.value)}
-                />
-                <button disabled={busy}>Save new version</button>
-              </form>
-            ) : (
-              <div className="plan-items">
-                {team.items.map((item, index) => (
-                  <div key={item.id}>
-                    <span className="item-number">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    <div>
-                      <span className="eyebrow">{item.kind}</span>
-                      <p>{item.title}</p>
-                    </div>
+                    <textarea
+                      rows={12}
+                      required
+                      value={editPlan}
+                      onChange={(e) => setEditPlan(e.target.value)}
+                    />
+                    <button disabled={busy}>Save new version</button>
+                  </form>
+                ) : (
+                  <div className="plan-items">
+                    {team.items.map((item, index) => (
+                      <div key={item.id}>
+                        <span className="item-number">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <div>
+                          <span className="eyebrow">{item.kind}</span>
+                          <p>{item.title}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-            <details>
-              <summary>Original plan text · preserved exactly</summary>
-              <pre className="source-plan">{team.plan}</pre>
-            </details>
-          </section>
-          <WorkAreas state={state} act={act} />
-          <CollaborationPanel state={state} act={act} onError={onError} />
-          <AgentConnections state={state} onError={onError} notice={notice} />
+                )}
+                <details>
+                  <summary>Original plan text · preserved exactly</summary>
+                  <pre className="source-plan">{team.plan}</pre>
+                </details>
+              </section>
+              <WorkAreas state={state} act={act} />
+              <CollaborationPanel state={state} act={act} onError={onError} />
+              <AgentConnections
+                state={state}
+                onError={onError}
+                notice={notice}
+              />
+            </>
+          )}
+
+          {subTab === "ownership" && (
+            <OwnershipMapView state={state} act={act} />
+          )}
+
+          {subTab === "proposals" && (
+            <ProposalVoteView state={state} act={act} onError={onError} />
+          )}
+
+          {subTab === "alerts" && (
+            <AlertTriagePanel
+              state={state}
+              act={act}
+              onReviewRevert={async (activityId) => {
+                try {
+                  const prev = await window.cobble.previewRevert(activityId);
+                  setActiveRevertPreview(prev);
+                } catch (e) {
+                  onError(message(e));
+                }
+              }}
+            />
+          )}
+
+          {activeRevertPreview && (
+            <RevertDialog
+              preview={activeRevertPreview}
+              close={() => setActiveRevertPreview(null)}
+              onError={onError}
+            />
+          )}
         </>
       )}
     </>
@@ -1854,7 +2127,10 @@ function Chat({
         <form className="composer" onSubmit={(e) => void send(e)}>
           <div className="composer-inner">
             <div className="composer-header-row">
-              <label className="composer-recipient-label">
+              <label
+                className="composer-recipient-label"
+                style={{ whiteSpace: "nowrap" }}
+              >
                 <span>Send to</span>
                 <select
                   aria-label="Message recipient"
@@ -1928,10 +2204,13 @@ function Chat({
                   </button>
                 )}
                 <small className="muted voice-note-hint">
-                  Offline voice transcription · On-device only
+                  🔒 On-device voice · Private offline transcription
                 </small>
               </div>
               <button
+                className={
+                  content.trim() ? "primary btn-send active" : "btn-send"
+                }
                 disabled={
                   busy ||
                   !content.trim() ||
@@ -1967,6 +2246,23 @@ function Companion({
   const [mode, setMode] = useState<CompanionMode>("normal");
   const [dragDirection, setDragDirection] = useState<"left" | "right">("right");
   const [menu, setMenu] = useState(false);
+  const [quietMode, setQuietMode] = useState(() => {
+    try {
+      return localStorage.getItem("cobble-pebble-quiet") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleQuietMode = () => {
+    setQuietMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("cobble-pebble-quiet", String(next));
+      } catch {}
+      return next;
+    });
+  };
   const [art, setArt] = useState<Partial<Record<CompanionMode, string>>>({});
   const [bubbleText, setBubbleText] = useState<string | null>(null);
   const lastNoticeId = useRef<string | null>(null);
@@ -2038,6 +2334,7 @@ function Companion({
   }, []);
 
   useEffect(() => {
+    if (quietMode) return;
     const latest = state.notifications?.[0];
     if (latest && latest.id !== lastNoticeId.current) {
       lastNoticeId.current = latest.id;
@@ -2045,7 +2342,7 @@ function Companion({
       const timer = setTimeout(() => setBubbleText(null), 4500);
       return () => clearTimeout(timer);
     }
-  }, [state.notifications]);
+  }, [state.notifications, quietMode]);
 
   useEffect(() => {
     void window.cobble.artwork().then(setArt);
@@ -2115,6 +2412,15 @@ function Companion({
             <option value="focused">Mark focused</option>
             <option value="away">Mark away</option>
           </select>
+          <button
+            type="button"
+            onClick={toggleQuietMode}
+            className={quietMode ? "active" : ""}
+            title="Mute ambient alerts and keep Pebble stationary"
+          >
+            <IconMoon />
+            <span>{quietMode ? "Quiet Mode: On" : "Quiet Mode: Off"}</span>
+          </button>
           <button
             onClick={() => void act({ type: "pause", paused: !state.paused })}
           >
@@ -2235,9 +2541,9 @@ function Companion({
         }}
       >
         <PebbleAnimation
-          mode={mode}
+          mode={quietMode && mode !== "dragging" ? "idle" : mode}
           direction={dragDirection}
-          attention={state.notifications?.[0]?.id}
+          attention={quietMode ? undefined : state.notifications?.[0]?.id}
         />
       </button>
     </div>
