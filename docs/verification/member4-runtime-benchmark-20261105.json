@@ -1,0 +1,105 @@
+{
+  "protocol": "local-control-boundary-v1",
+  "timestamp_utc": "2026-11-05T06:57:02.055117+00:00",
+  "python": "3.12.10",
+  "host": "Windows-11-10.0.26200-SP0",
+  "iterations": 100,
+  "seed": 41,
+  "mode": "enforce",
+  "gateway": "monitor",
+  "storage": "SQLite WAL synchronous FULL",
+  "source_sha256": {
+    "scripts/benchmark_response.py": "0b7814264697b46c5aa277f48d65fd2a268364c74c46fad90157fda52f877673",
+    "app/modules/response/runtime.py": "1b8f692b6c6c9f9db7be4f9149fdd5b695950c3a6a51cf173560143a7eb0aacf",
+    "app/modules/response/control.py": "1c322679e03ba7ab6e8d495d4c5ff5b702222273d6f9b9731d4bec86fa01521b",
+    "app/modules/response/health.py": "9dc0dfbd9f33313bd584c44fb2e4eb33b2686f84b01ecaf2b4b70ac500e2b49c",
+    "app/modules/response/repository.py": "206dc7a9657bc54fe921a1c142f7124c35ca40d067ff208786467e52611bfb5c",
+    "app/modules/simulator/tools.py": "f237466cb217d20204e5dfd7857731689afd0e67bd37341dd5d4b62155f84691",
+    "app/modules/simulator/environment.py": "4bfcb6a7ea0cfd999a23d0d8fcb2071621e821b418ba67000a4c79aff434c700"
+  },
+  "baseline": {
+    "healthy_write": {
+      "samples": 100,
+      "mean_ms": 0.023029,
+      "p50_ms": 0.0143,
+      "p95_ms": 0.0227,
+      "p99_ms": 0.0699,
+      "max_ms": 0.7435
+    },
+    "healthy_successes": 100,
+    "healthy_duration_seconds": 0.0026966999994328944,
+    "healthy_operations_per_second": 37082.35992918367,
+    "final_value_verified": true
+  },
+  "protected": {
+    "healthy_write": {
+      "samples": 100,
+      "mean_ms": 1.854415,
+      "p50_ms": 1.8102,
+      "p95_ms": 2.297,
+      "p99_ms": 2.4889,
+      "max_ms": 3.544
+    },
+    "healthy_successes": 100,
+    "healthy_duration_seconds": 0.18756939999911992,
+    "healthy_operations_per_second": 533.1360019303213,
+    "final_value_verified": true,
+    "short_write_lock": {
+      "samples": 5,
+      "mean_ms": 60.64106,
+      "p50_ms": 59.7815,
+      "p95_ms": 68.0417,
+      "p99_ms": 68.0417,
+      "max_ms": 68.0417
+    },
+    "database_outage": {
+      "elapsed_ms": 5482.257300000128,
+      "error": "OperationalError",
+      "effect_absent_verified": true,
+      "verified_prevention_receipt": false
+    },
+    "restriction_activation_ms": 1.9232,
+    "denied_write": {
+      "samples": 100,
+      "mean_ms": 3.5873090000000003,
+      "p50_ms": 3.5503,
+      "p95_ms": 6.0896,
+      "p99_ms": 6.7603,
+      "max_ms": 7.209
+    },
+    "independent_read": {
+      "samples": 100,
+      "mean_ms": 3.7689019999999998,
+      "p50_ms": 3.6042,
+      "p95_ms": 6.2795,
+      "p99_ms": 8.285,
+      "max_ms": 8.6629
+    },
+    "verified_denials": 100,
+    "independent_successes": 100,
+    "storage": {
+      "records": [
+        316,
+        359628
+      ],
+      "commands": [
+        622,
+        658711
+      ],
+      "audit": [
+        622,
+        270883
+      ],
+      "database_files_bytes": 5918368
+    },
+    "audit_valid": true
+  },
+  "limits": [
+    "single host/process and fixed virtual tools; no production SLO claim",
+    "100 default healthy writes, 5 short locks, 1 outage, 100 denied writes and 100 independent reads",
+    "setup/initialization excluded from tool timing; no model, network, Docker or candidate-code timing",
+    "tail percentiles are nearest rank on small fixed samples; no confidence intervals",
+    "database outage yields no trusted prevention receipt; inspected fixture effect absence only",
+    "does not replace frozen S6 semantic/adaptive attack and held-out evaluations"
+  ]
+}
