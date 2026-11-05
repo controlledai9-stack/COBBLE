@@ -138,6 +138,21 @@ def test_capture_preserves_identity_audit_and_safe_diff_without_host_paths(syste
     assert git(system.root, 'rev-parse', 'main') == system.base
 
 
+def test_generated_snapshot_links_only_to_exact_git_tree(system):
+    from app.modules.response.generated import GeneratedArtifacts
+    generated = GeneratedArtifacts(system.service)
+    files = system.service.artifacts.read(system.adapter.snapshot(system.candidate)['artifact_id'])
+    record = generated.capture('run', 'agent', files, actor='runtime', key='generated')
+    with pytest.raises(Forbidden, match='differs'):
+        generated.link_git(record['quarantine_id'], record['revision'], 'repo', system.base, system.base,
+            system.contract['contract_id'], actor='operator', key='wrong-link')
+    linked = generated.link_git(record['quarantine_id'], record['revision'], 'repo', system.base, system.candidate,
+        system.contract['contract_id'], actor='operator', key='link')
+    assert linked['capture_kind'] == 'git' and linked['state'] == 'quarantined'
+    assert linked['artifact_id'] == record['artifact_id']
+    assert git(system.root, 'rev-parse', linked['branch_ref']) == system.candidate
+
+
 def test_review_requires_applicable_passing_checks_and_never_releases(system):
     record = capture(system)
     with pytest.raises(Exception) as failure:

@@ -47,8 +47,7 @@ class ComponentService:
             if decision.decision != "allow":
                 raise Forbidden(decision.reason)
             _, principal = self.control._principal(tx, frozen["run_id"], frozen["agent_id"])
-            if any(op["state"] in {"admitted", "prepared", "dispatched", "reconciliation_required"}
-                   for op in tx.list("operation", filters={"principal_id": principal["principal_id"]})):
+            if self.control.pending_operation(tx, principal["principal_id"]):
                 raise Conflict("principal has an in-flight or uncertain effect")
             operation_id = identifier("component")
             return tx.insert("operation", operation_id, {"operation_id": operation_id,

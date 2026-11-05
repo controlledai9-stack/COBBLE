@@ -24,7 +24,7 @@ from app.schemas import (
     PrincipalRegistration, RestrictionCreate, ResumeRequest, SessionRegistration,
     ArtifactRevocation, ContractRegistration, QuarantineIntake, QuarantineReview, QuarantineSalvage,
     RegistryResolution, ReleaseIntent, ReleaseRequest, RevisionRequest,
-    ComponentInvocation,
+    ComponentInvocation, GeneratedGitLink, MessageReviewRequest,
 )
 from app.storage import get_store
 
@@ -315,3 +315,55 @@ def invoke_component(contract_id: str, req: ComponentInvocation, service: Quaran
 def reconcile_component(operation_id: str, req: RevisionRequest, service: Quarantines, actor: Operator, key: RequestKey):
     from app.modules.response.components import ComponentService
     return ComponentService(service).reconcile(operation_id, req.expected_revision, actor=actor, key=key)
+
+
+@router.post("/quarantines/{quarantine_id}/link-git")
+def link_generated_git(quarantine_id: str, req: GeneratedGitLink, service: Quarantines, actor: Operator, key: RequestKey):
+    from app.modules.response.generated import GeneratedArtifacts
+    return GeneratedArtifacts(service).link_git(quarantine_id, **req.model_dump(), actor=actor, key=key)
+
+
+@router.post("/quarantines/{quarantine_id}/reconcile-generated")
+def reconcile_generated(quarantine_id: str, req: RevisionRequest, service: Quarantines):
+    from app.modules.response.generated import GeneratedArtifacts
+    return GeneratedArtifacts(service).reconcile(quarantine_id, req.expected_revision)
+
+
+@router.get("/artifacts/{artifact_id}/source")
+def artifact_source(artifact_id: str, service: Quarantines, control: Control):
+    import base64
+    metadata = control.repository.get('artifact', artifact_id)
+    files = service.artifacts.read(artifact_id)
+    return {'artifact_id': artifact_id, 'evidence_class': metadata['evidence_class'], 'untrusted': True,
+        'files': {name: base64.b64encode(value).decode('ascii') for name, value in files.items()}}
+
+
+@router.get('/notifications')
+def notifications(control: Control, unread_only: bool = True):
+    return control.repository.list('notification', **({'state': 'unread'} if unread_only else {}))
+
+
+@router.post('/notifications/{notification_id}/acknowledge')
+def acknowledge_notification(notification_id: str, req: RevisionRequest, control: Control, actor: Operator, key: RequestKey):
+    from app.modules.response.notifications import acknowledge
+    return acknowledge(control, notification_id, req.expected_revision, actor=actor, key=key)
+
+
+@router.get('/review-queue')
+def review_queue(control: Control):
+    with control.repository.read() as tx:
+        return {'restrictions': tx.list('restriction', filters={'state': 'active'}),
+            'quarantines': [q for q in tx.list('quarantine') if q['state'] not in {'promoted', 'rejected'}],
+            'messages': [m for m in tx.list('message_hold') if m['state'] in {'held', 'release_pending', 'handoff_reserved'}],
+            'limitations': ['released messages remain untrusted; live next-turn handoff required', 'clean-context recovery is not yet complete']}
+
+
+@router.post('/restrictions/{restriction_id}/confirm')
+def confirm_restriction(restriction_id: str, req: ArtifactRevocation, control: Control, actor: Operator, key: RequestKey):
+    return control.confirm_restriction(restriction_id, req.expected_revision, req.reason, actor=actor, key=key)
+
+
+@router.post('/messages/{message_id}/review')
+def review_message(message_id: str, req: MessageReviewRequest, control: Control, actor: Operator, key: RequestKey):
+    from app.modules.response.messages import MessageReview
+    return MessageReview(control).decide(message_id, req.expected_revision, req.verdict, req.reason, actor=actor, key=key)

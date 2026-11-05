@@ -27,12 +27,27 @@ TOOLS = {
 
 
 class ResponseRuntime:
-    def __init__(self, control: ResponseControl):
+    def __init__(self, control: ResponseControl, *, quarantine_service=None):
         self.control, self.repository = control, control.repository
         self.run_id = ""
         self.agents: dict[str, Agent] = {}
         self.principals: dict[str, str] = {}
         self.runner = None
+        self._quarantine_service = quarantine_service
+
+    def quarantine_service(self):
+        if self._quarantine_service is None:
+            from app.modules.response.api import get_quarantine_service
+            self._quarantine_service = get_quarantine_service(self.control)
+        return self._quarantine_service
+
+    def capture_generated(self, agent, files):
+        if self.agents.get(agent.agent_id) is not agent:
+            raise Forbidden('generated capture requires the registered runtime producer')
+        from app.modules.response.generated import GeneratedArtifacts
+        service = GeneratedArtifacts(self.quarantine_service())
+        return service.capture(self.run_id, agent.agent_id, files, actor=f'runtime:{self.run_id}',
+            key=digest({'agent_id': agent.agent_id, 'files': files}))
 
     def start(self, run_id: str, agents: list[Agent], config) -> None:
         if self.run_id:
@@ -160,8 +175,7 @@ class ResponseRuntime:
             decision = self.control._authorize(tx, request, baseline_allowed=baseline)
             reason = self._information_flow(tx, request, sensitive=sensitive, known=known)
             principal_id = self.principals[agent.agent_id]
-            if any(old["state"] in {"admitted", "reconciliation_required"} for old in
-                   tx.list("operation", filters={"principal_id": principal_id})):
+            if self.control.pending_operation(tx, principal_id):
                 reason = "a prior effect is in flight or requires reconciliation"
             permitted = decision.decision == "allow" and reason is None
             if self.control.profile.mode == "monitor":
@@ -280,6 +294,8 @@ class ResponseRuntime:
                 "owner": "security-review", "opened_at": now_iso(), "signal_hash": sid,
                 "evidence_summary": {"sequence": containment.paused_at_sequence, "trigger": containment.trigger}})
             tx.update("principal", principal["principal_id"], principal, principal["revision"])
+            from app.modules.response.notifications import notify
+            notify(tx, rid, 'egress_hold' if containment.scope == 'egress' else 'agent_paused', self.run_id, agent_id)
             return tx.insert("restriction", rid, {"restriction_id": rid, "incident_id": iid,
                 "principal_id": principal["principal_id"], "run_id": self.run_id, "agent_id": agent_id,
                 "capabilities": scope, "resource": None, "state": "active", "reason": signal["reason"],

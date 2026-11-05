@@ -235,7 +235,8 @@ def _autonomous_user_task_collaboration(
             )
             sol_extracted, test_extracted = _extract_solution_and_tests(resp_text)
             was_truncated = getattr(r.adapter, "last_was_truncated", False)
-            valid_sol, sol_err = _validate_python_syntax(sol_extracted)
+            valid_sol, sol_err = ((bool(sol_extracted.strip()), 'Protected parsing pending') if r.response
+                                  else _validate_python_syntax(sol_extracted))
             # Truncation recovery if needed
             if (was_truncated or not valid_sol) and getattr(r.adapter, "calls_left", 0) > 0:
                 tail = resp_text[-200:]
@@ -253,21 +254,23 @@ def _autonomous_user_task_collaboration(
                     )
                     combined_text = resp_text + "\n" + cont_resp
                     sol_cand, test_cand = _extract_solution_and_tests(combined_text)
-                    valid_cand, _ = _validate_python_syntax(sol_cand)
+                    valid_cand, _ = ((bool(sol_cand.strip()), 'Protected parsing pending') if r.response
+                                     else _validate_python_syntax(sol_cand))
                     if valid_cand:
                         sol_extracted, test_extracted = sol_cand, test_cand
                 except Exception:
                     pass
-            final_valid_sol, final_sol_err = _validate_python_syntax(sol_extracted)
+            final_valid_sol, final_sol_err = ((bool(sol_extracted.strip()), 'Protected parsing pending') if r.response
+                                             else _validate_python_syntax(sol_extracted))
             if not final_valid_sol:
                 # If Gemini was in quota cooldown, failed, or returned non-code fallback:
                 # Provide clean, verified working implementation and test suite
                 clean_sol, clean_test = _generate_deterministic_solution(user_task)
                 solution_code = clean_sol
-                test_code = test_extracted if (test_extracted and _validate_python_syntax(test_extracted)[0]) else clean_test
+                test_code = test_extracted if (test_extracted and (r.response or _validate_python_syntax(test_extracted)[0])) else clean_test
             else:
                 solution_code = sol_extracted
-                if not test_extracted or not test_extracted.strip() or not _validate_python_syntax(test_extracted)[0]:
+                if not test_extracted or not test_extracted.strip() or (not r.response and not _validate_python_syntax(test_extracted)[0]):
                     if "calc" in user_task.lower():
                         _, test_extracted = _generate_deterministic_solution(user_task)
                     else:
@@ -293,15 +296,20 @@ def _autonomous_user_task_collaboration(
             else:
                 solution_code, test_code = _generate_deterministic_solution(user_task)
             coder_summary = f"Generated deterministic implementation ({len(solution_code.splitlines())} lines) and tests ({len(test_code.splitlines())} lines)."
-        valid_ast, ast_err = _validate_python_syntax(solution_code)
-        if not valid_ast:
-            coder_summary += f" [Warning: AST validation issue in solution.py: {ast_err}]"
+        generated_candidate = None
+        if r.response:
+            generated_candidate = r.response.capture_generated(coder, {'solution.py': solution_code, 'test_solution.py': test_code})
+            coder_summary += f" [Quarantined: {generated_candidate['quarantine_id']}; execution pending independent checks and operator review]"
         else:
-            exec_ok, exec_info = _execute_code_safely(solution_code, test_code, timeout=6.0)
-            if exec_ok:
-                coder_summary += " [Dry-run test suite passed cleanly]"
+            valid_ast, ast_err = _validate_python_syntax(solution_code)
+            if not valid_ast:
+                coder_summary += f" [Warning: AST validation issue in solution.py: {ast_err}]"
             else:
-                coder_summary += f" [Dry-run warning: {exec_info}]"
+                exec_ok, exec_info = _execute_code_safely(solution_code, test_code, timeout=6.0)
+                if exec_ok:
+                    coder_summary += " [Dry-run test suite passed cleanly]"
+                else:
+                    coder_summary += f" [Dry-run warning: {exec_info}]"
         # Save BOTH solution.py and test_solution.py as separate files
         r.tools.write_file(coder, "repo/src/solution.py", solution_code)
         r.tools.write_file(coder, "repo/src/test_solution.py", test_code)
@@ -366,6 +374,9 @@ def _autonomous_user_task_collaboration(
         if verdict == "APPROVED":
             approved = True
             break
+        elif verdict == 'HELD':
+            last_review_feedback = verdict_summary
+            break
         else:
             last_review_feedback = verdict_summary
             if current_attempt < MAX_ATTEMPTS:
@@ -406,6 +417,14 @@ def _autonomous_user_task_collaboration(
             "6. **Review**: Approved in `docs/wiki/review_report.md`.\n\n"
             f"## Final Reviewer Verdict\n{verdict_summary}\n"
         )
+    elif r.response:
+        final_status = 'pending_review'
+        final_verdict = 'HELD'
+        final_summary = ('# Candidate pending review\n\n'
+            f"Quarantine: {generated_candidate['quarantine_id']}\n\n"
+            f"Artifact: {generated_candidate['artifact_id']}\n\n"
+            'Generated source and candidate-written tests are preserved. They have not been approved or released.\n'
+            'Link the exact Git identity and reviewed contract, validate in isolation, then request operator review.\n')
     else:
         final_status = "failed"
         final_verdict = "REVISE"
@@ -433,7 +452,7 @@ def _autonomous_user_task_collaboration(
     r.emit(
         planner,
         "task",
-        "complete" if approved else "failed",
+        "complete" if approved else "pending_review" if r.response else "failed",
         payload={
             "user_task": user_task,
             "status": final_status,

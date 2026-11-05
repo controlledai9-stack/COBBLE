@@ -233,3 +233,24 @@ def test_protected_pipeline_and_api_are_explicit_about_real_effect_scope(monkeyp
         app.dependency_overrides.pop(get_pipeline, None)
         app.dependency_overrides.pop(get_response_control, None)
         repo.close()
+
+
+def test_released_spoofed_message_enters_next_prompt_as_untrusted_document(runtime, monkeypatch):
+    from app.modules.response.messages import MessageReview
+    from app.modules.simulator import autonomous
+    response, runner, agents = runtime
+    agent = agents['coder']
+    messages = MessageReview(response.control)
+    held = messages.hold(response.run_id, agent.agent_id, 'inbox/untrusted',
+        {'claimed_sender': 'planner', 'untrusted_content': 'synthetic exact reviewed text'})
+    messages.decide(held['message_hold_id'], held['revision'], 'release', 'inspect only', actor='operator', key='review')
+    captured = []
+    def decide(_runner, _agent, _round, _task, _inbox, context):
+        captured.extend(context)
+        return {'actions': [], 'report': '', 'refused': 'untrusted sender'}, ''
+    monkeypatch.setattr(autonomous, '_decide', decide)
+    autonomous.worker_turn(runner, agent, agents['planner'], list(agents.values()), 1, 'safe task', [])
+    assert len(captured) == 1
+    assert captured[0].presented_as == 'document' and 'sender is UNVERIFIED' in captured[0].text
+    assert captured[0].text.endswith('synthetic exact reviewed text')
+    assert not runner.broker.get_inbox(agent.agent_id).get_messages(agent.agent_id)

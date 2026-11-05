@@ -586,3 +586,15 @@ export interface ComponentInvocation extends RegistryResolution {
   args?: unknown[];
   kwargs?: Record<string, unknown>;
 }
+
+export interface GeneratedGitLink extends RevisionRequest {
+  repository_id: string;
+  base_commit: string;
+  candidate_commit: string;
+  contract_id: string;
+}
+
+export interface MessageReviewRequest extends RevisionRequest {
+  verdict: 'release' | 'confirm';
+  reason: string;
+}

@@ -85,6 +85,9 @@ class LiveGuard:
             return (f"egress held since event #{hold.paused_at_sequence}: agent received restricted data it may not hold "
                     f"(need-to-know)")
         if payload and payload.get("claimed_sender") and not sender_verified(payload, agent_id, self.sends, self.roles):
+            if self.response:
+                from app.modules.response.messages import MessageReview
+                MessageReview(self.response.control).hold(self.run_id, agent_id, resource, payload)
             # Impersonated sender (SG-026): withhold the item so the agent never acts on it. The agent isn't at fault.
             self.quarantined.append({"agent_id": agent_id, "resource": resource, "claimed_sender": payload["claimed_sender"],
                                      "sequence": sequence})

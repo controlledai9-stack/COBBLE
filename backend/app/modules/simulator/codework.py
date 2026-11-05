@@ -90,6 +90,11 @@ def _validate_python_syntax(code: str) -> tuple[bool, str]:
 
 def _audit_code_implementation(sol_code: str, test_code: str, user_task: str) -> tuple[str, str, str]:
     """Perform independent, strict quality, placeholder, and security audit of solution and test code."""
+    from app.modules.response.mediation import ACTIVE_RUNTIME
+    if ACTIVE_RUNTIME.get() is not None:
+        return ('HELD', '# Candidate held for independent validation and operator review\n\n'
+            'Agent-written tests and agent verdicts cannot approve or release a protected candidate.\n',
+            'VERDICT: HELD. Independent isolated checks and authenticated operator review are required.')
     issues: list[str] = []
     valid_sol_syntax, sol_syntax_msg = _validate_python_syntax(sol_code)
     if not valid_sol_syntax:

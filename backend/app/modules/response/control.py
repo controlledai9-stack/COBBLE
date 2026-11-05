@@ -114,6 +114,8 @@ class ResponseControl:
                 **req.model_dump(exclude={"expected_revision"}), "restriction_id": rid,
                 "principal_id": pid, "state": "active", "created_at": now_iso(),
             })
+            from app.modules.response.notifications import notify
+            notify(tx, rid, 'agent_restricted', req.run_id, req.agent_id)
             return {"restriction": restriction, "principal_revision": principal["revision"],
                     "enforcement_verified": False}
         return self.repository.command(actor, key, "capability.restrict", req.model_dump(), apply)
@@ -227,19 +229,39 @@ class ResponseControl:
             approval = tx.get("approval", approval_id)
             if decision.decision not in {"allow", "review"}:
                 raise Forbidden("current policy denies operation")
+            _, principal = self._principal(tx, action.run_id, action.agent_id)
             if (approval["state"] != "issued" or approval["expires_at"] <= self.clock()
                     or approval["executor_id"] != executor_id or approval["action_hash"] != digest(action.model_dump())
                     or approval["policy_epoch"] != decision.policy_epoch
                     or approval["principal_revision"] != decision.principal_revision):
                 raise Forbidden("approval is stale, consumed, or bound to a different action/executor")
+            if self.pending_operation(tx, principal["principal_id"]):
+                raise Conflict("principal has an in-flight or unreconciled effect")
             oid = identifier("op")
             tx.update("approval", approval_id, {**approval, "state": "reserved", "operation_id": oid}, approval["revision"])
             return tx.insert("operation", oid, {"operation_id": oid, "executor_id": executor_id,
+                "principal_id": principal["principal_id"], "context_epoch": principal["context_epoch"],
                 "approval_id": approval_id, "run_id": action.run_id, "action": action.model_dump(),
                 "state": "prepared", "fence": decision.principal_revision, "policy_epoch": decision.policy_epoch,
                 "verification_status": "unverified", "created_at": now_iso()})
         return self.repository.command(executor_id, key, "operation.prepare", {
             "action": action.model_dump(), "approval_id": approval_id}, apply)
+
+    @staticmethod
+    def pending_operation(tx, principal_id, *, exclude=None):
+        for op in tx.list("operation"):
+            if op["operation_id"] == exclude or op["state"] not in {"prepared", "dispatched", "admitted", "reconciliation_required"}:
+                continue
+            owner = op.get("principal_id")
+            # Legacy durable intents must not disappear from the fence merely
+            # because an older writer did not persist the principal explicitly.
+            if not owner and op.get("action"):
+                action = op["action"]
+                session = tx.get("session", action.get("run_id", ""), required=False)
+                owner = (session or {}).get("agents", {}).get(action.get("agent_id"))
+            if owner == principal_id:
+                return op
+        return None
 
     def mark_operation_unknown(self, operation_id: str, expected_revision: int, *, executor_id: str, key: str) -> dict:
         def apply(tx):
@@ -259,3 +281,13 @@ class ResponseControl:
             restrictions = tx.list("restriction", filters={"principal_id": principal["principal_id"], "state": "active"})
             return {"run_id": run_id, "agent_id": agent_id, "session_state": session["state"],
                     "principal": principal, "restrictions": restrictions}
+
+    def confirm_restriction(self, restriction_id, expected_revision, reason, *, actor, key):
+        def apply(tx):
+            restriction = tx.get('restriction', restriction_id)
+            if restriction['state'] != 'active':
+                raise Conflict('restriction is no longer active')
+            return tx.update('restriction', restriction_id, {**restriction, 'review_state': 'confirmed',
+                'confirmed_by': actor, 'review_reason': reason, 'reviewed_at': now_iso()}, expected_revision)
+        return self.repository.command(actor, key, 'restriction.confirm', {'restriction_id': restriction_id,
+            'expected_revision': expected_revision, 'reason': reason}, apply)

@@ -341,7 +341,7 @@ class ResponsePolicy(BaseModel):
     severity_actions: dict[Severity, ResponseDecision] = Field(
         default_factory=lambda: {"low": "alert", "medium": "alert", "high": "block", "critical": "pause"}
     )
-    rule_overrides: dict[str, ResponseDecision] = Field(default_factory=dict)
+    rule_overrides: dict[str, ResponseDecision] = Field(default_factory=lambda: {"SG-026": "block"})
 
 
 class ResponseAction(BaseModel):
@@ -612,3 +612,15 @@ class ArtifactRevocation(RevisionRequest):
 class ComponentInvocation(RegistryResolution):
     args: list[Any] = Field(default_factory=list, max_length=16)
     kwargs: dict[str, Any] = Field(default_factory=dict, max_length=16)
+
+
+class GeneratedGitLink(RevisionRequest):
+    repository_id: ControlId
+    base_commit: CommitId
+    candidate_commit: CommitId
+    contract_id: ControlId
+
+
+class MessageReviewRequest(RevisionRequest):
+    verdict: Literal['release', 'confirm']
+    reason: str = Field(min_length=1, max_length=2000)
