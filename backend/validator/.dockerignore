@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!worker.py
+!Scanner.Dockerfile
+!scanner_worker.py
+!rules.yaml

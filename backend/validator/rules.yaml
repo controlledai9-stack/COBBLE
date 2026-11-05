@@ -1,0 +1,29 @@
+rules:
+  - id: swarmguard.python.dynamic-execution
+    languages: [python]
+    severity: ERROR
+    message: Dynamic execution requires independent security review.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: __import__(...)
+  - id: swarmguard.python.shell
+    languages: [python]
+    severity: ERROR
+    message: Shell execution is outside the JSON component contract.
+    pattern-either:
+      - pattern: os.system(...)
+      - pattern: subprocess.$FUNC(...)
+  - id: swarmguard.python.external-network
+    languages: [python]
+    severity: ERROR
+    message: External networking is outside the JSON component contract.
+    pattern-either:
+      - pattern: requests.$FUNC(...)
+      - pattern: socket.$FUNC(...)
+      - pattern: urllib.request.$FUNC(...)
+  - id: swarmguard.generic.prohibited-transfer
+    languages: [generic]
+    severity: ERROR
+    message: Synthetic prohibited transfer marker must be reviewed.
+    pattern: synthetic prohibited transfer
