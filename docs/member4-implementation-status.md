@@ -25,6 +25,8 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 | Full backend with worker/scanner integration enabled | 660 passed in 109.05 seconds; one existing FastAPI/httpx deprecation warning. No Docker integration tests skipped in this run. |
 | Connected quarantine/registry/release/component workflow | Final full backend: 687 passed in 216.40 seconds, no skips, real Docker/Semgrep images enabled; one existing deprecation warning. New evidence includes 27 lifecycle/consumer/API tests, with one full real-container flow. |
 | Frontend after quarantine/component request types | Production TypeScript/Vite build and all four tests passed. No operator UI is claimed. |
+| Generated capture and team response backend | Docker-enabled full run: 699 passed in 203.29 seconds, no skips, one existing deprecation warning. An additional next-turn message integration test was added after that run began; the current runtime/message suites then passed 23 tests. |
+| Latest frontend request types | Production build and all four tests passed with generated-Git-link and message-review types. |
 | Hosted integration | Authentication inspected only. No hosted policies, CI runs, attestation service or deployment configured. |
 | Dependency security | Original frontend audit reported six findings. Tooling updated to Vite 8.3.6, Vitest 4.1.12, React plugin 6.2.1 and PostCSS 8.5.32. Four tests, production build and `npm audit --audit-level=moderate` pass; zero known audit findings. |
 
@@ -46,3 +48,22 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 ## Next execution
 
 Connect generated simulator bundles and dependent component calls to this workflow; complete S3 health/recovery/performance gates, then the operator demonstration and frozen S6 evaluation. Preserve the outstanding R1–R7 tracks and complete all BR gates before claiming any release profile.
+
+## Current simulator and team-role additions
+
+Protected user-task collaboration now freezes `solution.py` and candidate tests into a durable restricted snapshot before host AST parsing or execution. It reports `HELD` / `pending_review`; an agent-written review cannot approve it. The authenticated `link-git` route requires an exact matching Git tree and reviewed contract before isolated validation. Source export is authenticated, base64-encoded inert JSON. Capture has durable intent and expired-lease reconciliation; missing bytes never imply capture success.
+
+Runtime tools, component calls and approval-reserved releases now share principal-level pending-operation fencing, including older operations whose principal is derived from their registered session. Generated snapshots retain producer epoch/lineage and are not automatically declassified by a later Git link.
+
+The explicit Member 4 responsibilities are tracked as follows:
+
+| Requirement | Implementation and remaining work |
+| --- | --- |
+| Quarantined message, hijack tripwire, egress hold | Existing detection preserved; persistent pause/egress restrictions connected. SG-026 now persists exact bounded input in a restricted message hold, with transactional notification. Review can confirm the hold or release exact content as untrusted input. |
+| Human review queue | Authenticated queue lists active restrictions, unreleased code quarantines and message holds. Operators can confirm an active restriction, use scoped resume, or decide message release/confirmation. Message release expires after five minutes and requires the same active recipient context and no separate holds. Clean-context recovery and operator UI remain unfinished. |
+| SG-026 policy | Newly constructed default policies explicitly map SG-026 to block, without pausing the impersonated recipient. Existing persisted custom policies are not silently overwritten; explicit migration remains required. |
+| Pause notifications | Transactional durable local operator notifications accompany restrictions and detector pause/egress signals; generated quarantine also notifies. Authenticated list/acknowledge endpoints exist. Acknowledgement does not resume work. Push/UI delivery remains unfinished. |
+
+These additions are partial progress, not completion of S3/S4/S5 or the entire team-role checklist. No external notification messages are sent.
+
+Message release never verifies the claimed sender or inserts a forged broker send. The next autonomous turn reserves the exact reviewed content as an explicitly untrusted document, conservatively labels recipient context unknown, and leaves `delivery_verified=false`. Reservation prevents automatic replay; a crash-gap handoff cannot be claimed delivered. No later turn after the run ends is fabricated. Missing/oversized original content, expired approval, changed context, current policy denial, unrelated restrictions or uncertain effects remain held.

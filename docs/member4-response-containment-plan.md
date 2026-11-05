@@ -79,6 +79,8 @@ Agree on these contracts before editing shared files. Member 4 implements the re
 
 ## 5. Contracts and state
 
+Explicit Member 4 team acceptance items: handle quarantined messages, hijack tripwire pauses and egress holds; provide a human review queue with release/confirm decisions for paused agents and quarantined messages; explicitly map SG-026 impersonated-sender alerts in response policy without blaming the recipient; notify operators when an agent is paused. Notification acknowledgement is separate from release. Record message provenance and exact reviewed content; a review cannot authenticate a forged sender, clear unrelated holds or resume contaminated context. These items remain mandatory within S2/S3/S6 alongside the broader research scope.
+
 Keep the legacy `ResponsePolicy` and `ResponseAction` meanings intact. Define new response-control contracts in the central schema, with internal implementation details in the response module. Use separate dimensions rather than one overloaded status field.
 
 | Entity | Minimum information |
