@@ -60,6 +60,30 @@ def test_candidate_recovers_after_worktree_removal(repository):
     assert adapter.create("inc-recover", base, candidate)["candidate_commit"] == candidate
 
 
+def test_managed_worktree_supports_long_workspace_paths(repository, tmp_path):
+    root, original, base, candidate = repository
+    managed = tmp_path / ('workspace-' + 'a' * 64) / 'worktrees' / ('repository-' + 'b' * 64)
+    adapter = GitQuarantineAdapter(root, managed, original.artifacts)
+    identifier = 'incident-' + 'c' * 32
+    assert len(str(managed / ('quarantine-' + identifier) / '.git')) > 260
+    record = adapter.create(identifier, base, candidate)
+    assert (managed / record['worktree'] / 'solution.py').read_bytes() == (root / 'solution.py').read_bytes()
+    assert adapter.create(identifier, base, candidate)['artifact_id'] == record['artifact_id']
+    adapter.remove_worktree(identifier)
+    assert not (managed / record['worktree']).exists()
+
+
+def test_worktree_cannot_borrow_another_registered_metadata_directory(repository):
+    _, adapter, base, candidate = repository
+    first = adapter.create('first', base, candidate)
+    second = adapter.create('second', base, candidate)
+    marker = adapter.root / first['worktree'] / '.git'
+    marker.unlink()  # Windows marks Git's original pointer file hidden.
+    marker.write_bytes((adapter.root / second['worktree'] / '.git').read_bytes())
+    with pytest.raises(Forbidden, match='does not belong'):
+        adapter.create('first', base, candidate)
+
+
 def test_manual_reviewed_hunks_form_new_candidate_on_trusted_base(repository):
     root, adapter, base, candidate = repository
     reviewed = b"def score(xs):\n    return sum(xs) + 1\n"

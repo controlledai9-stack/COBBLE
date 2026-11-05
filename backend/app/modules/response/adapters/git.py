@@ -42,6 +42,7 @@ class GitQuarantineAdapter:
         if top != self.repository:
             raise Forbidden("configured path is not the trusted repository root")
         self.hash_size = 64 if self._git("rev-parse", "--show-object-format").strip() == b"sha256" else 40
+        self.common = Path(self._git('rev-parse', '--path-format=absolute', '--git-common-dir').decode().strip()).resolve()
 
     @staticmethod
     def _ref(value):
@@ -64,9 +65,39 @@ class GitQuarantineAdapter:
         return env
 
     def _git(self, *arguments, data=None, extra_env=None, accepted=(0,), cwd=None):
+        location = ['-C', str(self.repository)]
+        if cwd is not None:
+            worktree = Path(cwd).resolve()
+            marker = worktree / '.git'
+            if worktree.parent != self.root or marker.is_symlink() or not marker.is_file() or marker.stat().st_size > 4096:
+                raise Forbidden('managed Git worktree metadata is unavailable')
+            content = marker.read_text(encoding='utf-8').strip()
+            if not content.startswith('gitdir: '):
+                raise Forbidden('managed Git worktree metadata is invalid')
+            metadata = Path(content.removeprefix('gitdir: '))
+            metadata = worktree / metadata if not metadata.is_absolute() else metadata
+            if metadata.is_symlink():
+                raise Forbidden('managed Git metadata cannot be a link')
+            metadata = metadata.resolve()
+            if metadata.parent != (self.common / 'worktrees').resolve():
+                raise Forbidden('managed Git metadata points outside the configured repository')
+            backlink = metadata / 'gitdir'
+            if (backlink.is_symlink() or not backlink.is_file() or backlink.stat().st_size > 4096
+                    or Path(backlink.read_text(encoding='utf-8').strip()).resolve() != marker.resolve()):
+                raise Forbidden('managed Git metadata does not belong to this worktree')
+            # These operations only inspect HEAD or populate the private index.
+            # Bare mode avoids Git's internal chdir to a long Windows worktree;
+            # candidate bytes are materialized independently from verified blobs.
+            if arguments[:1] not in {('read-tree',), ('rev-parse',)}:
+                raise Forbidden('unsupported managed worktree metadata operation')
+            location = ['--git-dir=' + str(metadata), '--bare']
         result = run_bounded([self.git, "-c", f"core.hooksPath={self.hooks}", "-c", "core.fsmonitor=false",
-            "-c", f"core.attributesFile={self.attributes}", "-c", "core.quotePath=true", *arguments],
-            cwd=cwd or self.repository, env=self._environment(extra_env), data=data)
+            '-c', 'core.longpaths=true',
+            "-c", f"core.attributesFile={self.attributes}", "-c", "core.quotePath=true",
+            *location, *arguments],
+            # Windows CreateProcess rejects a long cwd even when Git itself can
+            # handle the path. Let the bounded Git process perform its own -C.
+            cwd=self.repository.anchor, env=self._environment(extra_env), data=data)
         if result.code not in accepted:
             raise Conflict("managed Git operation failed; inspect restricted operational evidence")
         return result.stdout
