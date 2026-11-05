@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, OPERATOR_AUTH_EVENT } from "../api";
+import { OperatorDesk } from './OperatorDesk';
 import { ResultViewer, type Column } from "../components/ResultViewer";
 import { Badge, Banner, Button, Card, Field, OutputSelect, PageHeader, RunSelect, StatusBanner, inputCls, type Status } from "../components/ui";
 import { shortId } from "../lib/format";
@@ -8,7 +9,7 @@ import type { ResponseAction, ResponseDecision, ResponsePolicy, Severity } from 
 
 const DECISIONS: ResponseDecision[] = ["allow", "alert", "block", "pause"];
 const SEVERITIES: Severity[] = ["low", "medium", "high", "critical"];
-const RULES = ["SG-001", "SG-002", "SG-003"];
+const RULES = ["SG-001", "SG-002", "SG-003", "SG-026"];
 
 const columns: Column<ResponseAction>[] = [
   { key: "alert_id", label: "alert_id", render: (a) => <span className="font-mono">{a.alert_id}</span> },
@@ -32,7 +33,10 @@ export function ResponsePage() {
   const actions = preview ?? stored.data;
 
   useEffect(() => {
-    api.policy().then(setPolicy).catch((e) => setStatus({ kind: "error", message: e.message }));
+    const reload = () => { setPolicy(null); setPreview(null); api.policy().then(p => { setPolicy(p); setStatus(null); }).catch((e) => setStatus({ kind: "error", message: e.message })); };
+    reload();
+    window.addEventListener(OPERATOR_AUTH_EVENT, reload);
+    return () => window.removeEventListener(OPERATOR_AUTH_EVENT, reload);
   }, []);
 
   const update = (patch: Partial<ResponsePolicy>) => setPolicy((p) => (p ? { ...p, ...patch } : p));
@@ -71,6 +75,7 @@ export function ResponsePage() {
       <PageHeader step={4} module="response" title="Security Response"
         description="Maps each alert to allow / alert / block / pause using a configurable policy, and links every response record to its alert ID." />
       <StatusBanner status={status} onClose={() => setStatus(null)} />
+      <OperatorDesk />
 
       <Banner kind="info">
         <strong>would_block</strong> means the policy would stop this, but nothing was denied. <strong>blocked</strong> is only recorded when the

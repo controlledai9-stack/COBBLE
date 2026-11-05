@@ -10,3 +10,5 @@ frontend/dist/
 *.tsbuildinfo
 runs/
 datasets/
+.playwright-cli/
+output/playwright/

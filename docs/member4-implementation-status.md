@@ -28,6 +28,7 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 | Generated capture and team response backend | Docker-enabled full run: 699 passed in 203.29 seconds, no skips, one existing deprecation warning. An additional next-turn message integration test was added after that run began; the current runtime/message suites then passed 23 tests. |
 | Latest frontend request types | Production build and all four tests passed with generated-Git-link and message-review types. |
 | Local fresh-session recovery | Docker-enabled full backend: 708 passed in 202.57 seconds, no skips. After the final integrity guard was added, current recovery/control/runtime/message suites passed 53 tests, including ten recovery cases across enforce/monitor. One existing deprecation warning remains. |
+| Operator review UI | Security Response review desk connected to authenticated queues, notifications, restriction/message decisions, fresh recovery and candidate validation/review. Synthetic real-browser flows and desktop/mobile inspection passed; frontend build and seven tests pass. See [UI evidence and remaining limits](verification/member4-operator-ui.md). |
 | Hosted integration | Authentication inspected only. No hosted policies, CI runs, attestation service or deployment configured. |
 | Dependency security | Original frontend audit reported six findings. Tooling updated to Vite 8.3.6, Vitest 4.1.12, React plugin 6.2.1 and PostCSS 8.5.32. Four tests, production build and `npm audit --audit-level=moderate` pass; zero known audit findings. |
 
@@ -48,7 +49,7 @@ A pinned Linux Docker JSON-contract worker and separate offline Semgrep worker r
 
 ## Next execution
 
-Finish simulator-dependent component tools and the operator review UI, then complete S3 health/cancellation/performance gates and the frozen S6 evaluation. Generated bundle capture and the bounded local fresh-session recovery path are now connected. Preserve R1–R7 and complete all BR gates before claiming any release profile.
+Finish simulator-dependent component tools and remaining Git/release operator forms, then complete S3 health/cancellation/performance gates and the frozen S6 evaluation. The primary review/notification UI, generated bundle capture and bounded fresh-session recovery are now connected. Preserve R1–R7 and complete all BR gates before claiming any release profile.
 
 ## Current simulator and team-role additions
 

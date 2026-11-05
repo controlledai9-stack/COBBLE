@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { api } from "./api";
+import { api, OPERATOR_AUTH_EVENT } from "./api";
 import type { Meta, Run } from "./types";
 
 const RUN_KEY = "swarmguard.selectedRun";
@@ -58,6 +58,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     api.health().then(setHealth).catch(() => undefined);
   }, [refreshRuns]);
 
+  useEffect(() => {
+    const changed = () => { setRuns([]); refreshRuns(); };
+    window.addEventListener(OPERATOR_AUTH_EVENT, changed);
+    return () => window.removeEventListener(OPERATOR_AUTH_EVENT, changed);
+  }, [refreshRuns]);
+
   return (
     <Ctx.Provider value={{ runs, meta, health, apiError, selectedRunId, selectRun, refreshRuns }}>{children}</Ctx.Provider>
   );
@@ -92,6 +98,11 @@ export function useRunData<T>(loader: (runId: string) => Promise<T>, runId: stri
   }, [runId, ...deps]);
   useEffect(() => {
     reload();
+  }, [reload]);
+  useEffect(() => {
+    const changed = () => { setData(null); setError(null); reload(); };
+    window.addEventListener(OPERATOR_AUTH_EVENT, changed);
+    return () => window.removeEventListener(OPERATOR_AUTH_EVENT, changed);
   }, [reload]);
   return { data, setData, error, loading, reload };
 }

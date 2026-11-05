@@ -10,17 +10,30 @@ export class ApiError extends Error {
   }
 }
 
+let operatorToken = '';
+let operatorGeneration = 0;
+export const OPERATOR_AUTH_EVENT = 'swarmguard.operator-auth';
+export function setOperatorToken(token: string) {
+  operatorToken = token;
+  operatorGeneration++;
+  window.dispatchEvent(new Event(OPERATOR_AUTH_EVENT));
+}
+export function hasOperatorToken() { return Boolean(operatorToken); }
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const generation = operatorGeneration;
   let res: Response;
   try {
     res = await fetch(`/api${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: { "Content-Type": "application/json", ...(operatorToken ? { Authorization: `Bearer ${operatorToken}` } : {}), ...(init?.headers ?? {}) },
+      cache: 'no-store',
     });
   } catch {
     throw new ApiError(0, "Cannot reach the SwarmGuard API. Is the backend running on port 8000?");
   }
   const text = await res.text();
+  if (generation !== operatorGeneration) throw new ApiError(401, 'Operator session changed. Reload the requested data.');
   const body = text ? JSON.parse(text) : null;
   if (!res.ok) {
     const detail = body?.detail;
@@ -34,6 +47,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const post = <T>(path: string, body: unknown) => request<T>(path, { method: "POST", body: JSON.stringify(body) });
 const put = <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) });
+
+export const responseApi = {
+  get: <T>(path: string) => request<T>(`/response${path}`),
+  post: <T>(path: string, body: unknown, key: string) => request<T>(`/response${path}`, {
+    method: 'POST', body: JSON.stringify(body), headers: { 'Idempotency-Key': key },
+  }),
+};
 
 export const api = {
   health: () => request<{ ok: boolean; storage: string; workspace: string }>("/health"),
