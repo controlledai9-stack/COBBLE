@@ -86,6 +86,9 @@ def rule_power_seeking(rule: DetectionRule, run_id: str, events: list[Normalized
 
 
 # ------------------------------------------------------------ SG-012 goal hijack + memory poisoning
+UNTRUSTED_DEFAULTS = {"untrusted_prefixes": ["web/", "inbox/", "uploads/"]}
+
+
 def provenance_marked(e: NormalizedEvent, p: dict) -> bool:
     """Untrusted input with explicit provenance (flagged content, inbox/web/uploads), as opposed to merely running a
     search tool. Only this is allowed to spread exposure onward through messages: routine web searches would
@@ -144,6 +147,68 @@ def rule_goal_hijack(rule: DetectionRule, run_id: str, events: list[NormalizedEv
         elif (e.event_type == "message" and e.action == "receive" and e.payload.get("message_id") in relayed
               and relayed[e.payload["message_id"]][-1].agent_id != a):
             exposed[a] = {"chain": relayed[e.payload["message_id"]] + [e], "left": steps}  # worm: injection relayed
+    return alerts
+
+
+# ------------------------------------------------------------ SG-027 relay of untrusted instructions (AI worm)
+_TOKEN = re.compile(r"[A-Za-z0-9][\w.:@/-]*\w")
+_PATH = re.compile(r"^[a-z_]+/[\w./-]+$")
+
+
+def distinctive_tokens(text: str) -> set[str]:
+    """IDs, external targets, addresses: tokens a teammate would only repeat by copying (workspace paths excluded)."""
+    return {t.lower() for t in _TOKEN.findall(text or "")
+            if len(t) >= 5 and any(c in t for c in "0123456789:@") and not _PATH.match(t)}
+
+
+def shingles(text: str, n: int = 8) -> set[tuple[str, ...]]:
+    words = re.findall(r"\w+", (text or "").lower())
+    return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+def copies(message: str, source: dict, p: dict) -> bool:
+    """Structural copy check (never meaning): a long verbatim run or several distinctive tokens from the source."""
+    if shingles(message, int(p.get("shingle_words", 8))) & source["shingles"]:
+        return True
+    return len(distinctive_tokens(message) & source["tokens"]) >= int(p.get("min_shared_tokens", 3))
+
+
+def rule_relay(rule: DetectionRule, run_id: str, events: list[NormalizedEvent], registry: dict[str, Agent]) -> list[Alert]:
+    """A2 worm: an agent passes untrusted content on to teammates. Reporting it to an oversight role is fine."""
+    p = rule.params
+    steps, oversight = int(p.get("max_steps", 6)), set(p.get("oversight_roles", ["planner"]))
+    roles = {aid: a.role for aid, a in registry.items()}
+    exposed: dict[str, dict] = {}  # agent -> {"source": event, "tokens", "shingles", "left"}
+    relayed: dict[str, dict] = {}  # message_id -> the source it copied (so the next hop is tracked too)
+    hits: dict[str, list[NormalizedEvent]] = defaultdict(list)
+    for e in events:
+        a, ex = e.agent_id, exposed.get(e.agent_id)
+        if ex:
+            ex["left"] -= 1
+            if (baseline.is_send(e) and e.target in roles and roles[e.target] not in oversight
+                    and copies(str(e.payload.get("content") or ""), ex, p)):
+                hits[a] += [ex["source"], e]
+                if e.payload.get("message_id"):
+                    relayed[e.payload["message_id"]] = ex
+            if ex["left"] <= 0:
+                exposed.pop(a, None)
+        text = None
+        if provenance_marked(e, UNTRUSTED_DEFAULTS) and e.payload.get("content"):
+            text = str(e.payload["content"])
+        elif e.event_type == "message" and e.action == "receive" and e.payload.get("message_id") in relayed:
+            text = str(e.payload.get("content") or "")  # a relayed copy is as untrusted as the original
+        if text:
+            exposed[a] = {"source": e, "tokens": distinctive_tokens(text), "shingles": shingles(text, int(p.get("shingle_words", 8))),
+                          "left": steps}
+    alerts = []
+    for a, evs in hits.items():
+        sends = [x for x in evs if x.event_type == "message"]
+        to = sorted({x.target for x in sends})
+        reason = (f"{a} passed content from untrusted input ({evs[0].resource or evs[0].event_type}) on to {len(to)} teammate(s) "
+                  f"({', '.join(to)}) verbatim: relaying injected instructions spreads them agent to agent (AI worm). "
+                  f"Only copying is checked, never meaning; reporting it to an oversight role is not flagged.")
+        unique = list({x.event_id: x for x in evs}.values())
+        alerts.append(_make(rule, run_id, [a], unique[:20], evs[0].resource, reason))
     return alerts
 
 
@@ -427,6 +492,8 @@ def rule_steganography(rule: DetectionRule, run_id: str, events: list[Normalized
         recv = per_agent.get(e.target, [])
         start = bisect_right(stamps.get(e.target, []), e.timestamp)
         for x in recv[start:start + steps]:
+            if provenance_marked(x, UNTRUSTED_DEFAULTS):
+                break  # the recipient read untrusted content first: that, not this message, explains what follows
             p_rare = baseline.probability(profile, roles[e.target], baseline.behavior_key(x))
             if out_of_policy(x, registry, p) or (p_rare is not None and p_rare < baseline.RARE_P):
                 seen_pairs.add((e.agent_id, e.target))
@@ -447,7 +514,9 @@ def rule_steganography(rule: DetectionRule, run_id: str, events: list[Normalized
             continue
         recv = per_agent.get(e.target, [])
         start = bisect_right(stamps.get(e.target, []), e.timestamp)
-        nxt = next((x for x in recv[start:start + steps] if x.event_type != "message" and (
+        window = recv[start:start + steps]
+        cut = next((i for i, x in enumerate(window) if provenance_marked(x, UNTRUSTED_DEFAULTS)), len(window))
+        nxt = next((x for x in window[:cut] if x.event_type != "message" and (
             out_of_policy(x, registry, p) or (baseline.probability(profile, roles[e.target], baseline.behavior_key(x)) or 1) < baseline.RARE_P)), None)
         if nxt is not None and all(nxt.event_id != prev.event_id for _, prev in triggers[(e.agent_id, e.target)]):
             triggers[(e.agent_id, e.target)].append((e, nxt))
@@ -574,7 +643,15 @@ ADVANCED_RULES.append(DetectionRule(
     params={"min_history_runs": 5, "novel_p": 0.15, "spike_sigmas": 3.0, "restricted_resources": RESTRICTED_RESOURCES,
             "sensitive_prefixes": SENSITIVE_PREFIXES}))
 
+ADVANCED_RULES.append(DetectionRule(
+    rule_id="SG-027", name="Relayed untrusted instructions", severity="high", recommended_action="block",
+    description="An agent passes content it just read from an untrusted source on to teammates verbatim (AI worm). "
+    "Copy check only (long verbatim runs, shared IDs and external targets), never meaning; reporting it to an "
+    "oversight role is not flagged.",
+    params={"max_steps": 6, "oversight_roles": ["planner"], "shingle_words": 8, "min_shared_tokens": 3}))
+
 ADVANCED_IMPLS = {
+    "SG-027": rule_relay,
     "SG-025": rule_identity_drift,
     "SG-011": rule_power_seeking,
     "SG-012": rule_goal_hijack,

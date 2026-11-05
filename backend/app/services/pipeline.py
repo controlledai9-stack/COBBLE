@@ -121,8 +121,11 @@ class Pipeline:
         anomaly = next((r for r in self.rules() if r.rule_id == "SG-004"), None)
         if anomaly is None:
             raise ValueError("SG-004 is not configured in this workspace")
+        taught = None
         if req.source == "synthetic":
             anomaly.params["profile"] = self._synthetic_profile()
+        elif req.source == "ai":
+            anomaly.params["profile"], taught = self._teach_ai(anomaly.params.get("profile"), req)
         else:
             if not req.run_id:
                 raise ValueError("run_id is required to learn from a run")
@@ -135,7 +138,39 @@ class Pipeline:
                 raise ValueError("no normalized events for this run; run the Event Collector first")
             anomaly.params["profile"] = baseline.learn(anomaly.params.get("profile"), events, self.agents(req.run_id), req.run_id)
         self.save_rule(anomaly)
-        return baseline.summary(anomaly.params["profile"])
+        out = baseline.summary(anomaly.params["profile"])
+        if taught is not None:
+            out["taught"] = taught
+        return out
+
+    def _teach_ai(self, profile: dict | None, req: BaselineTrainRequest) -> tuple[dict, list[dict]]:
+        """Generate clean AI-mode normal runs and learn them, so model-written behaviour stops looking anomalous.
+
+        A run is learned only if no agent broke policy (simulator ground truth) and every agent decision came from the
+        model (no quota fallback). Runs are not stored; each takes ~16 model calls with 5 agents.
+        """
+        from app.adapters import get_adapter
+
+        adapter = get_adapter(req.agent_backend)
+        taught = []
+        for i in range(req.runs):
+            sim = run_simulation(ScenarioConfig(scenario_id="normal_collaboration", agent_count=5, seed=5000 + i,
+                                                agent_mode="autonomous", agent_backend=req.agent_backend, persist=False),
+                                 adapter=adapter)
+            c = sim.run.counts
+            if sim.run.labels.malicious_agent_ids:
+                reason = "an agent broke policy, so this run is not normal behaviour"
+            elif c.get("ai_fallbacks"):
+                reason = f"{c['ai_fallbacks']} agent turn(s) fell back to scripted work (model quota or error)"
+            else:
+                events = collect([_dump(e) for e in sim.events], run_id=sim.run.run_id, agents=sim.agents).events
+                profile = baseline.learn(profile, events, sim.agents, sim.run.run_id)
+                reason = None
+            taught.append({"run_id": sim.run.run_id, "learned": reason is None, "skipped_because": reason,
+                           "ai_decisions": c.get("ai_decisions", 0)})
+            if c.get("ai_fallbacks") and not c.get("ai_decisions"):
+                break  # the model isn't answering at all; stop spending time
+        return profile or baseline.empty_profile(), taught
 
     def assessments(self, run_id: str) -> list[AgentAssessment]:
         self.get_run(run_id)

@@ -331,3 +331,51 @@ risk: read untrusted content and raised no concern ×2; explicitly refused ×0.5
 alert, and it adds a supporting fact to the *hijacked* explanation.
 
 Benchmark after these changes: unchanged (precision 1.0, recall 1.0 with complete logs, 0 benign alarms).
+
+## 14. Detection when logs are missing
+
+**Why logs go missing at all.** Agents don't write their own logs (the gateway and collector do), so an agent can't
+simply "not log". Events still disappear: (1) pipeline loss (network, collector crashes, buffer overflow, sampling,
+retention); (2) an attacker hiding: acting around the gateway (SG-021) or deleting / truncating logs (SG-010).
+
+**What our benchmark showed (agent log only, 30% of events lost):** 22% of attacks lose *every* trace, and almost all
+remaining misses are two-step attacks where the surviving step is harmless alone (an analyst reading PII it may read,
+a single output write). Flagging those single steps would destroy precision, so better rules alone can't close this.
+
+**Research (practitioner sources):** use independent telemetry sources and map which source backs which detection;
+treat missing telemetry as a signal; make logs tamper-evident with sequence numbers and hash chains. Sequence gaps
+reveal deletions in the middle, but not truncation at either end, which needs an external anchor or second source.
+
+**What we built:**
+1. **Second, independent evidence source.** Resource-side records written by systems the agent doesn't control
+   (egress proxy, broker log, resource/tool audit) as `observation` events with `payload.mirrors`
+   (`evidence.sensor_record`; simulator `sensors=True`; benchmark `--sensors`). Before rules run, `evidence.fuse`
+   rebuilds any action the agent log lost but a sensor saw, marked `reconstructed_from` / `[rebuilt from …]`. Rules
+   other than SG-021 never see raw sensor records.
+2. **Gap-aware reconciliation (SG-021).** A sensor record with no log entry is a *bypass* only if the log has no gap
+   there; inside a gap, or before the first / after the last logged event (truncation), it is *unverifiable* and nobody
+   is blamed. Rebuilt events are placed by time between their neighbours, so absence-based rules (SG-023) still see
+   the gap next to them.
+3. **Missing telemetry as a signal.** Sensitive actions with 2+ events missing around them go up the audit queue
+   ("evidence may be incomplete").
+
+**Results** (full benchmark, 27 attacks + 12 benign look-alikes, 351 trials per level):
+
+| Events lost | Caught, log only | Caught, log + sensors | Precision (both) | Benign alarms (both) |
+|---|---|---|---|---|
+| 0% | 100% | 100% | 1.0 | 0 |
+| 10% | 93% | 96% | 1.0 | 0 |
+| 30% | 66% | **83%** | 1.0 | 0 |
+| 50% | 51% | **69%** | 1.0 | 0 |
+
+Two false-alarm sources appeared on the way and were fixed: sensor records read as "rare actions" by SG-020, and
+losses at the very start or end of the log read as bypasses by SG-021.
+
+**Limits and next steps.** Losses that hit both sources at once are still lost. Sensors only see *executed* actions
+(a denied attempt exists only in the gateway log). Production needs the collector (member 2) to ingest real sensor
+feeds and hash-chain the agent log so deletions are provable.
+
+**Also in this round:** SG-020 no longer blames an innocent first-contact sender when the recipient read untrusted
+content in between (the false alarm from the live Gemini run, reproduced in a regression test); **SG-027 Relayed
+untrusted instructions** catches an agent passing injected text on verbatim even when nobody acts on it, and the live
+guard blocks that relay before delivery; **Teach AI behaviour** learns clean AI-mode runs into the baseline in one click.

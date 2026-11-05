@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from app.modules.detection import baseline
-from app.modules.detection.evidence import LogCoverage
+from app.modules.detection.evidence import LogCoverage, fuse
 from app.modules.simulator.world import EXTERNAL_ALLOWLIST, EXTERNAL_PREFIX, RESTRICTED_RESOURCES, ROLE_PERMISSIONS
 from app.schemas import Agent, Alert, DetectionRule, EvidenceRef, NormalizedEvent
 from app.timeutil import now_iso, parse_iso
@@ -332,9 +332,15 @@ DEFAULT_RULES.extend(ASSURANCE_RULES)
 RULE_IMPLS.update(ASSURANCE_IMPLS)
 
 
+SENSOR_READERS = {"SG-021"}  # rules that reconcile sensor records with the agent log
+
+
 def run_rules(run_id: str, events: list[NormalizedEvent], agents: list[Agent], rules: list[DetectionRule] | None = None) -> list[Alert]:
     registry = {a.agent_id: a for a in agents}
-    ordered = sorted(events, key=lambda e: (e.timestamp, e.sequence))
+    # Evidence the agent log lost but an independent sensor recorded is rebuilt first (see evidence.fuse). Sensor
+    # records themselves are not agent actions: only SG-021, which reconciles the two sources, reads them.
+    ordered = sorted(fuse(events), key=lambda e: (e.timestamp, e.sequence))
+    actions = [e for e in ordered if not (e.event_type == "observation" and e.payload.get("mirrors"))]
     rules = rules or DEFAULT_RULES
     # Rules that need the learned baseline (e.g. SG-020) read it from SG-004, the rule that owns it.
     anomaly = next((r for r in rules if r.rule_id == "SG-004"), None)
@@ -344,5 +350,5 @@ def run_rules(run_id: str, events: list[NormalizedEvent], agents: list[Agent], r
         impl = RULE_IMPLS.get(rule.rule_id)
         if rule.enabled and impl:
             extra = {"ctx": ctx} if getattr(impl, "uses_context", False) else {}
-            alerts.extend(impl(rule, run_id, ordered, registry, **extra))
+            alerts.extend(impl(rule, run_id, ordered if rule.rule_id in SENSOR_READERS else actions, registry, **extra))
     return alerts

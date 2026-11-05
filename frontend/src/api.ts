@@ -82,7 +82,7 @@ export const api = {
     post<SimulationResult>("/detection/replay", body),
   baseline: () => request<BaselineSummary>("/detection/baseline"),
   benchmark: (full = false) => post<BenchmarkResult>(`/detection/benchmark?full=${full}`, {}),
-  trainBaseline: (body: { source: "synthetic" | "run"; run_id?: string; confirm_clean?: boolean }) => post<BaselineSummary>("/detection/baseline", body),
+  trainBaseline: (body: { source: "synthetic" | "run" | "ai"; run_id?: string; confirm_clean?: boolean; runs?: number }) => post<BaselineSummary>("/detection/baseline", body),
   rules: () => request<DetectionRule[]>("/detection-rules"),
   saveRule: (rule: DetectionRule) => put<DetectionRule>(`/detection-rules/${rule.rule_id}`, rule),
   respond: (run_id: string, policy: ResponsePolicy, persist: boolean) => post<ResponseResult>("/respond", { run_id, policy, persist }),

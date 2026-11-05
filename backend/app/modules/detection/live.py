@@ -20,7 +20,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.modules.collector.normalizer import collect
-from app.modules.detection.advanced_rules import _ingests, out_of_policy, provenance_marked
+from app.modules.detection.advanced_rules import _ingests, copies, distinctive_tokens, out_of_policy, provenance_marked, shingles
 from app.modules.detection.assurance_rules import sender_verified
 from app.modules.detection.risk import assess
 from app.modules.detection.rules import run_rules
@@ -56,6 +56,10 @@ class LiveGuard:
         self.tainted_msgs: dict[str, str] = {}  # message_id sent by an exposed agent -> original untrusted source
         self.quarantined: list[dict] = []  # untrusted inputs withheld from an agent before it read them
         self.response = None  # optional persistent authority; these dicts then become report projections
+        relay = next((r for r in rules if r.rule_id == "SG-027"), None)
+        self.relay_params = dict(relay.params) if relay and relay.enabled else {}
+        self.untrusted_text: dict[str, dict] = {}  # agent -> tokens/shingles of untrusted content it just read (SG-027)
+        self.relayed_msgs: dict[str, dict] = {}  # message_id of a blocked-or-seen relay -> the source it copied
 
     # ---------------------------------------------------------------- runner interface
     def start(self, run_id: str, agents: list[Agent]) -> None:
@@ -97,8 +101,11 @@ class LiveGuard:
         if exposure and self.hijack_params and event_type:
             pending = SimpleNamespace(agent_id=agent_id, event_type=event_type, action=action or "", target=target,
                                       resource=resource, payload=payload or {}, status="success")
-            if out_of_policy(pending, self.registry, self.hijack_params):
-                what = f"{action or event_type} {resource or target or ''}".strip()
+            relay = (self.relay_params and event_type == "message" and action != "receive" and agent_id in self.untrusted_text
+                     and self.roles.get(target or "") not in set(self.relay_params.get("oversight_roles", ["planner"]))
+                     and copies(str((payload or {}).get("content") or ""), self.untrusted_text[agent_id], self.relay_params))
+            if relay or out_of_policy(pending, self.registry, self.hijack_params):
+                what = ("relaying it verbatim to " + str(target)) if relay else f"{action or event_type} {resource or target or ''}".strip()
                 self.paused[agent_id] = Containment(
                     agent_id=agent_id, role=self.roles.get(agent_id), paused_at_sequence=sequence, paused_at=timestamp,
                     risk=1.0, blocked_actions=1, trigger="hijack_tripwire",
@@ -172,6 +179,18 @@ class LiveGuard:
         elif e.event_type == "message" and e.action == "receive" and mid in self.tainted_msgs:
             self.exposed[e.agent_id] = {"left": self.exposure_steps,
                                         "source": f"a message relaying {self.tainted_msgs[mid]}"}
+        if self.relay_params:
+            text = None
+            if provenance_marked(e, self.hijack_params) and e.payload.get("content"):
+                text = str(e.payload["content"])
+            elif e.event_type == "message" and e.action == "receive" and mid in self.relayed_msgs:
+                text = str(e.payload.get("content") or "")
+            if text:
+                self.untrusted_text[e.agent_id] = {"tokens": distinctive_tokens(text),
+                                                   "shingles": shingles(text, int(self.relay_params.get("shingle_words", 8)))}
+            if (e.event_type == "message" and e.action != "receive" and mid and e.agent_id in self.untrusted_text
+                    and copies(str(e.payload.get("content") or ""), self.untrusted_text[e.agent_id], self.relay_params)):
+                self.relayed_msgs[mid] = self.untrusted_text[e.agent_id]
         if e.status == "success" and _ingests(e, self.hijack_params):
             self.exposed[e.agent_id] = {"left": self.exposure_steps, "source": e.resource or e.event_type,
                                         "relay": provenance_marked(e, self.hijack_params)}

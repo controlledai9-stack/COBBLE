@@ -28,11 +28,29 @@ class LogCoverage:
         span = self.seqs[-1] - self.seqs[0] + 1
         return len(self.seqs) / span if span else 1.0
 
+    def _span(self, e: NormalizedEvent) -> tuple[int, int] | None:
+        """Where an event sits in the agent log's numbering. A rebuilt event (no sequence) is placed by time between
+        its logged neighbours, so a gap next to it still counts as a gap."""
+        if e.sequence > 0:
+            return e.sequence, e.sequence
+        if not self.known:
+            return None
+        i = bisect_left(self.times, parse_iso(e.timestamp))
+        return self.seqs[max(0, i - 1)], self.seqs[min(i, len(self.seqs) - 1)]
+
+    def outside(self, e: NormalizedEvent) -> bool:
+        """Before the first or after the last logged event: a loss there leaves no sequence gap to see."""
+        if not self.known:
+            return False
+        t = parse_iso(e.timestamp)
+        return t < self.times[0] or t > self.times[-1]
+
     def missing_between(self, a: NormalizedEvent, b: NormalizedEvent) -> int:
-        """Events missing strictly between two logged events (by sequence)."""
-        if not self.known or a.sequence <= 0 or b.sequence <= 0:
+        """Events missing strictly between two events (by sequence; rebuilt events placed conservatively by time)."""
+        sa, sb = self._span(a), self._span(b)
+        if not self.known or sa is None or sb is None:
             return 0
-        lo, hi = sorted((a.sequence, b.sequence))
+        lo, hi = min(sa[0], sb[0]), max(sa[1], sb[1])
         present = bisect_left(self.seqs, hi) - bisect_right(self.seqs, lo)
         return max(0, hi - lo - 1 - present)
 
@@ -63,3 +81,72 @@ class LogCoverage:
         """
         r = self.local_ratio(*span) if span else self.ratio
         return observed / r if r >= min_ratio else float(observed)
+
+
+# ---------------------------------------------------------------- second, independent evidence source
+# One log is one point of failure: in the benchmark, 30% event loss erases every trace of ~22% of attacks. Mature
+# deployments also keep resource-side records written by systems the agent doesn't control (egress proxy, broker
+# log, file/DB audit, tool audit). A loss in one source is then usually covered by the other, as long as the two
+# are lost independently. Sensor records are `observation` events with payload.mirrors = the action type they saw.
+SENSOR_FOR = {"data_transfer": "egress-proxy", "message": "broker-log", "resource_access": "resource-audit",
+              "tool_call": "tool-audit"}
+_MIRRORED_PAYLOAD = ("data_ref", "content", "claims", "message_id", "intent", "topic", "untrusted", "claimed_sender",
+                     "operation", "command", "query")
+
+
+def sensor_record(raw: dict) -> dict | None:
+    """The resource-side record of an executed action (raw-event dict), or None if no sensor would see it.
+
+    Denied actions never happened, so only the gateway log knows them; inbox reads are the recipient's own log.
+    """
+    et = raw.get("event_type")
+    if et not in SENSOR_FOR or raw.get("status") != "success" or (et == "message" and raw.get("action") == "receive"):
+        return None
+    payload = {k: v for k, v in (raw.get("payload") or {}).items() if k in _MIRRORED_PAYLOAD}
+    return {**raw, "event_id": f"{raw['event_id']}-s", "event_type": "observation", "sequence": 0,
+            "gateway_decision": None, "payload": {**payload, "source": SENSOR_FOR[et], "mirrors": et}}
+
+
+def _secs_apart(a: NormalizedEvent, b: NormalizedEvent) -> float:
+    return abs((parse_iso(a.timestamp) - parse_iso(b.timestamp)).total_seconds())
+
+
+def logged_index(events: list[NormalizedEvent]) -> dict[tuple[str, str], list[NormalizedEvent]]:
+    """Agent-log actions by (agent, type), excluding sensor records and anything rebuilt from them."""
+    index: dict[tuple[str, str], list[NormalizedEvent]] = {}
+    for e in events:
+        if e.event_type != "observation" and "reconstructed_from" not in e.payload:
+            index.setdefault((e.agent_id, e.event_type), []).append(e)
+    return index
+
+
+def sensor_match(o: NormalizedEvent, index: dict, tol: float = 30.0) -> NormalizedEvent | None:
+    """The agent-log record of the action a sensor saw, if the agent log has it."""
+    mid = o.payload.get("message_id")
+    for x in index.get((o.agent_id, o.payload.get("mirrors")), []):
+        if (x.action == o.action and x.resource == o.resource and x.target == o.target and _secs_apart(x, o) <= tol
+                and (not mid or x.payload.get("message_id") == mid)):
+            return x
+    return None
+
+
+def fuse(events: list[NormalizedEvent], tol: float = 30.0) -> list[NormalizedEvent]:
+    """Rebuild agent-log records the log lost but a sensor saw, so rules can still use the evidence.
+
+    Rebuilt events are marked (`payload.reconstructed_from`, `evidence_source`, summary prefix) and are never used to
+    decide that the gateway was bypassed: SG-021 reconciles the two sources itself.
+    """
+    sensors = [e for e in events if e.event_type == "observation" and e.payload.get("mirrors")]
+    if not sensors:
+        return events
+    index = logged_index(events)
+    rebuilt = []
+    for o in sensors:
+        if sensor_match(o, index, tol) is not None:
+            continue
+        payload = {k: v for k, v in o.payload.items() if k not in ("source", "mirrors")}
+        rebuilt.append(o.model_copy(update={
+            "event_id": f"{o.event_id}:rebuilt", "event_type": o.payload["mirrors"], "status": "success",
+            "payload": {**payload, "reconstructed_from": o.event_id, "evidence_source": o.payload["source"]},
+            "summary": f"[rebuilt from {o.payload['source']}] {o.summary}"}))
+    return events + rebuilt

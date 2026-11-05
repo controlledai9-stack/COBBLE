@@ -203,10 +203,18 @@ def plant(case: Case, agent_count: int, seed: int, *, run_id: str | None = None,
     return Planted(sim, merged, slots, [e["event_id"] for e in planted])
 
 
-def build_trial(case: Case, agent_count: int, seed: int, drop_rate: float) -> Trial:
-    """A planted run, optionally thinned to simulate incomplete logs, then normalized."""
+def build_trial(case: Case, agent_count: int, seed: int, drop_rate: float, sensors: bool = False) -> Trial:
+    """A planted run, optionally thinned to simulate incomplete logs, then normalized.
+
+    With `sensors`, every executed action also gets an independent resource-side record (evidence.sensor_record),
+    and each record is dropped independently of the agent log, as two separate systems would lose data.
+    """
     p = plant(case, agent_count, seed, salt=str(drop_rate))
     sim, merged, slots, injected = p.sim, p.raw, p.slots, p.injected
+    if sensors:
+        from app.modules.detection.evidence import sensor_record
+
+        merged = [x for e in merged for x in (e, sensor_record(e)) if x is not None]
     dropped = 0
     if drop_rate > 0:
         drop_rng = random.Random(f"drop|{case.name}|{seed}|{drop_rate}")
@@ -262,7 +270,7 @@ def score_trial(trial: Trial, alerts: list[Alert]) -> Score:
                            if expected else any(al.rule_id in trial.case.expect_rules for al in alerts))
         s.detected = int(bool(flagged & expected)) if expected else s.right_rule
         present = {e.event_id for e in trial.events}
-        s.survived = int(any(eid in present for eid in trial.injected))
+        s.survived = int(any(eid in present or f"{eid}-s" in present for eid in trial.injected))  # either source
         s.detected_survived = s.detected * s.survived
     s.per_case[trial.case.name] = [s.detected, 1]
     return s
@@ -273,7 +281,7 @@ def ratio(a: float, b: float) -> float | None:
 
 
 def run_benchmark(rules: list[DetectionRule], run_rules: Callable, *, drop_rates=(0.0, 0.1, 0.3, 0.5),
-                  agent_counts=(5, 10, 20), seeds=range(1, 4), cases: list[Case] | None = None) -> dict:
+                  agent_counts=(5, 10, 20), seeds=range(1, 4), cases: list[Case] | None = None, sensors: bool = False) -> dict:
     """Returns per-drop-rate agent metrics plus per-case detection rates."""
     out = {"rows": [], "cases": {}}
     cases = cases or ALL_CASES
@@ -282,7 +290,7 @@ def run_benchmark(rules: list[DetectionRule], run_rules: Callable, *, drop_rates
         for case in cases:
             for n in agent_counts:
                 for seed in seeds:
-                    trial = build_trial(case, n, seed, drop)
+                    trial = build_trial(case, n, seed, drop, sensors)
                     alerts = run_rules(trial.events[0].run_id if trial.events else "run-x", trial.events, trial.agents, rules)
                     total.add(score_trial(trial, alerts))
         attacks = {k: v for k, v in total.per_case.items() if k in {c.name for c in cases if not c.benign}}

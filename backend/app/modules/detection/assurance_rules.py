@@ -13,7 +13,7 @@ from statistics import mean
 
 from app.modules.detection.advanced_rules import SENSITIVE_PREFIXES, _by_agent, _make, _secs, out_of_policy
 from app.modules.detection.control_rules import MUTATE_ACTIONS, _per_agent, _starts
-from app.modules.detection.evidence import LogCoverage
+from app.modules.detection.evidence import LogCoverage, logged_index, sensor_match
 from app.modules.simulator.world import EXTERNAL_ALLOWLIST, RESTRICTED_RESOURCES
 from app.schemas import Agent, Alert, DetectionRule, NormalizedEvent
 
@@ -35,16 +35,24 @@ def rule_gateway_bypass(rule: DetectionRule, run_id: str, events: list[Normalize
     tol = float(rule.params.get("tolerance_seconds", 30))
     logged: dict[tuple[str, str], list[NormalizedEvent]] = defaultdict(list)
     for e in events:
-        if e.event_type in ACTION_TYPES and e.resource:
+        if e.event_type in ACTION_TYPES and e.resource and "reconstructed_from" not in e.payload:
             logged[(e.agent_id, e.resource)].append(e)
+    index = logged_index(events)  # for full sensor records (payload.mirrors), matched on the whole action
     coverage = LogCoverage(events)
     bypass: dict[str, list[NormalizedEvent]] = defaultdict(list)
     failure: dict[str, list[NormalizedEvent]] = defaultdict(list)
     unverifiable: list[NormalizedEvent] = []
     for o in (e for e in events if e.event_type == "observation"):
-        matches = [x for x in logged.get((o.agent_id, o.resource), []) if abs(_secs(x, o)) <= tol and _same_kind(o.action, x)]
-        if not matches and coverage.missing_around(o, tol):
-            unverifiable.append(o)  # the matching record may simply be in the gap: don't blame the agent
+        if o.payload.get("mirrors"):
+            hit = sensor_match(o, index, tol)
+            matches = [hit] if hit is not None else []
+        else:
+            matches = [x for x in logged.get((o.agent_id, o.resource), []) if abs(_secs(x, o)) <= tol and _same_kind(o.action, x)]
+        edge = bool(o.payload.get("mirrors")) and coverage.outside(o)
+        if not matches and (coverage.missing_around(o, tol) or edge):
+            # The matching record may simply be in a gap, or lost before the first / after the last logged event
+            # (a truncated log can't be detected from sequence numbers alone): don't blame the agent.
+            unverifiable.append(o)
         elif not matches:
             bypass[o.agent_id].append(o)
         elif all(x.status == "denied" or x.gateway_decision == "blocked" for x in matches):

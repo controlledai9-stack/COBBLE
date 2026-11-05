@@ -25,6 +25,7 @@ export interface ScenarioConfig {
   seed: number;
   gateway_mode: GatewayMode;
   drop_rate: number;
+  sensors?: boolean;
   agent_backend: string;
   agent_mode?: "scripted" | "autonomous";
   auto_pipeline: boolean;
@@ -294,6 +295,7 @@ export interface BaselineSummary {
   agents_learned: number;
   identities_learned?: number;
   roles: Record<string, { agents: number; behaviors: number }>;
+  taught?: { run_id: string; learned: boolean; skipped_because: string | null; ai_decisions: number }[];
 }
 
 export interface DetectionResult {

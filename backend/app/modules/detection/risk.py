@@ -209,9 +209,15 @@ def audit_queue(events: list[NormalizedEvent], agents: list[Agent], alerts: list
                 rules: list[DetectionRule], budget: float = 0.1, max_items: int = 50) -> list[AuditItem]:
     """Pick the actions most worth a reviewer's time (AI control: no detector is perfect, so spend a fixed audit budget).
 
-    Every action of high/critical agents, actions already cited by alerts, and the rarest actions of everyone else
-    (where subtle sabotage would hide), capped at `budget` of all events.
+    Every action of high/critical agents, actions already cited by alerts, the rarest actions of everyone else
+    (where subtle sabotage would hide), and sensitive actions sitting next to a log gap (missing telemetry is a signal:
+    the step that would make them harmful may be the one that was lost), capped at `budget` of all events.
     """
+    from app.modules.detection.advanced_rules import SENSITIVE_PREFIXES
+    from app.modules.detection.evidence import LogCoverage
+
+    coverage = LogCoverage(events)
+    restricted = set(next((r.params.get("restricted_resources", []) for r in rules if r.rule_id == "SG-001"), []))
     anomaly_rule = next((r for r in rules if r.rule_id == "SG-004"), None)
     profile = (anomaly_rule.params.get("profile") if anomaly_rule else None) or baseline.empty_profile()
     roles = {a.agent_id: a.role for a in agents}
@@ -233,6 +239,12 @@ def audit_queue(events: list[NormalizedEvent], agents: list[Agent], alerts: list
         if e.event_id in cited:
             reasons.append(f"cited by {', '.join(sorted(set(cited[e.event_id])))}")
             prio += 0.35
+        sensitive = (e.resource in restricted or any((e.resource or "").startswith(x) for x in SENSITIVE_PREFIXES)
+                     or (e.event_type == "data_transfer" and (e.target or "").startswith("external:")))
+        gap = coverage.missing_around(e, 30.0) if sensitive else 0
+        if gap >= 2:
+            reasons.append(f"{gap} log events missing around this sensitive action: evidence may be incomplete")
+            prio += 0.2
         p = baseline.probability(profile, roles.get(e.agent_id), baseline.behavior_key(e))
         if p is not None and p < 0.2:
             reasons.append(f"rare for its role (seen in {p:.0%} of agents)")

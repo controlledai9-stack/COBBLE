@@ -3,7 +3,7 @@ import { api } from "../api";
 import { type Column } from "../components/ResultViewer";
 import { Badge, Button, Card, Empty, type Status } from "../components/ui";
 import { pct, shortId } from "../lib/format";
-import { useRunData } from "../state";
+import { useAppState, useRunData } from "../state";
 import type { AgentAssessment, AuditItem, BenchmarkResult } from "../types";
 
 function RiskBar({ value }: { value: number }) {
@@ -187,9 +187,29 @@ export function BaselineCard({ runId, runHasAlerts, onStatus, onChanged }: {
   runId: string | null; runHasAlerts: boolean; onStatus: (s: Status) => void; onChanged: () => void;
 }) {
   const summary = useRunData(() => api.baseline(), "baseline");
+  const { meta } = useAppState();
+  const gemini = meta?.agent_backends?.find((b) => b.id === "gemini");
   const [busy, setBusy] = useState<string | null>(null);
   const s = summary.data;
   const learned = !!(runId && s?.learned_run_ids.includes(runId));
+
+  async function teachAI() {
+    setBusy("ai");
+    try {
+      const res = await api.trainBaseline({ source: "ai", runs: 3 });
+      summary.setData(res);
+      onChanged();
+      const learned = res.taught?.filter((t) => t.learned).length ?? 0;
+      const skipped = res.taught?.find((t) => !t.learned)?.skipped_because;
+      onStatus({ kind: learned ? "success" : "error", message: learned
+        ? `Learned ${learned} clean AI-mode run(s); AI agents' normal behaviour is now part of the baseline. Re-run detection to use it.${skipped ? ` Skipped: ${skipped}.` : ""}`
+        : `No AI run could be learned${skipped ? `: ${skipped}` : ""}.` });
+    } catch (e) {
+      onStatus({ kind: "error", message: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function train(source: "synthetic" | "run", confirmClean = false) {
     if (confirmClean && !window.confirm("Learn this run as normal even though it has alerts? Only do this if you reviewed the alerts and they are false positives (for example the first runs of AI-mode agents).")) return;
@@ -241,6 +261,10 @@ export function BaselineCard({ runId, runHasAlerts, onStatus, onChanged }: {
               Alerts were false positives: learn anyway
             </Button>
           )}
+          <Button variant="secondary" busy={busy === "ai"} disabled={!gemini?.available || !!busy} onClick={teachAI}
+            title={gemini?.available ? "Runs 3 clean AI-mode runs with Gemini (~3 min, ~50 model calls) and learns them" : "Needs a Gemini API key"}>
+            Teach AI behaviour
+          </Button>
           <Button variant="ghost" busy={busy === "synthetic"} onClick={() => train("synthetic")}>Retrain from scratch</Button>
         </div>
         <p className="text-[12px] text-faint">

@@ -46,6 +46,8 @@ class ScenarioConfig(BaseModel):
     seed: int = 7
     gateway_mode: GatewayMode = "monitor"
     drop_rate: float = Field(0.0, ge=0.0, le=0.9, description="Fraction of events to drop (missing-data tests)")
+    sensors: bool = Field(False, description="Also emit independent resource-side records (egress proxy, broker log, "
+                          "resource/tool audit) for each executed action; dropped independently of the agent log")
     agent_backend: str = Field("deterministic", description="Adapter that writes message text")
     agent_mode: Literal["scripted", "autonomous"] = Field(
         "scripted", description="scripted: fixed normal work; autonomous: each worker's model decides its actions")
@@ -325,7 +327,9 @@ class ReplayRequest(BaseModel):
 
 
 class BaselineTrainRequest(BaseModel):
-    source: Literal["synthetic", "run"] = "synthetic"
+    source: Literal["synthetic", "run", "ai"] = "synthetic"
+    runs: int = Field(3, ge=1, le=10, description="With source=ai: clean AI-mode runs to generate and learn")
+    agent_backend: str = Field("gemini", description="With source=ai: the model that drives the agents")
     run_id: Optional[str] = Field(None, description="With source=run: a run confirmed clean to fold into the baseline")
     confirm_clean: bool = Field(False, description="With source=run: a reviewer confirms this run's alerts were false "
                                 "positives, so it may be learned anyway (e.g. the first runs of a new kind of agent)")

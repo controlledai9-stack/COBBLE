@@ -308,7 +308,7 @@ def test_best_explanations(steps, hyp, trained):
 
 
 def test_all_phase2_rules_registered():
-    assert PHASE2 == {f"SG-0{i}" for i in range(11, 21)} | {"SG-025"}  # SG-025 (per-agent drift) lives here too
+    assert PHASE2 == {f"SG-0{i}" for i in range(11, 21)} | {"SG-025", "SG-027"}  # per-agent drift and relay live here too
     assert PHASE2 <= {r.rule_id for r in DEFAULT_RULES}
 
 

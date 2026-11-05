@@ -99,6 +99,10 @@ export function SimulatorPage() {
           </Field>
           <Field label={`Drop rate: ${Math.round(cfg.drop_rate * 100)}%`} hint="Randomly drop events to test missing-data robustness.">
             <input type="range" min={0} max={0.9} step={0.05} value={cfg.drop_rate} onChange={(e) => set("drop_rate", Number(e.target.value))} className="w-full" />
+            <label className="mt-2 flex items-center gap-2 text-[13px] text-ink">
+              <input type="checkbox" checked={!!cfg.sensors} onChange={(e) => set("sensors", e.target.checked)} />
+              Independent sensors (egress proxy, broker log, resource audit), lost separately
+            </label>
           </Field>
           <Field label="Agent mode" asDiv hint={cfg.agent_mode === "autonomous"
             ? "Each worker's AI decides its own actions; anything it does outside policy is labeled. Needs an AI backend (otherwise falls back to scripted work)."

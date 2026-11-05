@@ -293,7 +293,8 @@ def worker_turn(r: AgentRunner, agent: Agent, planner: Agent, agents: list[Agent
                 meta={'untrusted': True, 'reviewed_message_id': reviewed['message_hold_id']}, presented_as='document'))
     for c in [p for p in pending if p.agent_id == agent.agent_id]:
         pending.remove(c)
-        payload = {"untrusted": True, **{k: v for k, v in c.meta.items() if k != "marker"}, 'untrusted_content': c.text}
+        payload = {"untrusted": True, **{k: v for k, v in c.meta.items() if k != "marker"},
+                   'untrusted_content': c.text, "content": c.text[:4000]}
         if c.event_type == "tool_call":
             delivered = r.emit(agent, "tool_call", "run", resource=c.resource, payload=payload).status != "denied"
         else:

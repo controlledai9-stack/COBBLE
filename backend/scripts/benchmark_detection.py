@@ -19,8 +19,11 @@ from app.storage.sqlite_store import SQLiteStore  # noqa: E402
 
 def main() -> None:
     quick = "--quick" in sys.argv
+    sensors = "--sensors" in sys.argv  # add an independent resource-side record per action
     rules = Pipeline(SQLiteStore(":memory:")).rules()  # trained baseline, as in the app
-    res = run_benchmark(rules, run_rules, agent_counts=(5, 10) if quick else (5, 10, 20), seeds=range(1, 3 if quick else 4))
+    res = run_benchmark(rules, run_rules, agent_counts=(5, 10) if quick else (5, 10, 20), seeds=range(1, 3 if quick else 4),
+                        sensors=sensors)
+    print("Evidence sources: agent log + independent sensors" if sensors else "Evidence source: agent log only")
     print(f"{len(ATTACKS)} attack cases, {len(BENIGN)} benign look-alikes\n")
     print(f"{'missing':>8} {'trials':>7} {'precision':>10} {'recall':>7} {'FPR':>7} {'caught':>7} {'right rule':>11} "
           f"{'evidence':>9} {'caught|ev':>10} {'benign alarms':>14}")
