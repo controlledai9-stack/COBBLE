@@ -50,8 +50,9 @@ def _dump(model) -> dict[str, Any]:
 
 
 class Pipeline:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, response_control=None):
         self.store = store
+        self.response_control = response_control
 
     # ---------------------------------------------------------------- seeds
     def seed_defaults(self) -> None:
@@ -217,8 +218,10 @@ class Pipeline:
 
     # ---------------------------------------------------------------- stages
     def simulate(self, config: ScenarioConfig) -> SimulationResult:
+        from app.modules.response.runtime import ResponseRuntime
         live = LiveGuard(self.rules(), config.live_guard, config.pause_at) if config.live_guard != "off" else None
-        result = run_simulation(config, live=live)
+        response = ResponseRuntime(self.response_control) if self.response_control else None
+        result = run_simulation(config, live=live, response=response)
         if live:
             result.live_report = live.report(result.run)
         if config.persist:
@@ -307,8 +310,13 @@ class Pipeline:
         for scenario_id in req.scenario_ids:
             for drop in req.drop_rates:
                 for seed in req.seeds:
+                    from app.modules.response.runtime import ResponseRuntime
+                    runtime = ResponseRuntime(self.response_control) if self.response_control else None
+                    live = LiveGuard(rules, "contain") if runtime else None
                     sim = run_simulation(ScenarioConfig(scenario_id=scenario_id, agent_count=req.agent_count, seed=seed,
-                                                        gateway_mode=req.gateway_mode, drop_rate=drop, persist=False))
+                                                        gateway_mode=req.gateway_mode, drop_rate=drop, persist=False,
+                                                        live_guard="contain" if runtime else "off"),
+                                         live=live, response=runtime)
                     events = collect([_dump(e) for e in sim.events], run_id=sim.run.run_id, agents=sim.agents).events
                     alerts = run_rules(sim.run.run_id, events, sim.agents, rules)
                     actions = respond(alerts, events, policy)

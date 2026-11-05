@@ -133,6 +133,11 @@ def _run(tmp: Path, mode: str, timeout: float) -> subprocess.CompletedProcess:
 
 def _execute_code_safely(sol_code: str, test_code: str = "", timeout: float = 6.0) -> tuple[bool, str]:
     """Run agent-written code (and its tests) in the sandbox. Returns (passed, explanation)."""
+    from app.modules.response.mediation import ACTIVE_RUNTIME
+    if ACTIVE_RUNTIME.get() is not None:
+        # Isolated validator integration must replace this path explicitly. A
+        # protected run may never fall back to the legacy process restrictions.
+        return False, "Protected response profile requires the isolated validator; candidate execution is held."
     if not _code_exec_allowed():
         return False, f"Code execution is turned off ({CODE_EXEC_FLAG}=off)"
     has_tests = bool(test_code and test_code.strip())

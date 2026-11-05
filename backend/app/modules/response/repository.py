@@ -47,7 +47,7 @@ def digest(value: Any) -> str:
 
 KINDS = frozenset({
     "policy", "principal", "session", "incident", "restriction", "approval", "operation",
-    "quarantine", "artifact", "validation", "implementation", "contract", "evidence", "health",
+    "quarantine", "artifact", "validation", "implementation", "contract", "evidence", "health", "flow",
 })
 
 

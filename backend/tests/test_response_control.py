@@ -254,7 +254,7 @@ def test_response_api_protects_reads_writes_and_legacy_config(control, monkeypat
             for path in ("/api/response/incidents", "/api/response/audit", "/api/response/sessions"):
                 assert client.get(path).status_code == 401
             assert client.put("/api/response-policies/default", json={}).status_code == 401
-            assert client.post("/api/simulate", json={}).status_code == 503
+            assert client.post("/api/simulate", json={}).status_code == 401
             headers = {"Authorization": f"Bearer {token}"}
             result = client.get("/api/response/status", headers=headers)
             assert result.status_code == 200

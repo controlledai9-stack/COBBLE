@@ -42,6 +42,8 @@ def get_response_control() -> ResponseControl:
     settings = get_settings()
     if settings.response_mode not in {"monitor", "enforce"}:
         raise Unavailable("response control is disabled or has an invalid mode")
+    if not settings.response_operator_token or len(settings.response_operator_token) < 32:
+        raise Unavailable("protected response control requires a dedicated operator credential")
     store = get_store()
     if store.backend != "sqlite":
         raise Unavailable("active response control requires the transactional SQLite backend")
@@ -59,7 +61,7 @@ router = APIRouter(prefix="/api/response", tags=["Active response control"], dep
 def status(control: Control):
     return {"mode": control.profile.mode, "workspace": control.repository.workspace,
             "durable": control.repository.durable, "audit": control.repository.verify_audit(),
-            "runtime_integration": "not yet connected", "enforcement_verified": False}
+            "runtime_integration": "local_virtual_tools", "enforcement_verified": False}
 
 
 @router.post("/principals")
@@ -139,3 +141,9 @@ def approval(req: ActionApprovalCreate, actor: Operator, control: Control, key: 
 @router.get("/operations/{operation_id}")
 def operation(operation_id: str, control: Control):
     return control.repository.get("operation", operation_id)
+
+
+@router.get("/runs/{run_id}/report")
+def runtime_report(run_id: str, control: Control):
+    from app.modules.response.runtime import ResponseRuntime
+    return ResponseRuntime.report_for(control, run_id)

@@ -23,12 +23,15 @@ from app.storage import get_store
 
 
 def get_pipeline() -> Pipeline:
+    if get_settings().response_mode != "off":
+        from app.modules.response.api import get_response_control
+        return Pipeline(get_store(), response_control=get_response_control())
     return Pipeline(get_store())
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    get_pipeline().seed_defaults()
+    Pipeline(get_store()).seed_defaults()
     yield
 
 
@@ -61,11 +64,12 @@ async def response_control_error(_: Request, exc: ControlError):
 
 
 @app.middleware("http")
-async def protect_legacy_policy_writes(request: Request, call_next):
+async def protect_managed_pipeline(request: Request, call_next):
     # These routes can change detector/response policy. The opt-in protected
     # profile must not be bypassed through an older unauthenticated endpoint.
-    if (get_settings().response_mode != "off" and request.method in {"PUT", "PATCH", "DELETE"}
-            and request.url.path.startswith(("/api/detection-rules/", "/api/response-policies/"))):
+    if (get_settings().response_mode != "off" and request.url.path.startswith((
+            "/api/runs", "/api/simulate", "/api/collect", "/api/detect", "/api/respond", "/api/evaluate",
+            "/api/evaluations", "/api/response-policies"))):
         from fastapi.security import HTTPAuthorizationCredentials
         header = request.headers.get("Authorization", "").split(" ", 1)
         credentials = HTTPAuthorizationCredentials(scheme=header[0], credentials=header[1]) if len(header) == 2 else None
@@ -73,7 +77,8 @@ async def protect_legacy_policy_writes(request: Request, call_next):
             response_operator(credentials)
         except (HTTPException, ControlError) as exc:
             return JSONResponse(status_code=exc.status_code,
-                                content={"detail": exc.detail if isinstance(exc, HTTPException) else str(exc)})
+                                content={"detail": exc.detail if isinstance(exc, HTTPException) else str(exc)},
+                                headers=exc.headers if isinstance(exc, HTTPException) else None)
     return await call_next(request)
 
 
@@ -151,10 +156,6 @@ def run_pipeline(run_id: str, p: Pipeline = P):
 # ------------------------------------------------------------------ modules
 @app.post("/api/simulate")
 def simulate(config: ScenarioConfig, p: Pipeline = P):
-    if get_settings().response_mode != "off":
-        # Until the trusted runtime controller is connected, fail closed rather
-        # than running legacy simulation under an apparent protected profile.
-        raise HTTPException(503, "protected response runtime integration is not yet available")
     if config.workspace_dir:
         # Agents write files into the workspace; only local scripts may choose where that is on disk.
         raise HTTPException(400, "workspace_dir can't be set through the API")

@@ -13,6 +13,7 @@ from app.modules.simulator.tools import ToolRegistry
 from app.modules.simulator.world import ROLE_ORDER, ROLE_PERMISSIONS
 from app.schemas import Agent, RawEvent
 from app.timeutil import iso
+from app.modules.response.mediation import ADMITTED_RUNTIME
 
 
 class AgentRunner:
@@ -29,6 +30,7 @@ class AgentRunner:
         broker: MessageBroker | None = None,
         env: SharedEnvironment | None = None,
         live=None,  # optional live guard: gate(agent_id, event_type, target) before, observe(event) after
+        response=None,
     ):
         self.run_id = run_id
         self.run_hex = run_hex
@@ -45,6 +47,9 @@ class AgentRunner:
         self._sequence_counter: int = 0
         self.malicious_event_ids: list[str] = []
         self.live = live
+        self.response = response
+        if response:
+            response.bind(self)
         self._agent_registry: dict[str, Agent] = {}
         self.sim_agents: list[SimulatedAgent] = []
         self.sim_agents_by_id: dict[str, SimulatedAgent] = {}
@@ -118,6 +123,8 @@ class AgentRunner:
             payload=payload or {},
         )
         self.events.append(event)
+        if self.response:
+            self.response.observe_event(event)
         if malicious:
             self.malicious_event_ids.append(event.event_id)
         if self.live:
@@ -170,6 +177,21 @@ class AgentRunner:
         malicious: bool = False,
     ) -> RawEvent:
         """Deliver a message through the MessageBroker and record a 'send' event."""
+        if self.response and ADMITTED_RUNTIME.get() is not self.response:
+            from app.modules.simulator.tools import ToolResult
+            observed = {}
+
+            def send():
+                event = self.message(sender, recipient, intent, topic, content_override=content_override,
+                    data_ref=data_ref, claims=claims, extra_payload=extra_payload, malicious=malicious)
+                observed["event"] = event
+                return ToolResult("send_message", event.status == "success", event_id=event.event_id,
+                                  gateway_decision=event.gateway_decision or "not_checked")
+
+            result = self.response.execute_tool(self.tools, "send_message", sender,
+                {"recipient_id": recipient.agent_id, "intent": intent, "topic": topic,
+                 "content": content_override, "data_ref": data_ref}, send)
+            return observed.get("event") or next(e for e in reversed(self.events) if e.event_id == result.event_id)
         content = content_override or self.adapter.compose_message(sender.role, recipient.role, intent, topic)
         msg_id = f"msg-{self.run_hex}-{self._sequence_counter + 1:04d}"
         payload: dict = {"intent": intent, "topic": topic, "content": content, "message_id": msg_id}
@@ -216,6 +238,23 @@ class AgentRunner:
 
     def receive_messages(self, agent: Agent, *, malicious: bool = False) -> list[RawEvent]:
         """Agent checks and processes unread messages from its private inbox, emitting 'receive' events."""
+        if self.response and ADMITTED_RUNTIME.get() is not self.response:
+            from app.modules.simulator.tools import ToolResult
+            observed = {}
+
+            def receive():
+                events = self.receive_messages(agent, malicious=malicious)
+                observed["events"] = events
+                return ToolResult("read_inbox", True, event_id=events[-1].event_id if events else None)
+
+            self.response.execute_tool(self.tools, "read_inbox", agent, {}, receive)
+            return observed.get("events", [])
+        denied = (self.live.gate(agent.agent_id, "message", action="receive",
+                                resource=f"inbox/{agent.agent_id}") if self.live else None)
+        if denied:
+            self.emit(agent, "message", "receive", resource=f"inbox/{agent.agent_id}",
+                      pregated=(denied,), payload={"gateway_reason": denied})
+            return []
         if not self.broker.is_registered(agent.agent_id):
             self.broker.register_agent(agent.agent_id)
         messages = self.broker.receive(agent.agent_id)

@@ -27,6 +27,7 @@ from app.modules.simulator.codework import _clean_json_or_text, _extract_code_bl
 from app.modules.simulator.sandbox import CODE_EXEC_FLAG, _code_exec_allowed, _child_env, _execute_code_safely  # noqa: F401
 from app.modules.simulator.collaboration import _autonomous_user_task_collaboration  # noqa: F401
 from app.modules.simulator.autonomous import autonomous_round
+from app.modules.response.mediation import ACTIVE_RUNTIME
 
 
 ROUNDS = 2
@@ -83,6 +84,7 @@ def run_simulation(
     broker: MessageBroker | None = None,
     env: SharedEnvironment | None = None,
     live=None,
+    response=None,
 ) -> SimulationResult:
     if config.scenario_id not in SCENARIOS_BY_ID:
         raise ValueError(f"Unknown scenario: {config.scenario_id}")
@@ -91,6 +93,10 @@ def run_simulation(
     base_time = base_time or utcnow().replace(microsecond=0)
     rng = random.Random(config.seed)
     agents = _make_agents(run_id, run_hex, config.agent_count)
+    if response:
+        response.start(run_id, agents, config)
+        if live:
+            live.response = response
     if live:
         live.start(run_id, agents)
     workspace_dir = config.workspace_dir or (Path(tempfile.gettempdir()) / "swarmguard-runs" / run_id / "workspace" if (config.user_task or config.scenario_id == "user_directed") else None)
@@ -109,24 +115,29 @@ def run_simulation(
         broker=active_broker,
         env=active_env,
         live=live,
+        response=response,
     )
     runner.register_agents(agents)
-    if config.user_task or config.scenario_id == "user_directed":
-        task_text = config.user_task or "Collaboratively design and implement a secure data pipeline."
-        _autonomous_user_task_collaboration(runner, agents, task_text)
-        malicious_ids = set()
-    else:
-        work_round = autonomous_round if config.agent_mode == "autonomous" else _normal_round
-        work_round(runner, agents, 1)
-        attack_fn = ATTACKS.get(config.scenario_id, lambda r, agts: [])
-        malicious_agents = attack_fn(runner, agents)
-        work_round(runner, agents, 2)
-        malicious_ids = {a.agent_id for a in malicious_agents}
-        stats = getattr(runner, "ai_stats", None)
-        if stats is not None:  # outcome-based labels: an AI agent that broke policy is a culprit, whatever made it
-            malicious_ids |= stats.violators
-        for a in agents:
-            a.is_malicious = a.agent_id in malicious_ids
+    response_token = ACTIVE_RUNTIME.set(response)
+    try:
+        if config.user_task or config.scenario_id == "user_directed":
+            task_text = config.user_task or "Collaboratively design and implement a secure data pipeline."
+            _autonomous_user_task_collaboration(runner, agents, task_text)
+            malicious_ids = set()
+        else:
+            work_round = autonomous_round if config.agent_mode == "autonomous" else _normal_round
+            work_round(runner, agents, 1)
+            attack_fn = ATTACKS.get(config.scenario_id, lambda r, agts: [])
+            malicious_agents = attack_fn(runner, agents)
+            work_round(runner, agents, 2)
+            malicious_ids = {a.agent_id for a in malicious_agents}
+            stats = getattr(runner, "ai_stats", None)
+            if stats is not None:  # outcome-based labels: an AI agent that broke policy is a culprit, whatever made it
+                malicious_ids |= stats.violators
+            for a in agents:
+                a.is_malicious = a.agent_id in malicious_ids
+    finally:
+        ACTIVE_RUNTIME.reset(response_token)
     events, dropped = runner.events, []
     if config.drop_rate > 0:
         drop_rng = random.Random(config.seed * 7919 + 1)

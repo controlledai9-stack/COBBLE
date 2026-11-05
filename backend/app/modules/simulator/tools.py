@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from app.schemas import Agent, RawEvent
+from app.modules.response.mediation import response_tool
 
 if TYPE_CHECKING:
     from app.modules.simulator.engine import AgentRunner
@@ -47,6 +48,7 @@ class ToolRegistry:
         self.runner = runner
         self.env = env
 
+    @response_tool
     def read_file(self, agent: Agent, path: str, *, malicious: bool = False) -> ToolResult:
         norm_path = self.env.fs.normalize_path(path)
         gw_check = self.env.gateway.check(agent, resource=norm_path)
@@ -63,12 +65,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="read_file",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -78,7 +80,7 @@ class ToolRegistry:
                 tool_name="read_file",
                 success=True,
                 data=content,
-                gateway_decision=gw_check.decision,
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
         except Exception as exc:
@@ -86,10 +88,11 @@ class ToolRegistry:
                 tool_name="read_file",
                 success=False,
                 error=str(exc),
-                gateway_decision=gw_check.decision,
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
+    @response_tool
     def write_file(self, agent: Agent, path: str, content: str, *, data_ref: str | None = None, malicious: bool = False) -> ToolResult:
         norm_path = self.env.fs.normalize_path(path)
         gw_check = self.env.gateway.check(agent, resource=norm_path)
@@ -115,12 +118,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="write_file",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -129,10 +132,11 @@ class ToolRegistry:
             tool_name="write_file",
             success=True,
             data={"path": vfile.path, "bytes": vfile.size, "content_hash": vfile.content_hash},
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def delete_file(self, agent: Agent, path: str, *, malicious: bool = False) -> ToolResult:
         norm_path = self.env.fs.normalize_path(path)
         gw_check = self.env.gateway.check(agent, resource=norm_path)
@@ -149,12 +153,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="delete_file",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -163,10 +167,11 @@ class ToolRegistry:
             tool_name="delete_file",
             success=deleted,
             data={"deleted": deleted, "path": norm_path},
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def list_files(self, agent: Agent, prefix: str | None = None, *, malicious: bool = False) -> ToolResult:
         resource_path = prefix or "repo"
         gw_check = self.env.gateway.check(agent, resource=resource_path)
@@ -183,12 +188,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="list_files",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -198,10 +203,11 @@ class ToolRegistry:
             tool_name="list_files",
             success=True,
             data=file_list,
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def query_database(self, agent: Agent, table: str, *, filter_key: str | None = None, filter_val: Any = None, malicious: bool = False) -> ToolResult:
         table_name = table.strip()
         resource_path = f"data/{table_name}"
@@ -219,12 +225,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="query_database",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -237,10 +243,11 @@ class ToolRegistry:
             tool_name="query_database",
             success=True,
             data=records,
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def insert_database(self, agent: Agent, table: str, record: dict[str, Any], *, data_ref: str | None = None, malicious: bool = False) -> ToolResult:
         table_name = table.strip()
         resource_path = f"data/{table_name}"
@@ -262,12 +269,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="insert_database",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -276,10 +283,11 @@ class ToolRegistry:
             tool_name="insert_database",
             success=True,
             data={"record_id": rec_id, "table": table_name},
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def update_database(self, agent: Agent, table: str, record_id: str, updates: dict[str, Any], *, malicious: bool = False) -> ToolResult:
         table_name = table.strip()
         resource_path = f"data/{table_name}"
@@ -297,12 +305,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="update_database",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -311,10 +319,11 @@ class ToolRegistry:
             tool_name="update_database",
             success=ok,
             data={"updated": ok, "record_id": record_id},
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def delete_database(self, agent: Agent, table: str, record_id: str, *, malicious: bool = False) -> ToolResult:
         table_name = table.strip()
         resource_path = f"data/{table_name}"
@@ -332,12 +341,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="delete_database",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -346,10 +355,11 @@ class ToolRegistry:
             tool_name="delete_database",
             success=ok,
             data={"deleted": ok, "record_id": record_id, "table": table_name},
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def send_message(
         self,
         agent: Agent,
@@ -394,6 +404,7 @@ class ToolRegistry:
             event_id=event.event_id,
         )
 
+    @response_tool
     def read_inbox(self, agent: Agent, *, malicious: bool = False) -> ToolResult:
         events = self.runner.receive_messages(agent, malicious=malicious)
         received_msgs = [
@@ -414,6 +425,7 @@ class ToolRegistry:
             event_id=events[-1].event_id if events else None,
         )
 
+    @response_tool
     def access_external(
         self,
         agent: Agent,
@@ -427,7 +439,8 @@ class ToolRegistry:
         gw_check = self.env.gateway.check(agent, resource=resource, target=target)
         status = "denied" if not gw_check.executes else "success"
 
-        payload: dict[str, Any] = {"target": target, "data_summary": str(data)[:100]}
+        encoded = json.dumps(data, sort_keys=True, default=str).encode("utf-8")
+        payload: dict[str, Any] = {"target": target, "bytes": len(encoded), "content_hash": hashlib.sha256(encoded).hexdigest()}
         if resource:
             payload["resource"] = resource
 
@@ -443,12 +456,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="access_external",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -456,10 +469,11 @@ class ToolRegistry:
             tool_name="access_external",
             success=True,
             data={"target": target, "transferred": True},
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )
 
+    @response_tool
     def admin_operation(
         self,
         agent: Agent,
@@ -487,12 +501,12 @@ class ToolRegistry:
             malicious=malicious,
         )
 
-        if not gw_check.executes:
+        if event.status == "denied":
             return ToolResult(
                 tool_name="admin_operation",
                 success=False,
-                error=f"Policy violation: {gw_check.reason}",
-                gateway_decision=gw_check.decision,
+                error=f"Policy violation: {event.payload.get('gateway_reason', gw_check.reason)}",
+                gateway_decision=event.gateway_decision or gw_check.decision,
                 event_id=event.event_id,
             )
 
@@ -500,6 +514,6 @@ class ToolRegistry:
             tool_name="admin_operation",
             success=True,
             data={"operation": operation, "target": target},
-            gateway_decision=gw_check.decision,
+            gateway_decision=event.gateway_decision or gw_check.decision,
             event_id=event.event_id,
         )

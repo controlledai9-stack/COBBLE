@@ -55,6 +55,7 @@ class LiveGuard:
         self.sends: dict[str, NormalizedEvent] = {}  # message_id -> send event (to verify claimed senders)
         self.tainted_msgs: dict[str, str] = {}  # message_id sent by an exposed agent -> original untrusted source
         self.quarantined: list[dict] = []  # untrusted inputs withheld from an agent before it read them
+        self.response = None  # optional persistent authority; these dicts then become report projections
 
     # ---------------------------------------------------------------- runner interface
     def start(self, run_id: str, agents: list[Agent]) -> None:
@@ -67,12 +68,19 @@ class LiveGuard:
         """Called BEFORE an action executes. A reason means: deny it."""
         if self.mode != "contain":
             return None
-        if agent_id in self.paused:
+        if self.response:
+            reason = self.response.gate_event(agent_id, event_type, target, action=action, resource=resource, payload=payload)
+            if reason:
+                projection = self.paused.get(agent_id) or self.held.get(agent_id)
+                if projection:
+                    projection.blocked_actions += 1
+                return reason
+        if not self.response and agent_id in self.paused:
             c = self.paused[agent_id]
             c.blocked_actions += 1
             return f"agent paused by live detection at event #{c.paused_at_sequence} (risk {c.risk:.0%})"
         hold = self.held.get(agent_id)
-        if hold and event_type == "data_transfer" and (target or "").startswith(EXTERNAL_PREFIX):
+        if not self.response and hold and event_type == "data_transfer" and (target or "").startswith(EXTERNAL_PREFIX):
             hold.blocked_actions += 1
             return (f"egress held since event #{hold.paused_at_sequence}: agent received restricted data it may not hold "
                     f"(need-to-know)")
@@ -93,6 +101,8 @@ class LiveGuard:
                     risk=1.0, blocked_actions=1, trigger="hijack_tripwire",
                     explanation=f"tried {what} right after ingesting untrusted content ({exposure['source']}): likely "
                                 f"prompt injection, stopped before it ran")
+                if self.response:
+                    self.response.contain(self.paused[agent_id])
                 return f"blocked before execution: out-of-policy action right after untrusted input ({exposure['source']})"
         return None
 
@@ -120,6 +130,8 @@ class LiveGuard:
                     self.paused[v.agent_id] = Containment(
                         agent_id=v.agent_id, role=v.role, paused_at_sequence=event.sequence, paused_at=event.timestamp,
                         risk=v.risk, explanation=v.best_explanation, trigger="risk")
+                    if self.response:
+                        self.response.contain(self.paused[v.agent_id])
 
     def replay(self, timeline: list[dict]) -> list[dict]:
         """Stream a recorded timeline through the guard as if it were happening now.
@@ -173,6 +185,8 @@ class LiveGuard:
                                             paused_at_sequence=e.sequence,
                                             paused_at=e.timestamp, risk=0.0,
                                             explanation=f"received {ref} from {e.agent_id} without permission to hold it")
+            if self.response:
+                self.response.contain(self.held[target])
 
     # ---------------------------------------------------------------- results
     def report(self, run: Run) -> LiveReport:

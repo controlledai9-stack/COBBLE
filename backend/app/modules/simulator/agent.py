@@ -183,7 +183,12 @@ class SimulatedAgent:
             return res
 
         malicious = sanitized_args.pop("malicious", self.is_malicious)
-        res = tool_fn(self.agent, **sanitized_args, malicious=malicious)
+        try:
+            res = tool_fn(self.agent, **sanitized_args, malicious=malicious)
+        except (ValueError, TypeError, PermissionError):
+            # Invalid model arguments must not abort the whole swarm. Any
+            # admitted uncertain effect has already been fenced by the adapter.
+            res = ToolResult(tool_name=tool_name, success=False, error="Invalid or refused tool arguments")
         self.memory.set_last_result(res)
         return res
 
