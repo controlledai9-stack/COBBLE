@@ -267,9 +267,14 @@ export class TeamOrchestrator extends EventEmitter {
     return this.store.snapshot(runId)!;
   }
 
-  /** After a restart: never relaunch agents; pause and let the user resume. */
-  recover() {
+  /**
+   * After a restart: never relaunch agents; pause and let the user resume.
+   * `only` limits recovery to runs this process was driving, so closing one
+   * Cobble process (e.g. a CLI status call) never pauses another's run.
+   */
+  recover(only?: ReadonlySet<string>) {
     for (const run of this.store.runsInState(["running", "needs_human"])) {
+      if (only && !only.has(run.id)) continue;
       for (const task of this.store.tasks(run.id))
         if (task.state === "running") {
           task.state = "interrupted";
@@ -295,10 +300,17 @@ export class TeamOrchestrator extends EventEmitter {
 
   async close() {
     this.closed = true;
+    this.interruptedOnClose = new Set(
+      [...this.active].filter(([, n]) => n > 0).map(([id]) => id),
+    );
     for (const controller of this.running.values()) controller.abort();
     await Promise.allSettled([...this.inflight]);
-    this.recover();
+    // Only runs that had agents in flight here were interrupted by closing.
+    this.recover(this.interruptedOnClose);
   }
+  /** Runs with a planner turn or task in flight in this process. */
+  private readonly active = new Map<string, number>();
+  private interruptedOnClose = new Set<string>();
 
   /** Resolves once no planner turn or task of this run is in flight. */
   async idle(runId?: string) {
@@ -333,9 +345,13 @@ export class TeamOrchestrator extends EventEmitter {
     this.changed(runId);
   }
 
-  private track<T>(promise: Promise<T>) {
+  private track<T>(runId: string, promise: Promise<T>) {
     this.inflight.add(promise);
-    void promise.finally(() => this.inflight.delete(promise));
+    this.active.set(runId, (this.active.get(runId) ?? 0) + 1);
+    void promise.finally(() => {
+      this.inflight.delete(promise);
+      this.active.set(runId, (this.active.get(runId) ?? 1) - 1);
+    });
     return promise;
   }
 
@@ -392,7 +408,7 @@ export class TeamOrchestrator extends EventEmitter {
         task.state = "running";
         task.startedAt = new Date(this.now()).toISOString();
         this.store.saveTask(task);
-        void this.track(this.runTask(run.id, task.id));
+        void this.track(run.id, this.runTask(run.id, task.id));
       }
     }
     // 3. Wake the planner once current work has settled.
@@ -419,6 +435,7 @@ export class TeamOrchestrator extends EventEmitter {
     ) {
       this.plannerBusy.add(runId);
       void this.track(
+        runId,
         this.plannerTurn(runId).finally(() => {
           this.plannerBusy.delete(runId);
           this.schedule(runId);
@@ -517,7 +534,9 @@ export class TeamOrchestrator extends EventEmitter {
         );
       if (result.timedOut)
         return this.pauseFor(run, `Planner (${agent}) timed out`);
-      if (run.state !== "running") return; // paused or stopped meanwhile
+      // Stopped or finished meanwhile: drop the reply. Paused: keep it, so the
+      // planner's tasks wait in the queue for resume instead of being lost.
+      if (["done", "failed", "stopped"].includes(run.state)) return;
       try {
         parsed = parsePlannerReply(result.finalText, known, available);
       } catch (error) {
@@ -555,7 +574,10 @@ export class TeamOrchestrator extends EventEmitter {
       this.store.addDecision(run.id, decision);
     for (const action of parsed.actions) {
       run = this.require(runId);
-      if (run.state !== "running") break;
+      // A pause during the turn keeps the planner's work: tasks queue and
+      // start on resume. Only a finished or stopped run drops the actions.
+      if (["done", "failed", "stopped"].includes(run.state)) break;
+      if (run.state !== "running" && action.type === "ask_human") continue;
       await this.apply(run, action, roles);
     }
     this.changed(runId);

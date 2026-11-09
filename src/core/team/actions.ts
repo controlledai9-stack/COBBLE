@@ -67,6 +67,36 @@ function list(value: unknown, field: string, max: number): string[] {
   return value.map((item, i) => text(item, `${field}[${i}]`, 500));
 }
 
+/**
+ * Escapes raw newlines, carriage returns and tabs that appear inside JSON
+ * string literals. Structure outside strings is left untouched, so this
+ * cannot turn invalid structure into something different.
+ */
+export function escapeControlCharsInStrings(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      else if (ch === "\n") {
+        out += "\\n";
+        continue;
+      } else if (ch === "\r") {
+        out += "\\r";
+        continue;
+      } else if (ch === "\t") {
+        out += "\\t";
+        continue;
+      }
+    } else if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
+}
+
 /** Extracts the last ```cobble-actions block, or a bare JSON object reply. */
 export function extractActionBlock(reply: string): string | null {
   const blocks = [...reply.matchAll(/```cobble-actions\s*\n([\s\S]*?)```/g)];
@@ -90,7 +120,14 @@ export function parsePlannerReply(
   try {
     raw = JSON.parse(block);
   } catch {
-    throw new Error("cobble-actions block is not valid JSON");
+    try {
+      // Models often put real line breaks inside long strings (the brief).
+      raw = JSON.parse(escapeControlCharsInStrings(block));
+    } catch (error) {
+      throw new Error(
+        `cobble-actions block is not valid JSON (${error instanceof Error ? error.message.slice(0, 160) : "parse error"})`,
+      );
+    }
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     throw new Error("cobble-actions must be a JSON object");

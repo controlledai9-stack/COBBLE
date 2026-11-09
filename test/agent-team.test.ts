@@ -1222,3 +1222,109 @@ test("targeted reviews, question limits and validation of new actions", async ()
     await f.cleanup();
   }
 });
+
+test("live-run regressions: another process closing never pauses this run; pause mid-turn keeps delegates; raw newlines in JSON are repaired", async () => {
+  const { escapeControlCharsInStrings } =
+    await import("../src/core/team/actions");
+  // Real Claude reply shape: a brief with literal line breaks inside a string.
+  const reply =
+    'Here you go\n```cobble-actions\n{"actions":[{"type":"set_brief","content":"# Architecture\nLine two\twith tab"},{"type":"wait","reason":"x"}]}\n```';
+  const parsed = parsePlannerReply(
+    reply,
+    new Set(),
+    new Set<TeamRole>(["planner", "coder"]),
+  );
+  assert.equal(
+    (parsed.actions[0] as { content: string }).content,
+    "# Architecture\nLine two\twith tab",
+  );
+  assert.equal(
+    escapeControlCharsInStrings('{"a":"x\ny"}\n'),
+    '{"a":"x\\ny"}\n',
+    "newlines outside strings are untouched",
+  );
+  assert.throws(
+    () =>
+      parsePlannerReply(
+        '```cobble-actions\n{"actions": [}\n```',
+        new Set(),
+        new Set<TeamRole>(["planner"]),
+      ),
+    /not valid JSON/,
+  );
+
+  let release!: () => void;
+  const hold = new Promise<void>((r) => (release = r));
+  let paused = false;
+  const f = setup(
+    async (_input, call) => {
+      if (call === 1) {
+        // While the planner is thinking, the user pauses the run.
+        await hold;
+        return {
+          finalText: actions({
+            actions: [
+              {
+                type: "delegate",
+                id: "T1",
+                role: "coder",
+                title: "Page",
+                instructions: "x",
+              },
+            ],
+          }),
+        };
+      }
+      return {
+        finalText: actions({ actions: [{ type: "finish", summary: "ok" }] }),
+      };
+    },
+    {
+      codex: (input) => {
+        writeReport(input.cwd, { status: "done", summary: "ok" });
+        return {};
+      },
+    },
+  );
+  try {
+    const run = await f.orchestrator.startRun(f.team.id, "x");
+    while (!f.plannerCalls.length) await new Promise((r) => setTimeout(r, 10));
+    // A second Cobble process (e.g. `cobble team status`) opens and closes.
+    const other = new TeamOrchestrator({
+      teamStore: f.teamStore,
+      adapters: {} as never,
+      worktreeRoot: f.trees,
+      team: (id) => f.store.team(id),
+    });
+    await other.close();
+    assert.equal(
+      f.orchestrator.snapshot(run.id)!.run.state,
+      "running",
+      "closing another process must not pause this run",
+    );
+    f.orchestrator.pause(run.id);
+    paused = true;
+    release();
+    await f.orchestrator.idle(run.id);
+    let snap = f.orchestrator.snapshot(run.id)!;
+    assert.equal(snap.run.state, "paused");
+    assert.equal(
+      snap.tasks.length,
+      1,
+      "the planner's delegate survived the pause",
+    );
+    assert.equal(snap.tasks[0].state, "queued");
+    assert.equal(f.codexCalls.length, 0, "nothing starts while paused");
+    f.orchestrator.resume(run.id);
+    await f.orchestrator.idle(run.id);
+    snap = f.orchestrator.snapshot(run.id)!;
+    assert.equal(snap.tasks[0].state, "done");
+    assert.equal(snap.run.state, "done");
+    // Closing the process that drove the run (nothing in flight now) changes nothing.
+    await f.orchestrator.close();
+    assert.equal(f.orchestrator.snapshot(run.id)!.run.state, "done");
+  } finally {
+    if (!paused) release();
+    await f.cleanup();
+  }
+});

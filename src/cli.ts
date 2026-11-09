@@ -36,6 +36,7 @@ async function main() {
   cobble team role ROLE AGENT|none   e.g. team role planner claude
   cobble team test AGENT             one-line headless round trip
   cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"]
+  cobble team resume [RUN_ID] [--max-turns N]
   cobble team status [RUN_ID]
 
 Do not run "team run" while the desktop app is open on the same data.
@@ -181,28 +182,45 @@ async function teamCommand(
     if (!id) return console.log("No team runs yet.");
     return print(service.teamRun(id));
   }
-  if (sub === "run") {
-    const goal = rest.join(" ").trim();
-    if (!goal) throw new Error('Usage: cobble team run "GOAL"');
+  if (sub === "run" || sub === "resume") {
     const number = (v: unknown) =>
       typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
-    const run = await service.startTeamRun(
-      goal,
-      {
-        ...(number(values["max-tasks"])
-          ? { maxTasks: number(values["max-tasks"]) }
-          : {}),
-        ...(number(values["max-turns"])
-          ? { maxPlannerTurns: number(values["max-turns"]) }
-          : {}),
-      },
-      undefined,
-      {
-        checkCommand:
-          typeof values.check === "string" ? values.check : undefined,
-      },
-    );
-    console.log(`Run ${run.id} on branch ${run.runBranch}`);
+    let run;
+    if (sub === "resume") {
+      const id = rest[0] ?? service.teamRuns()[0]?.id;
+      if (!id) throw new Error("No team run to resume");
+      // Optionally raise the planner-turn budget when resuming.
+      const turns = number(values["max-turns"]);
+      if (turns) {
+        const stored = service.teamStore.run(id);
+        if (stored && turns > stored.budget.maxPlannerTurns) {
+          stored.budget.maxPlannerTurns = Math.min(turns, 50);
+          service.teamStore.saveRun(stored);
+        }
+      }
+      run = (await service.teamRunCommand(id, "resume")).run;
+      console.log(`Resumed run ${run.id} (${run.state}) on ${run.runBranch}`);
+    } else {
+      const goal = rest.join(" ").trim();
+      if (!goal) throw new Error('Usage: cobble team run "GOAL"');
+      run = await service.startTeamRun(
+        goal,
+        {
+          ...(number(values["max-tasks"])
+            ? { maxTasks: number(values["max-tasks"]) }
+            : {}),
+          ...(number(values["max-turns"])
+            ? { maxPlannerTurns: number(values["max-turns"]) }
+            : {}),
+        },
+        undefined,
+        {
+          checkCommand:
+            typeof values.check === "string" ? values.check : undefined,
+        },
+      );
+      console.log(`Run ${run.id} on branch ${run.runBranch}`);
+    }
     const prompt = createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -258,7 +276,9 @@ async function teamCommand(
       prompt.close();
     }
   }
-  throw new Error("Usage: cobble team detect|roles|role|test|run|status");
+  throw new Error(
+    "Usage: cobble team detect|roles|role|test|run|resume|status",
+  );
 }
 void main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));

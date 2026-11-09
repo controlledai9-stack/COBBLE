@@ -1,6 +1,6 @@
 # Agent Team: backend delivery (milestones 1–5)
 
-9 November 2026. Branch `claude/agent-team`, built on `main` at fec3767 (source 0.4.14). This implements the backend from [AGENT-TEAM-PLAN.md](AGENT-TEAM-PLAN.md). **The UI panel is not built yet** (see "Handoff for the UI" below). **Live provider verification is still pending**: none of `claude`, `codex` or `gemini` were on this machine's PATH, so every agent in the tests is a scripted fake.
+9 November 2026. Branch `claude/agent-team`, built on `main` at fec3767 (source 0.4.14). This implements the backend from [AGENT-TEAM-PLAN.md](AGENT-TEAM-PLAN.md). **The UI panel is built** (Teams → Agent Team). The automated tests use scripted fake agents. **A live run with real Claude Code and Codex passed on 9 November 2026**; see "Live verification" below. Gemini, sign-in gates and deploys have not been verified live.
 
 ## What works now
 
@@ -71,18 +71,23 @@ cobble team status [RUN_ID]
 | Agent | Invocation | Parsed |
 |---|---|---|
 | Claude Code | `claude -p --output-format json --permission-mode plan\|acceptEdits [--resume ID]` | `result`, `session_id` |
-| Codex | `codex exec [resume ID] --json --skip-git-repo-check --sandbox read-only\|workspace-write [-c sandbox_workspace_write.network_access=true] -` | JSONL `thread_id`, last `agent_message` |
-| Gemini CLI | `gemini -p "Follow the task given on standard input." --output-format json [--approval-mode auto_edit]` | `response` |
+| Codex | `codex exec [resume ID] --json --skip-git-repo-check -c sandbox_mode=read-only\|workspace-write [-c sandbox_workspace_write.network_access=true] -` | JSONL `thread_id`, last `agent_message` |
+| Gemini CLI | `gemini -p "Follow the task given on standard input." --output-format json --skip-trust --approval-mode plan\|auto_edit` | `response` |
 
-Known gaps to check live:
+Flags were checked against the installed help on 9 November 2026: Claude Code 2.1.319, codex-cli 0.167.0 and gemini-cli 0.67.0.
 
-- **Claude workers in `acceptEdits` mode may not be allowed to run shell commands headlessly.** This matters for deploy tasks. If so, give the deployer role to Codex, or add an allowed-tools setting.
-- **Gemini has no session resume here.** A resumed Gemini task restarts with the note.
-- **Codex `-c` key and `exec resume` syntax** must be confirmed against the installed version.
+- **Codex:** `codex exec resume` has no `--sandbox` flag, so the sandbox is set with `-c sandbox_mode=...` for both forms.
+- **Gemini:** `plan` is its read-only mode. `--skip-trust` is required because task worktrees are never in Gemini's trusted-folder list; without it, Gemini silently replaces the approval mode with `default`.
+
+Still open:
+
+- **Claude workers in `acceptEdits` mode may not be allowed to run shell commands headlessly.** This matters for deploy tasks. Until it is tested, give the deployer role to Codex.
+- **Gemini has no session resume by id.** A resumed Gemini task restarts with the note.
+- **Gemini with a free Google sign-in no longer works.** Gemini CLI 0.67.0 answers `IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals` and points to Antigravity. Cobble now reports this as a sign-in problem. Gemini still needs a Gemini API key (set by the user in their own environment) or an eligible paid tier.
 
 ## Tests
 
-`test/agent-team.test.ts` has 11 tests:
+`test/agent-team.test.ts` has 12 tests:
 
 - planner-output validation
 - report and CLI parsing
@@ -98,7 +103,28 @@ Known gaps to check live:
 
 Full suite: **227 passed, 0 failed**. `tsc --noEmit` is clean and `scripts/build.mjs` succeeds. The desktop smoke test was not run in this environment because the Electron binary was not installed.
 
-## Live verification checklist (record versions and results here)
+## Live verification: 9 November 2026 (Windows 11, Claude Code 2.1.319, codex-cli 0.167.0, gemini-cli 0.67.0)
+
+**Headless round trip (`cobble team test`):** Claude passed (READY in 7.4 s) and Codex passed (READY in 11.8 s). Gemini failed with the `IneligibleTierError` described above, which is a provider account issue.
+
+**End-to-end run.** Throwaway repo with a 3-feature plan and the constraint `Do not modify legacy/`. Roles: planner Claude, coder Codex, reviewer Claude. Check command `node --test`. Budget: 6 tasks and 9 planner turns. The run finished on its own after 6 planner turns and 5 tasks, in about 10 minutes of agent time:
+
+1. The planner's first reply had invalid JSON. The single repair request worked.
+2. Brief v1 was published. The reviewer (T1) returned `changes` with 7 suggestions.
+3. The planner accepted or rejected each suggestion in the decision log and published brief v2.
+4. Codex implemented `notes.js` (T2, check passed). T3 (tests) depended on T2; T2 was merged automatically before T3 started, and T3 wrote 16 tests (check passed).
+5. The planner delegated reviews of T2 and T3 (T4 and T5, both `approve`). It rejected two cosmetic suggestions and finished.
+6. Independent verification: `node --test` passes 16/16 on `team/424fe634`, and the CLI behaves as planned. `legacy/` and `package.json` are unchanged. The user's `main` is unchanged and still checked out. The user was never asked anything.
+
+**Bugs found live and fixed:**
+
+- **Cross-process pause:** closing any Cobble process (for example a `cobble team status` call) marked every running run as "Cobble restarted" and paused it, including a run being driven by another process. Now a process only recovers runs it had agents in flight for.
+- **Pause during a planner turn dropped the planner's delegated tasks.** Now the tasks are queued and start when the run resumes.
+- **Raw line breaks inside JSON strings:** models often write them in a long brief. Cobble now repairs them, saving a planner turn.
+- **Resume from the CLI:** `cobble team resume [RUN_ID] [--max-turns N]` added.
+- Known, not fixed: `cobble init` asks for a display name interactively, and that prompt fails when input is piped.
+
+## Live verification checklist (remaining items)
 
 1. Install and sign in to at least two CLIs. Run `cobble team detect`, then `cobble team test claude` (and the others). Each test should return `ok: true`.
 2. On a throwaway git repo with a short plan, assign `planner=claude`, `coder=codex` and `generator=gemini`. Run `cobble team run "Add a hello page and an SVG logo"`. Confirm that branch `team/<run>` contains both files, the decision log is filled, and your own branch is unchanged.

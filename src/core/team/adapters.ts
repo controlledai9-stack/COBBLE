@@ -56,6 +56,9 @@ const AUTH_PATTERNS = [
   /\b401\b/,
   /authenticat(?:e|ion) (?:required|failed)/i,
   /invalid (?:api key|credentials|token)/i,
+  // Gemini CLI 0.67.0 with a free Google sign-in: the account tier was retired.
+  /IneligibleTierError|no longer supported for Gemini Code Assist/i,
+  /error authenticating/i,
 ];
 const RATE_PATTERNS = [/\b429\b/, /rate.?limit/i, /usage limit/i, /quota/i];
 
@@ -310,8 +313,10 @@ export const codexSpec: CliSpec = {
     ...(input.resumeSessionId ? ["resume", input.resumeSessionId] : []),
     "--json",
     "--skip-git-repo-check",
-    "--sandbox",
-    input.readOnly ? "read-only" : "workspace-write",
+    // `codex exec resume` has no --sandbox flag (verified on codex-cli
+    // 0.167.0), so the sandbox is set through config for both forms.
+    "-c",
+    `sandbox_mode=${input.readOnly ? "read-only" : "workspace-write"}`,
     ...(input.network && !input.readOnly
       ? ["-c", "sandbox_workspace_write.network_access=true"]
       : []),
@@ -346,7 +351,12 @@ export const geminiSpec: CliSpec = {
     "Follow the task given on standard input.",
     "--output-format",
     "json",
-    ...(input.readOnly ? [] : ["--approval-mode", "auto_edit"]),
+    // Task worktrees live in Cobble's app data and are never in Gemini's
+    // trusted list; without this Gemini silently drops the approval mode.
+    "--skip-trust",
+    // "plan" is Gemini's read-only mode (verified on gemini-cli 0.67.0).
+    "--approval-mode",
+    input.readOnly ? "plan" : "auto_edit",
   ],
   parse(stdout) {
     const value = lastJson(stdout);
