@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { CobbleService } from "../src/core/service";
 import {
   existsSync,
   lstatSync,
@@ -402,8 +404,147 @@ test("autopilot: works through the backlog on its own branch, builds each item o
   }
 });
 
+for (const mode of ["empty", "gate", "stop", "close"] as const) {
+  test(`desktop Autopilot: ${mode}`, { timeout: 60_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "cobble-autopilot-desktop-"));
+    const work = join(root, "work");
+    const backlog = "docs/BACKLOG.md";
+    mkdirSync(join(work, "docs"), { recursive: true });
+    writeFileSync(
+      join(work, backlog),
+      "- [ ] Add a file\n- [ ] Add another file\n",
+    );
+    git(work, "init", "-q", "-b", "main");
+    git(work, "add", ".");
+    git(
+      work,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-qm",
+      "init",
+    );
+
+    const planner = fake("claude", (input, call) => {
+      if (call === 1 && mode !== "empty")
+        return {
+          finalText: actions({
+            actions: [
+              { type: "ask_human", kind: "clarify", message: "Continue?" },
+            ],
+          }),
+        };
+      return {
+        finalText: actions({
+          actions: input.prompt.includes("- T1 [done] coder/codex:")
+            ? [{ type: "finish", summary: "File added" }]
+            : [
+                {
+                  type: "delegate",
+                  id: "T1",
+                  role: "coder",
+                  title: "Add a file",
+                  instructions: "Add one file",
+                },
+              ],
+        }),
+      };
+    });
+    const coder = fake("codex", (input, call) => {
+      writeFileSync(join(input.cwd, `file-${call}.txt`), "content");
+      writeReport(input.cwd, { status: "done", summary: "File added" });
+      return {};
+    });
+    const net = fakeFetch();
+    const options = {
+      teamWorktreeRoot: join(root, "trees"),
+      teamAdapters: {
+        claude: planner.adapter,
+        codex: coder.adapter,
+        gemini: fake("gemini", () => ({})).adapter,
+      },
+      fetch: net.impl,
+    };
+    const db = join(root, "service.sqlite");
+    const service = new CobbleService(db, undefined, options);
+    const waitFor = async (condition: () => boolean) => {
+      const signal = AbortSignal.timeout(45_000);
+      while (!condition()) await once(service, "team", { signal });
+    };
+    try {
+      service.store.saveProfile("Owner", "");
+      const team = service.store.createTeam("T", "Build files", work);
+      service.teamStore.setRole(team.id, "planner", "claude");
+      service.teamStore.setRole(team.id, "coder", "codex");
+      service.setPhoneNotify({ enabled: true });
+
+      const starting = service.startAutopilot();
+      await assert.rejects(service.startAutopilot(), /already active/);
+      await starting;
+      if (mode !== "empty") {
+        await waitFor(() => {
+          const { runId } = service.autopilotStatus();
+          return !!runId && service.teamRun(runId).run.state === "needs_human";
+        });
+        const { runId, active, completed } = service.autopilotStatus();
+        assert.equal(active, true);
+        assert.deepEqual(completed, []);
+        assert.equal(service.teamRuns().length, 1);
+        assert.equal(coder.calls.length, 0);
+        if (mode === "close") {
+          await service.close();
+          assert.equal(planner.calls.length, 1);
+          const reopened = new CobbleService(db, undefined, options);
+          try {
+            assert.equal(reopened.autopilotStatus().active, false);
+            assert.equal(reopened.teamRuns().length, 1);
+            assert.equal(planner.calls.length, 1);
+            assert.match(
+              git(work, "show", `${AUTOPILOT_BRANCH}:${backlog}`),
+              /- \[ \] Add a file/,
+            );
+          } finally {
+            await reopened.close();
+          }
+          return;
+        }
+        if (mode === "stop") {
+          const stopping = service.stopAutopilot();
+          assert.equal(stopping.active, true);
+          assert.match(stopping.stoppedReason!, /after the current run/);
+          assert.equal(service.teamRun(runId!).run.state, "needs_human");
+        }
+        await service.teamRunCommand(runId!, "done", undefined, "Continue");
+      }
+      await waitFor(() => !service.autopilotStatus().active);
+      const status = service.autopilotStatus();
+      const count = mode === "stop" ? 1 : 2;
+      assert.deepEqual(
+        status.completed.map((item) => item.status),
+        Array(count).fill("merged"),
+        status.stoppedReason,
+      );
+      assert.equal(service.teamRuns().length, count);
+      assert.equal(coder.calls.length, count);
+      assert.match(
+        status.stoppedReason!,
+        mode === "stop" ? /Stopped by request/ : /Backlog is empty/,
+      );
+      assert.equal(
+        net.posts.filter((post) => /Autopilot: Run .* merged/.test(post.body))
+          .length,
+        count,
+      );
+    } finally {
+      await service.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test("service: Agent Team attention reaches the phone when enabled", async () => {
-  const { CobbleService } = await import("../src/core/service");
   const net = fakeFetch();
   const service = new CobbleService(":memory:", undefined, {
     fetch: net.impl,

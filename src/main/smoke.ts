@@ -112,6 +112,30 @@ export async function runSmoke(
     `document.querySelectorAll('nav button')[2].click()`,
   );
   await wait('document.body.innerText.includes("The core plan")');
+  await wait('!!document.querySelector("#agent-team-autopilot-heading")');
+  assert.deepEqual(
+    await main.webContents.executeJavaScript(`(() => {
+      const card = document.querySelector("#agent-team-autopilot-heading").closest("form");
+      return {
+        backlog: card.querySelector("input").value,
+        maxRuns: card.querySelector("input[type=number]").value,
+        sharingControls: [...document.querySelectorAll(".agent-team label")]
+          .filter((label) => label.textContent.trim() === "Share node_modules").length,
+      };
+    })()`),
+    { backlog: "docs/BACKLOG.md", maxRuns: "3", sharingControls: 2 },
+  );
+  const autopilot = await main.webContents.executeJavaScript(
+    "window.cobble.autopilotStatus()",
+  );
+  assert.equal(autopilot.active, false);
+  assert.equal(autopilot.branch, "cobble/autopilot");
+  assert.match(
+    await main.webContents.executeJavaScript(
+      'window.cobble.startAutopilot({ shareDependencies: "yes" }).catch((error) => error.message)',
+    ),
+    /Share node_modules must be a boolean/,
+  );
   assert.equal(
     await main.webContents.executeJavaScript(
       'document.querySelectorAll(".plan-items > div").length',

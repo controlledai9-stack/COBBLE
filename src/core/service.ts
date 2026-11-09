@@ -29,7 +29,12 @@ import { buildReviewPacket } from "./review/packet";
 import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { TeamStore } from "./team/team-store";
-import { Autopilot } from "./team/autopilot";
+import {
+  AUTOPILOT_BRANCH,
+  Autopilot,
+  validBacklogPath,
+} from "./team/autopilot";
+import { validCheckCommand } from "./team/checks";
 import {
   PhoneNotifier,
   type AttentionEvent,
@@ -45,6 +50,7 @@ import {
   type TeamAgentId,
   type TeamBudget,
   type TeamRole,
+  type TeamRun,
 } from "./team/types";
 import { tmpdir } from "node:os";
 import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
@@ -58,12 +64,22 @@ import {
   type AnalysisJob,
 } from "./analysis/ledger";
 import type {
+  AutopilotOptions,
+  AutopilotStatus,
   ExtendedAction,
   AppState,
   Activity,
   AgentPayload,
   Team,
 } from "../shared/types";
+
+const DEFAULT_BACKLOG = "docs/BACKLOG.md";
+
+interface AutopilotSession {
+  status: AutopilotStatus;
+  shutdown: AbortController;
+  work: Promise<void>;
+}
 
 export class CobbleService extends EventEmitter {
   readonly store: Store;
@@ -77,6 +93,8 @@ export class CobbleService extends EventEmitter {
   readonly agentTeam: TeamOrchestrator;
   readonly phone: PhoneNotifier;
   readonly autopilot: Autopilot;
+  private readonly autopilotSessions = new Map<string, AutopilotSession>();
+  private readonly startingTeamRuns = new Set<string>();
   private readonly teamAdapters: Record<TeamAgentId, AgentAdapter>;
   private agentTask?: Promise<void>;
   private agentTimer?: ReturnType<typeof setTimeout>;
@@ -1689,7 +1707,7 @@ export class CobbleService extends EventEmitter {
       durationMs: result.durationMs,
     };
   }
-  startTeamRun(
+  async startTeamRun(
     goal: string,
     budget?: Partial<TeamBudget>,
     policy?: Partial<ApprovalPolicy>,
@@ -1699,21 +1717,205 @@ export class CobbleService extends EventEmitter {
       shareDependencies?: boolean;
     },
   ) {
+    const teamId = this.teamId();
+    if (this.autopilotSessions.get(teamId)?.status.active)
+      throw new Error("Stop Autopilot before starting a separate run");
+    if (this.startingTeamRuns.has(teamId))
+      throw new Error("An Agent Team run is already starting");
     const o = options && typeof options === "object" ? options : {};
-    return this.agentTeam.startRun(
-      this.teamId(),
-      String(goal ?? ""),
-      sanitizeBudget(budget),
-      sanitizePolicy(policy),
-      {
-        checkCommand: o.checkCommand as string | undefined,
-        ...(typeof o.baseRef === "string" && o.baseRef
-          ? { baseRef: o.baseRef }
-          : {}),
-        ...(o.shareDependencies === true ? { shareDependencies: true } : {}),
-      },
+    this.startingTeamRuns.add(teamId);
+    try {
+      return await this.agentTeam.startRun(
+        teamId,
+        String(goal ?? ""),
+        sanitizeBudget(budget),
+        sanitizePolicy(policy),
+        {
+          checkCommand: o.checkCommand as string | undefined,
+          ...(typeof o.baseRef === "string" && o.baseRef
+            ? { baseRef: o.baseRef }
+            : {}),
+          ...(o.shareDependencies === true ? { shareDependencies: true } : {}),
+        },
+      );
+    } finally {
+      this.startingTeamRuns.delete(teamId);
+    }
+  }
+  private idleAutopilot(teamId: string): AutopilotStatus {
+    return {
+      active: false,
+      branch: AUTOPILOT_BRANCH,
+      worktree: this.autopilot.path(teamId),
+      backlogPath: DEFAULT_BACKLOG,
+      completed: [],
+    };
+  }
+
+  autopilotStatus(): AutopilotStatus {
+    const teamId = this.teamId();
+    return structuredClone(
+      this.autopilotSessions.get(teamId)?.status ?? this.idleAutopilot(teamId),
     );
   }
+
+  async startAutopilot(
+    options: AutopilotOptions = {},
+  ): Promise<AutopilotStatus> {
+    const teamId = this.teamId();
+    if (this.closed) throw new Error("Cobble is closing");
+    if (this.autopilotSessions.get(teamId)?.status.active)
+      throw new Error("Autopilot is already active for this team");
+    if (
+      this.startingTeamRuns.has(teamId) ||
+      this.teamStore
+        .runsInState(["running", "needs_human", "paused"])
+        .some((run) => run.teamId === teamId)
+    )
+      throw new Error(
+        "Finish or stop the current team run before starting Autopilot",
+      );
+    const backlogPath = validBacklogPath(
+      options.backlogPath ?? DEFAULT_BACKLOG,
+    );
+    const maxRuns = options.maxRuns ?? 3;
+    if (!Number.isSafeInteger(maxRuns) || maxRuns < 1 || maxRuns > 20)
+      throw new Error("Maximum runs must be an integer from 1 to 20");
+    const runOptions = {
+      checkCommand: validCheckCommand(options.checkCommand),
+      shareDependencies: options.shareDependencies === true,
+      budget: sanitizeBudget(options.budget),
+    };
+    const status = { ...this.idleAutopilot(teamId), active: true, backlogPath };
+    const shutdown = new AbortController();
+    const prepared = this.autopilot.prepare(teamId);
+    const work = prepared
+      .then(() =>
+        this.runAutopilot(teamId, status, maxRuns, runOptions, shutdown.signal),
+      )
+      .then((reason) => {
+        status.stoppedReason = reason;
+      })
+      .catch((error: unknown) => {
+        status.stoppedReason =
+          error instanceof Error ? error.message : String(error);
+      })
+      .finally(() => {
+        if (shutdown.signal.aborted) status.stoppedReason = "Cobble closed.";
+        status.active = false;
+        this.emit("team", status.runId ?? null);
+      });
+    this.autopilotSessions.set(teamId, { status, shutdown, work });
+    this.emit("team", null);
+    await prepared;
+    return structuredClone(status);
+  }
+
+  stopAutopilot(): AutopilotStatus {
+    const status = this.autopilotSessions.get(this.teamId())?.status;
+    if (status?.active) {
+      status.stoppedReason =
+        "Stop requested. Autopilot will stop after the current run.";
+      this.emit("team", status.runId ?? null);
+    }
+    return this.autopilotStatus();
+  }
+
+  private async runAutopilot(
+    teamId: string,
+    status: AutopilotStatus,
+    maxRuns: number,
+    options: AutopilotOptions,
+    signal: AbortSignal,
+  ): Promise<string> {
+    let flagged = 0;
+    const shouldStop = () => signal.aborted || !!status.stoppedReason;
+    while (!shouldStop() && status.completed.length < maxRuns) {
+      const item = await this.autopilot.next(teamId, status.backlogPath);
+      if (shouldStop()) break;
+      if (!item) {
+        await this.phone.notify({
+          runId: "autopilot",
+          kind: "finished",
+          message: `Autopilot finished: no open items left in ${status.backlogPath}.`,
+        });
+        return "Backlog is empty.";
+      }
+      status.currentItem = item.text;
+      status.runId = undefined;
+      this.emit("team", null);
+      if (shouldStop()) break;
+      const started = await this.autopilot.start(
+        teamId,
+        item,
+        status.backlogPath,
+        options,
+      );
+      status.runId = started.id;
+      this.emit("team", started.id);
+      const run = await this.waitForAutopilotRun(started.id, signal);
+      if (!run || signal.aborted) break;
+      const outcome = await this.autopilot.complete(
+        teamId,
+        run,
+        item,
+        status.backlogPath,
+      );
+      const merged = outcome.status === "merged";
+      if (outcome.status !== "not_done") {
+        status.completed.push({
+          item: item.text,
+          status: merged ? "merged" : "flagged",
+          runId: run.id,
+        });
+        flagged = merged ? 0 : flagged + 1;
+        status.currentItem = undefined;
+        this.emit("team", run.id);
+      }
+      if (signal.aborted) break;
+      await this.phone.notify({
+        runId: run.id,
+        kind: merged ? "finished" : "needs_you",
+        message: `Autopilot: ${outcome.message}`,
+      });
+      if (outcome.status === "not_done") return outcome.message;
+      if (flagged >= 2) break;
+    }
+    if (signal.aborted) return "Cobble closed.";
+    if (status.stoppedReason) return "Stopped by request.";
+    const reason =
+      flagged >= 2
+        ? "Two items in a row needed attention."
+        : `Reached the maximum of ${maxRuns} runs.`;
+    await this.phone.notify({
+      runId: "autopilot",
+      kind: "paused",
+      message: `Autopilot stopped: ${reason}`,
+    });
+    return reason;
+  }
+
+  private waitForAutopilotRun(runId: string, signal: AbortSignal) {
+    return new Promise<TeamRun | undefined>((resolve) => {
+      const finish = (run?: TeamRun) => {
+        this.agentTeam.off("update", update);
+        signal.removeEventListener("abort", abort);
+        resolve(run);
+      };
+      const abort = () => finish();
+      const update = (updatedId: string) => {
+        if (updatedId !== runId) return;
+        const run = this.teamStore.run(runId);
+        if (run && ["done", "failed", "stopped", "paused"].includes(run.state))
+          finish(run);
+      };
+      if (signal.aborted) return abort();
+      this.agentTeam.on("update", update);
+      signal.addEventListener("abort", abort, { once: true });
+      update(runId);
+    });
+  }
+
   teamRuns() {
     return this.teamStore.runs(this.teamId());
   }
@@ -1798,8 +2000,11 @@ export class CobbleService extends EventEmitter {
     clearTimeout(this.analysisTimer);
     clearTimeout(this.agentTimer);
     clearInterval(this.reconciliationTimer);
+    for (const session of this.autopilotSessions.values())
+      session.shutdown.abort();
     await Promise.allSettled([
       this.agentTeam.close(),
+      ...Array.from(this.autopilotSessions.values(), (session) => session.work),
       this.watcher?.close(),
       this.gitWatcher?.close(),
       this.monitorTask,
