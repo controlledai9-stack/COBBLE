@@ -6,7 +6,7 @@ import {
 } from "node:http";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import type { IdeStatus, Team } from "../shared/types";
+import type { IdeStatus, IdeConnection, Team } from "../shared/types";
 export async function readJson(
   request: IncomingMessage,
   max = 128_000,
@@ -41,11 +41,47 @@ export class IdeBridge {
   current: IdeStatus = { state: "disconnected" };
   private timer?: ReturnType<typeof setInterval>;
   private activeUntil = 0;
+  private connections = new Map<string, IdeConnection>();
+  private updateConnections() {
+    const connections = [...this.connections.values()].sort(
+      (a, b) =>
+        Number(b.focused) - Number(a.focused) ||
+        b.lastSeen.localeCompare(a.lastSeen),
+    );
+    const selected = connections[0];
+    this.current = {
+      ...this.current,
+      connections,
+      state: selected ? (this.current.agent ? "linked" : "files") : "lost",
+      editor: selected?.editor ?? this.current.editor,
+      focused: selected?.focused ?? false,
+      lastSeen: selected?.lastSeen ?? this.current.lastSeen,
+    };
+  }
+  expireConnections(now = Date.now()) {
+    let expired = false;
+    for (const [id, connection] of this.connections) {
+      if (now - Date.parse(connection.lastSeen) > 15_000) {
+        this.connections.delete(id);
+        expired = true;
+      }
+    }
+    if (expired) {
+      this.updateConnections();
+      this.changed();
+    }
+  }
   constructor(
     private team: () => Team | null,
     private changed: () => void,
     private saved: () => void,
-    private agentEvent?: (body: any) => Promise<{ context?: string } | void>,
+    private agentEvent?: (body: any) => Promise<{
+      context?: string;
+      eventId?: string;
+      disposition?: string;
+      activeUntil?: number;
+      displayAgent?: string | null;
+    } | void>,
   ) {}
   async start() {
     this.server = createServer(async (request, response) => {
@@ -78,51 +114,73 @@ export class IdeBridge {
           });
         if (request.url === "/agent") {
           if (
-            !["claude", "cursor"].includes(body.agent) ||
-            !["context", "write", "output", "complete", "end"].includes(
-              body.event,
-            ) ||
+            !["claude", "cursor", "gemini"].includes(body.agent) ||
+            ![
+              "session",
+              "context",
+              "write",
+              "output",
+              "complete",
+              "cancel",
+              "end",
+            ].includes(body.event) ||
             typeof body.sessionId !== "string" ||
+            !body.sessionId.trim() ||
             body.sessionId.length > 200 ||
             (body.message &&
               (typeof body.message !== "string" || body.message.length > 60000))
           )
             throw new Error("Invalid coding-agent event");
+          const result = await this.agentEvent?.(body);
           const linked = ["files", "linked"].includes(this.current.state);
+          const agent =
+            result?.displayAgent !== undefined ||
+            body.protocolVersion !== undefined
+              ? (result?.displayAgent ?? undefined)
+              : ["end", "cancel"].includes(body.event)
+                ? undefined
+                : body.agent;
           this.current = {
             ...this.current,
-            agent: body.event === "end" ? undefined : body.agent,
+            agent,
             agentLastSeen: new Date().toISOString(),
-            state: linked
-              ? body.event === "end"
-                ? "files"
-                : "linked"
-              : this.current.state,
+            state: linked ? (!agent ? "files" : "linked") : this.current.state,
           };
-          this.activeUntil = ["complete", "end"].includes(body.event)
-            ? 0
-            : Date.now() + 120000;
-          const result = await this.agentEvent?.(body);
+          this.activeUntil =
+            result?.activeUntil ??
+            (["complete", "cancel", "end"].includes(body.event)
+              ? 0
+              : Date.now() + 120000);
           this.changed();
           return json(response, 200, { ok: true, ...result });
         }
         if (!["heartbeat", "save", "close"].includes(body.type))
           throw new Error("Unsupported IDE event");
-        this.current =
-          body.type === "close"
-            ? { ...this.current, state: "lost" }
-            : {
-                ...this.current,
-                state: this.current.agent ? "linked" : "files",
-                editor:
-                  typeof body.editor === "string"
-                    ? body.editor.slice(0, 80)
-                    : "VS Code",
-                workspace: team.workspace,
-                focused: !!body.focused,
-                lastSeen: new Date().toISOString(),
-              };
-        if (body.type === "close") this.current.state = "lost";
+        if (
+          body.sessionId !== undefined &&
+          (typeof body.sessionId !== "string" ||
+            !body.sessionId ||
+            body.sessionId.length > 200)
+        )
+          throw new Error("Invalid IDE session");
+        const editor =
+          typeof body.editor === "string"
+            ? body.editor.slice(0, 80)
+            : "VS Code";
+        const id = body.sessionId ?? `legacy:${editor}`;
+        if (body.type === "close") this.connections.delete(id);
+        else {
+          if (!this.connections.has(id) && this.connections.size >= 64)
+            throw new Error("Too many IDE sessions");
+          this.connections.set(id, {
+            id,
+            editor,
+            focused: !!body.focused,
+            lastSeen: new Date().toISOString(),
+          });
+        }
+        this.current.workspace = team.workspace;
+        this.updateConnections();
         if (body.type === "save") this.saved();
         this.changed();
         json(response, 200, {
@@ -141,6 +199,7 @@ export class IdeBridge {
     );
     this.port = (this.server.address() as { port: number }).port;
     this.timer = setInterval(() => {
+      this.expireConnections();
       if (
         ["files", "linked"].includes(this.current.state) &&
         Date.now() - Date.parse(this.current.lastSeen!) > 15_000
@@ -152,6 +211,7 @@ export class IdeBridge {
     this.timer.unref();
   }
   reset() {
+    this.connections.clear();
     this.current = { state: "disconnected" };
     this.token = randomBytes(32).toString("hex");
     this.activeUntil = 0;

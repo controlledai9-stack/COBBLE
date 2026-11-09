@@ -243,3 +243,100 @@ test("kept changes are deduplicated; restart baseline detects edits made while s
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("deleting messages authored by user and deleting workspaces", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cobble-del-"));
+  const file = join(dir, "cobble.sqlite");
+  const service = new CobbleService(file);
+  try {
+    await service.action({
+      type: "profile",
+      name: "Alice",
+      email: "alice@example.com",
+    });
+    await service.action({
+      type: "createTeam",
+      name: "Workspace A",
+      plan: "Build something great",
+      workspace: dir,
+    });
+    const state = service.state();
+    const teamId = state.activeTeamId!;
+    assert.ok(teamId);
+
+    // Send a message
+    await service.action({
+      type: "send",
+      recipientId: null,
+      content: "Hello team",
+      sentVia: "text",
+    });
+    const messages = service.state().messages;
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].content, "Hello team");
+
+    // Attempt to delete message as another user
+    assert.throws(
+      () => service.store.deleteMessage(messages[0].id, "other-user-id"),
+      /only delete messages written by yourself/,
+    );
+
+    // Delete message as Alice
+    await service.action({
+      type: "deleteMessage",
+      messageId: messages[0].id,
+    });
+    assert.equal(service.state().messages.length, 0);
+
+    // Delete workspace
+    await service.action({
+      type: "deleteTeam",
+      teamId,
+    });
+    assert.equal(service.state().teams.length, 0);
+    assert.equal(service.state().activeTeamId, null);
+  } finally {
+    await service.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("local deletion validates the selected team and preserves unrelated hosting", async () => {
+  const service = new CobbleService(":memory:");
+  try {
+    service.store.saveProfile("Alice", "");
+    const oldTeam = service.store.createTeam("Old", "Build old", "");
+    await service.action({
+      type: "send",
+      recipientId: null,
+      content: "Old message",
+      sentVia: "text",
+    });
+    const oldMessage = service.state().messages[0];
+    const active = service.store.createTeam("Current", "Build current", "");
+    await service.action({ type: "host" });
+    const address = service.network.state.address;
+    await assert.rejects(
+      service.action({ type: "deleteTeam", teamId: "missing" }),
+      /Team not found/,
+    );
+    await assert.rejects(
+      service.action({ type: "deleteMessage", messageId: oldMessage.id }),
+      /selected workspace/,
+    );
+    await service.action({ type: "deleteTeam", teamId: oldTeam.id });
+    assert.equal(service.state().activeTeamId, active.id);
+    assert.equal(service.network.state.role, "host");
+    assert.equal(service.network.state.address, address);
+    const lock = service as unknown as { integrating: boolean };
+    lock.integrating = true;
+    await assert.rejects(
+      service.action({ type: "deleteTeam", teamId: active.id }),
+      /approved main integration/,
+    );
+    lock.integrating = false;
+    assert.equal(service.store.team(active.id).id, active.id);
+  } finally {
+    await service.close();
+  }
+});

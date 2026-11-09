@@ -1,7 +1,7 @@
 {
   "name": "cobble-workspace",
   "displayName": "Cobble Workspace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "cobble-local",
   "license": "UNLICENSED",
   "description": "Pair a saved-file workspace with your local Cobble app",

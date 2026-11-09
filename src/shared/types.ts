@@ -18,6 +18,41 @@ export interface PlanItem {
   start: number;
   end: number;
 }
+export interface PlanMemoryItem {
+  logicalId: string;
+  sourceItemId: string;
+  kind: PlanItem["kind"];
+  text: string;
+  start: number;
+  end: number;
+  ambiguous: boolean;
+  conditional: boolean;
+}
+export interface PlanRetrieval {
+  teamId: string;
+  planVersion: number;
+  sourceDigest: string;
+  engine: "fts5-bm25" | "lexical";
+  items: (PlanMemoryItem & { signals: string[] })[];
+  coverage: {
+    totalItems: number;
+    totalConstraints: number;
+    omittedItems: number;
+    omittedConstraints: number;
+    omittedCandidates: number;
+    queryTruncated: boolean;
+    pathsTruncated: boolean;
+    characterBudget: number;
+    characters: number;
+  };
+  purpose: "context_only";
+  exceptions?: {
+    evaluatedAt: string;
+    records: PlanException[];
+    omitted: number;
+    characters: number;
+  };
+}
 export interface Team {
   id: string;
   name: string;
@@ -29,6 +64,40 @@ export interface Team {
   workspace: string;
   createdAt: string;
   graph?: PlanGraph;
+  hosting?: { hostId: string; epoch: number; address: string };
+}
+export interface HostingCandidate {
+  memberId: string;
+  name: string;
+  cpuThreads: number;
+  memoryMB: number;
+  freeMemoryMB: number;
+  score: number;
+  willing: boolean;
+  reachable: boolean;
+  reason: string;
+  reportedAt: string;
+}
+export interface HostingState {
+  /** Present on the live backend; shared writes are temporarily queued. */
+  fenced?: boolean;
+  available: boolean;
+  phase:
+    | "local"
+    | "collecting"
+    | "evaluating"
+    | "preparing"
+    | "committing"
+    | "hosting"
+    | "following"
+    | "blocked";
+  hostId: string | null;
+  epoch: number;
+  automatic: boolean;
+  allowThisDevice: boolean;
+  advertisedAddress: string;
+  candidates: HostingCandidate[];
+  reason: string;
 }
 export interface ModulePlan {
   id: string;
@@ -53,6 +122,31 @@ export interface PlanGraph {
   modules: ModulePlan[];
   contracts: ContractPlan[];
   dependencies: { from: string; to: string; source?: "manual" | "observed" }[];
+  exceptionPolicyVersion?: 1;
+  exceptions?: PlanException[];
+}
+export interface PlanException {
+  id: string;
+  requirementId: string;
+  planVersion: number;
+  membershipEpoch: number;
+  authorIds: string[];
+  paths: string[];
+  reason: string;
+  approvedBy: string;
+  approvedAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+  restoredInactive?: true;
+}
+export interface PlanExceptionRequest {
+  expectedPlanVersion: number;
+  expectedGraphVersion: number;
+  requirementId: string;
+  authorIds: string[];
+  paths: string[];
+  reason: string;
+  expiresAt: string;
 }
 export interface ImpactFinding {
   type: "ownership" | "contract" | "new_entity";
@@ -93,6 +187,8 @@ export interface MainProposal {
   targetRef: string;
   baseSha: string;
   planVersion: number;
+  graphVersion?: number;
+  exceptionPolicyKey?: string;
   electorate: { id: string; name: string }[];
   membershipEpoch: number;
   policy: "unanimous" | "majority";
@@ -125,6 +221,11 @@ export interface Assessment {
   alert: boolean;
 }
 export interface Activity extends Assessment {
+  observation?: {
+    capturedAt: string;
+    planVersion: number;
+    membershipEpoch: number;
+  };
   id: string;
   teamId: string;
   authorId: string;
@@ -163,6 +264,21 @@ export interface IdeStatus {
   agentLastSeen?: string;
   processId?: number;
   workspaceName?: string;
+  connections?: IdeConnection[];
+}
+export interface IdeConnection {
+  id: string;
+  editor: string;
+  focused: boolean;
+  lastSeen: string;
+}
+export interface DetectedIde {
+  id: string;
+  name: string;
+  running: boolean;
+  integration: boolean;
+  prepared?: boolean;
+  error?: string;
 }
 export interface JoinRequest {
   id: string;
@@ -171,7 +287,47 @@ export interface JoinRequest {
   state: "pending" | "accepted" | "declined";
   createdAt: string;
 }
+export interface MonitoringStatus {
+  lastScan?: {
+    mode: "full" | "incremental";
+    readFiles: number;
+    readBytes: number;
+    dirtyPaths: number;
+    durationMs: number;
+  };
+  lastFullAt: string | null;
+  pendingPaths: number;
+  trackingEvents: boolean;
+  reconciliationPending: boolean;
+  reconcileIntervalMs: number;
+}
 export interface AppState {
+  review?: {
+    mode: "not-configured" | "preflight-only";
+    resourceControl?: "windows-appcontainer-configured" | "process-only";
+    semanticEnabled: false;
+    busy: boolean;
+  };
+  agentTracking?: {
+    protocolVersion: 1;
+    activeTurns: number;
+    pendingCheckpoints: number;
+    receipts: number;
+    coverage: "saved_checkpoints_at_hook_boundaries";
+  };
+  monitoring?: MonitoringStatus;
+  policy?: { pendingManagerChanges: number };
+  analysis?: {
+    pending: number;
+    running: number;
+    completed: number;
+    stale: number;
+    failed: number;
+    cancelled: number;
+    analyzerVersion: string;
+    semanticReview: false;
+  };
+  hosting: HostingState;
   profile: Profile | null;
   teams: Team[];
   activeTeamId: string | null;
@@ -187,6 +343,8 @@ export interface AppState {
     role: "local" | "host" | "client";
     state: string;
     address?: string;
+    transport?: "lan" | "internet";
+    relayUrl?: string;
   };
   coverage: string[];
   planHistory: { version: number; source: string; createdAt: string }[];
@@ -213,6 +371,7 @@ export type Action =
       speak?: boolean;
     }
   | { type: "createTeam"; name: string; plan: string; workspace?: string }
+  | { type: "deleteTeam"; teamId: string }
   | { type: "selectTeam"; teamId: string }
   | {
       type: "updatePlan";
@@ -228,13 +387,24 @@ export type Action =
       content: string;
       sentVia: "text" | "voice";
     }
+  | { type: "deleteMessage"; messageId: string }
   | { type: "resolve"; activityId: string; resolution: "kept" | "dismissed" }
   | { type: "observe" }
-  | { type: "host" }
+  | { type: "host"; relayUrl?: string; publicAddress?: string }
   | { type: "join"; address: string; code: string }
   | { type: "decideJoin"; requestId: string; accept: boolean };
 export type ExtendedAction =
   | Action
+  | ({ type: "approvePlanException" } & PlanExceptionRequest)
+  | {
+      type: "revokePlanException";
+      exceptionId: string;
+      expectedPlanVersion: number;
+      expectedGraphVersion: number;
+    }
+  | { type: "configureHosting"; allow: boolean; address?: string }
+  | { type: "evaluateHosting" }
+  | { type: "refreshConnection"; address: string }
   | { type: "completeWork"; itemId: string; note: string }
   | { type: "proposeMain"; title: string; sourceRef: string }
   | { type: "voteMain"; proposalId: string; choice: "yes" | "no" }
@@ -259,7 +429,53 @@ export type ExtendedAction =
       text: string;
       expectedVersion: number;
     };
+export interface IntegrationDiagnostics {
+  checkedAt: string;
+  editors: {
+    name: string;
+    status:
+      | "detection-only"
+      | "extension-installed"
+      | "extension-missing"
+      | "probe-failed";
+    version?: string;
+    detail: string;
+  }[];
+  hooks: {
+    agent: "claude" | "cursor" | "gemini";
+    status:
+      | "no-workspace"
+      | "configured"
+      | "not-configured"
+      | "needs-repair"
+      | "check-failed";
+    detail: string;
+  }[];
+  bridge: { state: IdeStatus["state"]; editor?: string; agent?: string };
+  limitations: string[];
+}
 export interface DesktopApi {
+  integrationDiagnostics(): Promise<IntegrationDiagnostics>;
+  createBackup(): Promise<{
+    path: string;
+    bytes: number;
+    sameDeviceOnly: true;
+  } | null>;
+  restoreBackupCopy(): Promise<{ path: string; offline: true } | null>;
+  maintenance(days?: number): Promise<{
+    days: number;
+    cutoff: string;
+    databaseBytes: number;
+    activities: number;
+    messages: number;
+    queued: number;
+    revertBatches: number;
+    eligibleBatches: number;
+    eligibleBytes: number;
+  }>;
+  pruneLocalHistory(
+    days: number,
+  ): Promise<{ removedBatches: number; removedSourceBytes: number } | null>;
   state(): Promise<AppState>;
   action(action: ExtendedAction): Promise<AppState>;
   chooseWorkspace(): Promise<string | null>;
@@ -283,13 +499,31 @@ export interface DesktopApi {
   transcribe(audio: ArrayBuffer): Promise<string>;
   bindWorkspace(): Promise<void>;
   report(): Promise<string>;
+  searchPlan?(query: string): Promise<PlanRetrieval>;
   artwork(): Promise<Partial<Record<CompanionMode, string>>>;
   copyPairing(): Promise<void>;
-  connectIde(): Promise<string>;
-  installAgent(agent: "claude" | "cursor", remove?: boolean): Promise<void>;
+  detectIdes(): Promise<DetectedIde[]>;
+  connectIde(id?: string): Promise<string>;
+  installAgent(
+    agent: "claude" | "cursor" | "gemini",
+    remove?: boolean,
+  ): Promise<void>;
   previewRevert(activityId: string): Promise<RevertPreview>;
   applyRevert(activityId: string, token: string): Promise<void>;
   integrateMain(proposalId: string): Promise<void>;
+  chatWindow?(
+    command:
+      | "show"
+      | "hide"
+      | "toggle"
+      | "minimize"
+      | "restore"
+      | "redirect"
+      | "status",
+  ): Promise<{ visible: boolean; minimized: boolean }>;
+  onChatWindowState?(
+    callback: (state: { visible?: boolean; minimized: boolean }) => void,
+  ): () => void;
   onCompanion(callback: (mode: CompanionMode) => void): () => void;
   onNavigate(callback: (tab: Tab, startVoice: boolean) => void): () => void;
 }

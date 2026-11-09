@@ -10,7 +10,7 @@ Electron's main process owns SQLite, workspace reads, OS secure storage, HTTPS t
 
 Team creation atomically stores the original plan, initial version, source-linked pieces, creator membership, and active-team selection. Each edit checks the expected version. The host owns authoritative plan edits; clients receive the source and pieces together.
 
-The observer captures a baseline before watching and records subsequent saved-file batches. Git file enumeration respects ignore rules, with a bounded text snapshot fallback outside Git. Symlinks outside the paired root are not read. The first release avoids semantic overclaiming: exact explicit file/folder prohibitions are reviewable evidence; most arbitrary implementation changes stay uncertain and quiet. Manifest claims are validated but do not determine trusted author identity or trigger alerts independently.
+The observer captures a baseline before watching and records subsequent saved-file batches. Git file enumeration respects ignore rules, with a bounded text snapshot fallback outside Git. Symlinks outside the paired root are not read. Explicit file/folder prohibitions are reviewable evidence; restrictions with exceptions/approval conditions stay uncertain. Positive path/glob references and agreed work-area plan IDs establish scope mapping, not semantic necessity. Unknown supporting work stays quiet. Manifest claims are validated but do not determine trusted author identity or trigger alerts independently.
 
 Activity records contain source, plan version, paths, evidence references, fingerprint, classification, alert decision, and resolution. They do not carry code content over team transport. Source baselines and before/after batches are local only. Duplicate batches are unique per team. A cooldown suppresses repeated interruptions. Keeping a finding remembers that exact saved change. Plan amendment remains an explicit plan edit.
 
@@ -39,6 +39,24 @@ Team hosting is separate HTTPS, explicitly started by the owner. The host create
 The host persists changes before acknowledging; a monotonic log cursor drives paginated polling. Private chat entries are filtered before response serialization. The cursor still advances over invisible entries, so clients cannot become stuck behind private messages. Messages use stable IDs and a local transaction for the message/outbox. Retry preserves IDs and the host treats duplicates idempotently. Clients retain local workspace paths when receiving shared plan updates. Peer activity is advisory and cannot impose a verified alert on other machines.
 
 This is a trusted-host model, not end-to-end encrypted chat. Pending invites expire, owner core actions revoke device credentials or rotate codes, and delivery receipts are durable without implying a human read. Per-team sessions are stored encrypted; generation guards discard callbacks from a previous connection after switching teams. Retry uses bounded exponential backoff and jitter. Rejected queue items move to local review without blocking subsequent valid items. Snapshots are applied after paged events to prevent older pages regressing current proposals. Owner management UI, signing keys, expanded admin roles and resilient multi-host recovery remain further work.
+
+## Local backup and data maintenance (0.4.1)
+
+`database-backup.ts` takes a consistent online SQLite snapshot and encrypts it
+with AES-256-GCM using a device-wrapped random key. Recovery authenticates and
+validates an isolated database, never overwrites the live database, and marks
+restored teams offline. Same-device/account keys are required. Explicit refreshed-
+invitation recovery must verify current team identity/membership/epoch before
+re-enabling collaboration; stale recovered authority cannot automatically host.
+Native dialogs constrain file selection. Retention only removes explicitly
+confirmed old resolved local revert batches; shared history and queue/dedup
+records remain. See `BACKEND-4-8-DELIVERY.md` for APIs and limitations.
+
+History catch-up uses bounded pages with a continuation hint and a team/cursor
+index. Substantive queued updates retain their relative order ahead of passive
+delivery receipts, which are batched and removed only after acknowledgement.
+Pending join secrets persist under the device secret adapter and can be retried
+against an explicitly refreshed same-team invitation after planned handover.
 
 ## Companion lifecycle and art boundary
 

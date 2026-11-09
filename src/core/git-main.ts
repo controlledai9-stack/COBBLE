@@ -54,6 +54,8 @@ export async function integrateApproved(
   const voters = new Set(proposal.votes.map((vote) => vote.memberId));
   if (
     proposal.status !== "approved" ||
+    electorate.size === 0 ||
+    proposal.policy !== "unanimous" ||
     proposal.votes.length !== proposal.electorate.length ||
     proposal.votes.some(
       (v) => v.choice !== "yes" || !electorate.has(v.memberId),

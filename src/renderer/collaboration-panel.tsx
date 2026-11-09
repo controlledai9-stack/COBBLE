@@ -12,7 +12,10 @@ export function AgentConnections({
 }) {
   const [busy, setBusy] = useState(false);
   const team = state.teams.find((t) => t.id === state.activeTeamId);
-  const configure = async (agent: "claude" | "cursor", remove = false) => {
+  const configure = async (
+    agent: "claude" | "cursor" | "gemini",
+    remove = false,
+  ) => {
     setBusy(true);
     try {
       await window.cobble.installAgent(agent, remove);
@@ -40,13 +43,18 @@ export function AgentConnections({
         alongside existing settings; it does not install or sign into a coding
         service.
       </p>
-      {(["claude", "cursor"] as const).map((agent) => (
+      {(["claude", "cursor", "gemini"] as const).map((agent) => (
         <div className="inline section-actions" key={agent}>
           <button
             disabled={busy || !team?.workspace}
             onClick={() => void configure(agent)}
           >
-            Enable {agent === "claude" ? "Claude Code" : "Cursor"}
+            Enable{" "}
+            {agent === "claude"
+              ? "Claude Code"
+              : agent === "gemini"
+                ? "Gemini CLI"
+                : "Cursor"}
           </button>
           <button
             className="text-button"
@@ -417,7 +425,7 @@ export function WorkAreas({ state, act }: { state: AppState; act: Act }) {
             </label>
           </div>
           <div className="bottom-grid">
-            <fieldset>
+            <fieldset className="clean-fieldset">
               <legend>
                 Assigned teammates — select everyone sharing this work
               </legend>
@@ -432,7 +440,7 @@ export function WorkAreas({ state, act }: { state: AppState; act: Act }) {
                 </label>
               ))}
             </fieldset>
-            <fieldset>
+            <fieldset className="clean-fieldset">
               <legend>
                 Reviewers for important interface/architecture changes
               </legend>
@@ -448,7 +456,7 @@ export function WorkAreas({ state, act }: { state: AppState; act: Act }) {
               ))}
             </fieldset>
           </div>
-          <fieldset>
+          <fieldset className="clean-fieldset">
             <legend>This area depends on these other work areas</legend>
             {(team.graph?.modules ?? [])
               .filter((m) => m.id !== id)

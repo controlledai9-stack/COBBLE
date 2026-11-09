@@ -26,7 +26,15 @@ child.on("exit", async (code) => {
     const result = JSON.parse(
       await readFile(".cobble/packaged-smoke.json", "utf8"),
     );
-    if (code !== 0 || result.runId !== id || !result.success)
+    const expected = JSON.parse(await readFile("package.json", "utf8")).version;
+    if (
+      code !== 0 ||
+      result.runId !== id ||
+      !result.success ||
+      result.version !== expected ||
+      result.reviewWorker !== "model_not_configured" ||
+      result.reviewResourceGuard !== "windows-appcontainer"
+    )
       throw new Error("Packaged app smoke test failed");
     console.log(
       "COBBLE_PACKAGED_OK: standalone app launched with included resources.",

@@ -83,6 +83,14 @@ test("an approved exact proposal creates a merge on main with its approval ident
 test("missing approval, duplicate voters, dirty work, and a moved main are blocked", async () => {
   const { root, git, profile, proposal } = await fixture();
   try {
+    for (const invalid of [
+      { ...proposal, electorate: [], votes: [] },
+      { ...proposal, policy: "majority" as const },
+    ])
+      await assert.rejects(
+        () => integrateApproved(root, invalid, profile, binary),
+        /explicitly vote Yes/,
+      );
     await assert.rejects(
       () =>
         integrateApproved(

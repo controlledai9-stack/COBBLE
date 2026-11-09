@@ -1,15 +1,24 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopApi } from "../shared/types";
 const api: DesktopApi = {
+  integrationDiagnostics: () =>
+    ipcRenderer.invoke("cobble:integration-diagnostics"),
+  createBackup: () => ipcRenderer.invoke("cobble:create-backup"),
+  restoreBackupCopy: () => ipcRenderer.invoke("cobble:restore-backup-copy"),
+  maintenance: (days) => ipcRenderer.invoke("cobble:maintenance", days),
+  pruneLocalHistory: (days) =>
+    ipcRenderer.invoke("cobble:prune-local-history", days),
   state: () => ipcRenderer.invoke("cobble:state"),
   action: (action) => ipcRenderer.invoke("cobble:action", action),
   chooseWorkspace: () => ipcRenderer.invoke("cobble:choose"),
   bindWorkspace: () => ipcRenderer.invoke("cobble:bind"),
   pairing: () => ipcRenderer.invoke("cobble:pairing"),
   report: () => ipcRenderer.invoke("cobble:report"),
+  searchPlan: (query) => ipcRenderer.invoke("cobble:search-plan", query),
   artwork: () => ipcRenderer.invoke("cobble:artwork"),
   copyPairing: () => ipcRenderer.invoke("cobble:copy-pairing"),
-  connectIde: () => ipcRenderer.invoke("cobble:connect-ide"),
+  detectIdes: () => ipcRenderer.invoke("cobble:detect-ides"),
+  connectIde: (id) => ipcRenderer.invoke("cobble:connect-ide", id),
   installAgent: (agent, remove) =>
     ipcRenderer.invoke("cobble:install-agent", agent, remove),
   previewRevert: (id) => ipcRenderer.invoke("cobble:preview-revert", id),
@@ -20,6 +29,16 @@ const api: DesktopApi = {
   open: (tab, voice) => ipcRenderer.invoke("cobble:open", tab, voice),
   companion: (command, point) =>
     ipcRenderer.invoke("cobble:companion", command, point),
+  chatWindow: (command) => ipcRenderer.invoke("cobble:chat-window", command),
+  onChatWindowState: (callback) => {
+    const listener = (
+      _: unknown,
+      state: { visible?: boolean; minimized: boolean },
+    ) => callback(state);
+    ipcRenderer.on("cobble:chat-window-state", listener);
+    return () =>
+      ipcRenderer.removeListener("cobble:chat-window-state", listener);
+  },
   onChange: (callback) => {
     const listener = (_: unknown, state: any) => callback(state);
     ipcRenderer.on("cobble:changed", listener);

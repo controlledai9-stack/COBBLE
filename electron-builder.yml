@@ -13,6 +13,14 @@ files:
   - package.json
   - "!node_modules/**"
 extraResources:
+  - from: dist/review-guard.exe
+    to: review/review-guard.exe
+  - from: dist/review-guard.exe.manifest.json
+    to: review/review-guard.exe.manifest.json
+  - from: dist/review-worker.cjs
+    to: review/review-worker.cjs
+  - from: dist/review-worker.cjs.manifest.json
+    to: review/review-worker.cjs.manifest.json
   - from: resources/git
     to: git
   - from: resources/voice
@@ -26,7 +34,7 @@ win:
     - target: nsis
       arch: [x64]
   executableName: Cobble
-  signAndEditExecutable: false
+  signExecutable: false
 nsis:
   oneClick: false
   perMachine: true

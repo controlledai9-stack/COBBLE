@@ -21,18 +21,27 @@ import {
   clampCompanionBounds,
 } from "./companion";
 import { transcribe } from "./voice";
-import { connectIde } from "./integration";
+import { connectIde, prepareIde } from "./integration";
+import { IdeDiscovery, discoverIdes } from "./ide-discovery";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import type { ExtendedAction as Action, Tab, AppState } from "../shared/types";
 import { installAgentHooks } from "../core/agents";
+import { runRelay } from "../internet/cli";
+import { diagnoseIntegrations } from "./integration-diagnostics";
 let service: CobbleService;
 let main: BrowserWindow;
 let companion: BrowserWindow;
+let chatWindow: BrowserWindow | null = null;
+let chatWindowMinimized = false;
+let savedChatBounds = { width: 380, height: 520, x: 0, y: 0 };
 let tray: Tray;
 let quitting = false;
 let shutdownComplete = false;
 let idleTimer: ReturnType<typeof setInterval> | undefined;
+let ideTimer: ReturnType<typeof setInterval> | undefined;
+let ideDiscovery: IdeDiscovery | undefined;
 const voiceShutdown = new AbortController();
+const ideShutdown = new AbortController();
 const transcriptions = new Set<Promise<string>>();
 const machine = new CompanionMachine();
 const companionDrag = new CompanionDrag();
@@ -45,9 +54,21 @@ const smoke =
 if (smoke)
   app.setPath(
     "userData",
-    join(process.cwd(), ".cobble", `smoke-profile-${process.pid}`),
+    join(
+      process.cwd(),
+      ".cobble",
+      `smoke-profile-${process.pid}-${Date.now()}`,
+    ),
   );
-if (!app.requestSingleInstanceLock()) app.quit();
+if (process.argv.includes("--relay-server")) {
+  void app
+    .whenReady()
+    .then(runRelay)
+    .catch((error) => {
+      console.error(error.message);
+      app.exit(1);
+    });
+} else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
     if (quitting) return;
@@ -67,6 +88,19 @@ else {
       service = new CobbleService(
         join(app.getPath("userData"), "cobble.sqlite"),
         { protect, unprotect },
+        {
+          reviewWorker: {
+            file: app.isPackaged
+              ? join(process.resourcesPath, "review", "review-worker.cjs")
+              : join(app.getAppPath(), "dist", "review-worker.cjs"),
+            guard:
+              process.platform === "win32"
+                ? app.isPackaged
+                  ? join(process.resourcesPath, "review", "review-guard.exe")
+                  : join(app.getAppPath(), "dist", "review-guard.exe")
+                : undefined,
+          },
+        },
       );
       service.gitBinary = app.isPackaged
         ? join(process.resourcesPath, "git", "cmd", "git.exe")
@@ -125,16 +159,18 @@ else {
         companionDrag.stop();
         machine.dragEnd();
         const bounds = companion.getBounds();
+        const display = screen.getDisplayMatching(bounds);
+        const clampedBounds = clampCompanionBounds(bounds, display.workArea);
+        if (bounds.x !== clampedBounds.x || bounds.y !== clampedBounds.y) {
+          companion.setBounds(clampedBounds);
+        }
         const collapsed = {
-          x: bounds.x + bounds.width - 160,
-          y: bounds.y + bounds.height - 110,
+          x: clampedBounds.x + clampedBounds.width - 160,
+          y: clampedBounds.y + clampedBounds.height - 110,
           width: 160,
           height: 110,
         };
-        companionAnchor = clampCompanionBounds(
-          collapsed,
-          screen.getDisplayMatching(collapsed).workArea,
-        );
+        companionAnchor = clampCompanionBounds(collapsed, display.workArea);
         service.store.set("companionPosition", [
           companionAnchor.x,
           companionAnchor.y,
@@ -161,7 +197,13 @@ else {
         (webContents, permission, callback, details) =>
           callback(
             permission === "media" &&
-              [main.webContents, companion.webContents].includes(webContents) &&
+              [
+                main.webContents,
+                companion.webContents,
+                ...(chatWindow && !chatWindow.isDestroyed()
+                  ? [chatWindow.webContents]
+                  : []),
+              ].includes(webContents) &&
               "mediaTypes" in details &&
               !!details.mediaTypes?.includes("audio") &&
               !details.mediaTypes.includes("video"),
@@ -169,7 +211,13 @@ else {
       );
       const allowed = (event: Electron.IpcMainInvokeEvent) => {
         if (
-          ![main.webContents, companion.webContents].includes(event.sender) ||
+          ![
+            main.webContents,
+            companion.webContents,
+            ...(chatWindow && !chatWindow.isDestroyed()
+              ? [chatWindow.webContents]
+              : []),
+          ].includes(event.sender) ||
           event.senderFrame !== event.sender.mainFrame
         )
           throw new Error("Untrusted app frame");
@@ -187,6 +235,57 @@ else {
           return callback(event, ...args);
         });
       handle("state", () => service.state());
+      handle("integration-diagnostics", async () =>
+        diagnoseIntegrations(
+          await discoverIdes({ signal: ideShutdown.signal }),
+          service.activeTeam()?.workspace,
+          service.bridge.current,
+        ),
+      );
+      handle("create-backup", async () => {
+        const selection = await dialog.showSaveDialog(main, {
+          title: "Save encrypted backup (this Windows account only)",
+          defaultPath: `Cobble-${new Date().toISOString().slice(0, 10)}.cobblebackup`,
+          filters: [
+            { name: "Encrypted Cobble backup", extensions: ["cobblebackup"] },
+          ],
+        });
+        if (selection.canceled || !selection.filePath) return null;
+        return service.createBackup(selection.filePath);
+      });
+      handle("restore-backup-copy", async () => {
+        const source = await dialog.showOpenDialog(main, {
+          title: "Choose an encrypted backup from this Windows account",
+          properties: ["openFile"],
+          filters: [
+            { name: "Encrypted Cobble backup", extensions: ["cobblebackup"] },
+          ],
+        });
+        if (source.canceled || !source.filePaths[0]) return null;
+        const target = await dialog.showSaveDialog(main, {
+          title:
+            "Save recovered offline database (current data stays unchanged)",
+          defaultPath: "Cobble-recovered.sqlite",
+          filters: [{ name: "Recovered database", extensions: ["sqlite"] }],
+        });
+        if (target.canceled || !target.filePath) return null;
+        return service.restoreBackupCopy(source.filePaths[0], target.filePath);
+      });
+      handle("maintenance", (_, days = 30) => service.maintenance(days));
+      handle("prune-local-history", async (_, days: number) => {
+        const summary = service.maintenance(days);
+        const choice = await dialog.showMessageBox(main, {
+          type: "warning",
+          title: "Remove old resolved revert snapshots?",
+          message: `Remove ${summary.eligibleBatches} resolved snapshots older than ${days} days?`,
+          detail:
+            "These changes will no longer be revertible through Cobble. Messages, plan history, unresolved changes, votes and queued work remain. Take an encrypted backup first if you need these snapshots.",
+          buttons: ["Cancel", "Remove resolved snapshots"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        return choice.response === 1 ? service.pruneLocalHistory(days) : null;
+      });
       const chosenFolders = new Set<string>();
       handle("action", async (_, action: Action) => {
         if (
@@ -202,7 +301,7 @@ else {
       const choose = async () => {
         const result = await dialog.showOpenDialog(main, {
           properties: ["openDirectory"],
-          title: "Choose the IDE workspace to watch",
+          title: "Choose your project folder (source code, not the editor app)",
         });
         const path = result.canceled ? null : result.filePaths[0];
         if (path) chosenFolders.add(path);
@@ -233,23 +332,63 @@ else {
           }),
         );
       });
-      handle("connect-ide", async () => {
-        await syncPairing();
+      const vsix = app.isPackaged
+        ? join(process.resourcesPath, "integrations", "cobble-workspace.vsix")
+        : join(
+            app.getAppPath(),
+            "resources",
+            "integrations",
+            "cobble-workspace.vsix",
+          );
+      ideDiscovery = new IdeDiscovery(
+        () => discoverIdes({ signal: ideShutdown.signal }),
+        async (editor) => {
+          await syncPairing();
+          await prepareIde(editor, vsix, ideShutdown.signal);
+        },
+        () => !smoke && !quitting && !!service.activeTeam()?.workspace,
+      );
+      handle("detect-ides", () => ideDiscovery!.refresh());
+      handle("connect-ide", async (_, id?: string) => {
+        if (id !== undefined && typeof id !== "string")
+          throw new Error("Invalid editor selection");
         const workspace = service.activeTeam()?.workspace ?? "";
-        const vsix = app.isPackaged
-          ? join(process.resourcesPath, "integrations", "cobble-workspace.vsix")
-          : join(
-              app.getAppPath(),
-              "resources",
-              "integrations",
-              "cobble-workspace.vsix",
-            );
-        return connectIde(workspace, vsix);
+        if (!workspace) throw new Error("Choose your project folder first");
+        await ideDiscovery!.refresh();
+        if (quitting || service.activeTeam()?.workspace !== workspace)
+          throw new Error("The project changed. Select your editor again.");
+        const available = ideDiscovery!.list().filter((e) => e.integration);
+        if (!id && available.length === 1) id = available[0].id;
+        const editor = id ? ideDiscovery!.get(id) : undefined;
+        if (!editor)
+          throw new Error("Select an editor from Detected apps first");
+        await syncPairing();
+        const name = await connectIde(
+          editor,
+          workspace,
+          vsix,
+          ideShutdown.signal,
+          available.find((e) => e.id === editor.id)?.prepared,
+        );
+        ideDiscovery!.markPrepared(editor.id);
+        return name;
       });
+      if (!smoke) {
+        void ideDiscovery
+          .refresh()
+          .catch((e) => console.error("IDE discovery failed", e));
+        ideTimer = setInterval(() => {
+          void ideDiscovery
+            ?.refresh()
+            .catch((e) => console.error("IDE discovery failed", e));
+        }, 15_000);
+        ideTimer.unref();
+      }
       handle("report", () => service.report());
+      handle("search-plan", (_, query: string) => service.searchPlan(query));
       handle("install-agent", async (_, agent: string, remove = false) => {
         if (
-          !["claude", "cursor"].includes(agent) ||
+          !["claude", "cursor", "gemini"].includes(agent) ||
           typeof remove !== "boolean"
         )
           throw new Error("Unsupported coding agent");
@@ -260,7 +399,7 @@ else {
           : join(app.getAppPath(), "packaging", "agent-relay.ps1");
         await installAgentHooks(
           workspace,
-          agent as "claude" | "cursor",
+          agent as "claude" | "cursor" | "gemini",
           relay,
           join(app.getPath("userData"), "ide-pairing.json"),
           remove,
@@ -342,6 +481,283 @@ else {
         main.webContents.send("cobble:navigate", tab, voice && tab === "Chats");
         machine.interact();
       });
+
+      const getChatWindow = () => {
+        if (chatWindow && !chatWindow.isDestroyed()) return chatWindow;
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const workArea = primaryDisplay.workArea;
+        const w = 380;
+        const h = 520;
+        const x = workArea.x + workArea.width - w - 24;
+        const y = workArea.y + workArea.height - h - 24;
+        const initial = clampCompanionBounds(
+          { x, y, width: w, height: h },
+          workArea,
+        );
+
+        chatWindow = new BrowserWindow({
+          width: initial.width,
+          height: initial.height,
+          x: initial.x,
+          y: initial.y,
+          frame: false,
+          transparent: true,
+          resizable: true,
+          minWidth: 320,
+          minHeight: 400,
+          skipTaskbar: false,
+          alwaysOnTop: true,
+          show: false,
+          webPreferences: {
+            ...options,
+            offscreen: false,
+            backgroundThrottling: false,
+          },
+        });
+
+        savedChatBounds = clampCompanionBounds(
+          chatWindow.getBounds(),
+          workArea,
+        );
+
+        chatWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+        chatWindow.webContents.on("will-navigate", (event) =>
+          event.preventDefault(),
+        );
+        chatWindow.webContents.on("will-attach-webview", (event) =>
+          event.preventDefault(),
+        );
+
+        const chatUrl = `${devUrl ?? renderer}?view=mini-chat`;
+        void chatWindow.loadURL(chatUrl);
+        chatWindow.webContents.on("did-finish-load", () => {
+          chatWindow?.webContents.send("cobble:chat-window-state", {
+            visible: chatWindow.isVisible(),
+            minimized: chatWindowMinimized,
+          });
+        });
+        let clampingChat = false;
+        const clampChatWindow = () => {
+          if (clampingChat || !chatWindow || chatWindow.isDestroyed()) return;
+          const b = chatWindow.getBounds();
+          const display = screen.getDisplayMatching(b);
+          const workArea = display.workArea;
+          if (chatWindowMinimized) {
+            const clampedPill = clampCompanionBounds(
+              { x: b.x, y: b.y, width: b.width, height: b.height },
+              workArea,
+            );
+            if (b.x !== clampedPill.x || b.y !== clampedPill.y) {
+              clampingChat = true;
+              try {
+                chatWindow.setBounds(clampedPill);
+              } finally {
+                clampingChat = false;
+              }
+            }
+          } else {
+            if (b.height >= 400 && b.width >= 320) {
+              const clamped = clampCompanionBounds(
+                { x: b.x, y: b.y, width: b.width, height: b.height },
+                workArea,
+              );
+              savedChatBounds = clamped;
+              if (b.x !== clamped.x || b.y !== clamped.y) {
+                clampingChat = true;
+                try {
+                  chatWindow.setBounds(clamped);
+                } finally {
+                  clampingChat = false;
+                }
+              }
+            }
+          }
+        };
+
+        chatWindow.on("move", clampChatWindow);
+        chatWindow.on("moved", clampChatWindow);
+        chatWindow.on("resize", () => {
+          if (!chatWindowMinimized && chatWindow && !chatWindow.isDestroyed()) {
+            const b = chatWindow.getBounds();
+            if (b.height >= 400 && b.width >= 320) {
+              const display = screen.getDisplayMatching(b);
+              savedChatBounds = clampCompanionBounds(
+                { x: b.x, y: b.y, width: b.width, height: b.height },
+                display.workArea,
+              );
+            }
+          }
+        });
+        chatWindow.on("closed", () => {
+          chatWindow = null;
+          chatWindowMinimized = false;
+        });
+
+        chatWindow.on("close", (event) => {
+          if (!quitting && !shutdownComplete) {
+            event.preventDefault();
+            chatWindow?.hide();
+          }
+        });
+
+        return chatWindow;
+      };
+
+      handle("chat-window", (_, command: string) => {
+        if (
+          ![
+            "show",
+            "hide",
+            "toggle",
+            "minimize",
+            "restore",
+            "redirect",
+            "status",
+          ].includes(command)
+        )
+          throw new Error("Unknown chat window command");
+        if (
+          (!chatWindow || chatWindow.isDestroyed()) &&
+          ["status", "hide", "redirect"].includes(command)
+        ) {
+          if (command === "redirect") {
+            if (!smoke) {
+              main.show();
+              main.focus();
+            }
+            main.webContents.send("cobble:navigate", "Chats", false);
+          }
+          return { visible: false, minimized: false };
+        }
+        const broadcastChatState = (visible: boolean, minimized: boolean) => {
+          if (main && !main.isDestroyed()) {
+            main.webContents.send("cobble:chat-window-state", {
+              visible,
+              minimized,
+            });
+          }
+          if (chatWindow && !chatWindow.isDestroyed()) {
+            chatWindow.webContents.send("cobble:chat-window-state", {
+              visible,
+              minimized,
+            });
+          }
+        };
+        const restoreChatBounds = (targetWin: BrowserWindow) => {
+          targetWin.setMinimumSize(320, 400);
+          targetWin.setResizable(true);
+          const targetW = Math.max(380, savedChatBounds.width);
+          const targetH = Math.max(520, savedChatBounds.height);
+          const rawBounds = {
+            width: targetW,
+            height: targetH,
+            x: savedChatBounds.x,
+            y: savedChatBounds.y,
+          };
+          const display = screen.getDisplayMatching(rawBounds);
+          const restoreB = clampCompanionBounds(rawBounds, display.workArea);
+          savedChatBounds = restoreB;
+          targetWin.setBounds(restoreB);
+          chatWindowMinimized = false;
+          targetWin.webContents.send("cobble:chat-window-state", {
+            minimized: false,
+          });
+        };
+        const win = getChatWindow();
+        if (command === "show") {
+          if (chatWindowMinimized) {
+            restoreChatBounds(win);
+          } else {
+            const curr = win.getBounds();
+            const display = screen.getDisplayMatching(curr);
+            const clamped = clampCompanionBounds(curr, display.workArea);
+            if (curr.x !== clamped.x || curr.y !== clamped.y) {
+              win.setBounds(clamped);
+            }
+          }
+          win.setAlwaysOnTop(true, "floating");
+          win.show();
+          win.focus();
+          broadcastChatState(true, false);
+          return { visible: true, minimized: false };
+        } else if (command === "hide") {
+          win.hide();
+          broadcastChatState(false, chatWindowMinimized);
+          return { visible: false, minimized: chatWindowMinimized };
+        } else if (command === "toggle") {
+          if (win.isVisible()) {
+            win.hide();
+            return { visible: false, minimized: chatWindowMinimized };
+          } else {
+            if (chatWindowMinimized) {
+              restoreChatBounds(win);
+            } else {
+              const curr = win.getBounds();
+              const display = screen.getDisplayMatching(curr);
+              const clamped = clampCompanionBounds(curr, display.workArea);
+              if (curr.x !== clamped.x || curr.y !== clamped.y) {
+                win.setBounds(clamped);
+              }
+            }
+            win.setAlwaysOnTop(true, "floating");
+            win.show();
+            win.focus();
+            broadcastChatState(true, false);
+            return { visible: true, minimized: false };
+          }
+        } else if (command === "minimize") {
+          if (!chatWindowMinimized) {
+            const curr = win.getBounds();
+            if (curr.height >= 400 && curr.width >= 320) {
+              const display = screen.getDisplayMatching(curr);
+              savedChatBounds = clampCompanionBounds(curr, display.workArea);
+            }
+            chatWindowMinimized = true;
+            const workArea = screen.getDisplayMatching(curr).workArea;
+            win.setMinimumSize(0, 0);
+            win.setResizable(false);
+            const pillBounds = clampCompanionBounds(
+              {
+                x: workArea.x + workArea.width - 290,
+                y: workArea.y + workArea.height - 54,
+                width: 270,
+                height: 44,
+              },
+              workArea,
+            );
+            win.setBounds(pillBounds);
+            win.webContents.send("cobble:chat-window-state", {
+              minimized: true,
+            });
+          }
+          win.setAlwaysOnTop(true, "floating");
+          win.show();
+          broadcastChatState(true, true);
+          return { visible: true, minimized: true };
+        } else if (command === "restore") {
+          if (chatWindowMinimized) {
+            restoreChatBounds(win);
+          }
+          win.setAlwaysOnTop(true, "floating");
+          win.show();
+          win.focus();
+          broadcastChatState(true, false);
+          return { visible: true, minimized: false };
+        } else if (command === "redirect") {
+          if (!smoke) {
+            main.show();
+            main.focus();
+          }
+          main.webContents.send("cobble:navigate", "Chats", false);
+          win.hide();
+          broadcastChatState(false, chatWindowMinimized);
+          return { visible: false, minimized: chatWindowMinimized };
+        } else if (command === "status") {
+          return { visible: win.isVisible(), minimized: chatWindowMinimized };
+        }
+        throw new Error("Unknown chat window command");
+      });
+
       handle(
         "companion",
         (_, command: string, point?: { x: number; y: number }) => {
@@ -417,7 +833,24 @@ else {
               screen.getCursorScreenPoint(),
               grab,
             );
-            if (next) companion.setBounds(next);
+            if (next) {
+              const display = screen.getDisplayMatching({
+                x: next.x,
+                y: next.y,
+                width: next.width ?? 160,
+                height: next.height ?? 110,
+              });
+              const clamped = clampCompanionBounds(
+                {
+                  x: next.x,
+                  y: next.y,
+                  width: next.width ?? 160,
+                  height: next.height ?? 110,
+                },
+                display.workArea,
+              );
+              companion.setBounds(clamped);
+            }
           } else if (command === "drag-move") {
             // Ignore late move messages after a release/cancel/blur.
           } else if (command === "drag-end") {
@@ -442,7 +875,11 @@ else {
         void syncPairing().catch((error) =>
           console.error("IDE pairing refresh failed", error),
         );
-        for (const win of [main, companion])
+        for (const win of [
+          main,
+          companion,
+          ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow] : []),
+        ])
           if (!win.isDestroyed()) win.webContents.send("cobble:changed", state);
       });
       service.on("diagnostic", (message) => console.error("[Cobble]", message));
@@ -554,14 +991,17 @@ app.on("before-quit", (event) => {
   quitting = true;
   companionDrag.stop();
   clearInterval(idleTimer);
+  clearInterval(ideTimer);
   voiceShutdown.abort();
-  for (const window of [main, companion]) {
+  ideShutdown.abort();
+  for (const window of [main, companion, chatWindow]) {
     if (window && !window.isDestroyed()) window.hide();
   }
   if (tray && !tray.isDestroyed()) tray.destroy();
   void (async () => {
     try {
       await Promise.allSettled([...transcriptions]);
+      await Promise.allSettled([ideDiscovery?.stop()]);
       await service.close();
     } catch (error) {
       console.error("Cobble shutdown cleanup failed", error);

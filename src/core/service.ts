@@ -4,7 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import { Store } from "./store";
-import { Observer } from "./observer";
+import { Observer, OBSERVER_LIMITS } from "./observer";
 import { assess, parseManifest } from "./engine";
 import { fingerprint, requiredText } from "./plan";
 import { IdeBridge } from "./bridge";
@@ -21,6 +21,23 @@ import { Collaboration } from "./collaboration";
 import { notificationAudience } from "./notification-policy";
 import { gitFacts, integrateApproved } from "./git-main";
 import { agentContext } from "./agents";
+import { capacity } from "./host-capacity";
+import { exceptionPolicyKey } from "./plan-policy";
+import { analyzeSymbols } from "./analysis/symbols";
+import { ReviewSupervisor, type ReviewOutcome } from "./review/supervisor";
+import { buildReviewPacket } from "./review/packet";
+import { AgentEvents, type AgentEnvelope } from "./agent-events";
+import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
+import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
+import {
+  ANALYZER_VERSION,
+  AnalysisLedger,
+  analysisContext,
+  hash,
+  type CaptureTrigger,
+  type EvidenceBatch,
+  type AnalysisJob,
+} from "./analysis/ledger";
 import type {
   ExtendedAction,
   AppState,
@@ -34,8 +51,15 @@ export class CobbleService extends EventEmitter {
   readonly bridge: IdeBridge;
   readonly network: TeamNetwork;
   readonly collaboration: Collaboration;
+  readonly analysis: AnalysisLedger;
+  readonly reviewWorker?: ReviewSupervisor;
+  readonly agentEvents: AgentEvents;
+  private agentTask?: Promise<void>;
+  private agentTimer?: ReturnType<typeof setTimeout>;
   observer?: Observer;
   watcher?: FSWatcher;
+  private gitWatcher?: FSWatcher;
+  private reconciliationTimer?: ReturnType<typeof setInterval>;
   private timer?: ReturnType<typeof setTimeout>;
   private observing = false;
   private closed = false;
@@ -44,48 +68,119 @@ export class CobbleService extends EventEmitter {
   private monitoringError?: string;
   gitBinary = "git";
   private integrating = false;
+  private integrationTask?: Promise<void>;
   private agentMessages = new Map<string, string>();
-  private contextVersions = new Map<string, number>();
+  private contextVersions = new Map<string, string>();
+  private backupTasks = new Set<Promise<unknown>>();
+  private closeTask?: Promise<void>;
+  private observationTask?: Promise<Activity | null>;
+  private analysisTask?: Promise<void>;
+  private analysisTimer?: ReturnType<typeof setTimeout>;
+  private reconciledRoot?: string;
   constructor(
     file: string,
-    secrets: {
+    private readonly secrets: {
       protect: (s: string) => string;
       unprotect: (s: string) => string;
     } = { protect: (s) => s, unprotect: (s) => s },
+    options: {
+      measureCapacity?: typeof capacity;
+      reviewWorker?: { file: string; executable?: string; guard?: string };
+    } = {},
   ) {
     super();
     this.store = new Store(file);
+    this.analysis = new AnalysisLedger(this.store);
+    if (options.reviewWorker)
+      this.reviewWorker = new ReviewSupervisor(
+        options.reviewWorker.file,
+        options.reviewWorker.executable,
+        {},
+        options.reviewWorker.guard,
+      );
+    this.agentEvents = new AgentEvents(this.store);
     this.collaboration = new Collaboration(this.store);
     this.bridge = new IdeBridge(
       () => this.activeTeam(),
       () => this.changed(),
       () => this.schedule(),
       async (body) => {
-        const key = `${body.agent}:${body.sessionId}`;
         const team = this.activeTeam();
         if (!team) return;
+        if (body.protocolVersion !== undefined) {
+          const record = this.agentEvents.receive(team, body);
+          await this.drainAgentEvents();
+          const current = this.activeTeam();
+          if (
+            !current ||
+            current.id !== team.id ||
+            current.workspace !== team.workspace
+          )
+            throw new Error("Selected agent workspace changed");
+          const active = this.agentEvents.active(team.id);
+          return {
+            eventId: record.envelope.eventId,
+            disposition: record.disposition,
+            activeUntil: active.until,
+            displayAgent: active.agent ?? null,
+            context:
+              ["session", "context"].includes(body.event) &&
+              record.disposition === "accepted"
+                ? agentContext(
+                    current,
+                    body.prompt ?? "",
+                    this.store.planMemory.retrieve(current, {
+                      query: body.prompt ?? "",
+                    }),
+                  )
+                : undefined,
+          };
+        }
+        const key = `${team.id}:${body.agent}:${body.sessionId}`;
+        const contextVersion = analysisContext(
+          team,
+          false,
+          this.store.setting(`membershipEpoch:${team.id}`, 0),
+        );
         if (body.event === "output") {
           this.agentMessages.set(key, body.message ?? "");
           if (this.agentMessages.size > 32)
             this.agentMessages.delete(this.agentMessages.keys().next().value!);
         }
         if (body.event === "complete") {
-          await this.ingest(body.message || this.agentMessages.get(key) || "");
+          await this.ingest(body.message || this.agentMessages.get(key) || "", {
+            kind: "agent_complete",
+            agent: body.agent,
+            sessionId: body.sessionId,
+            attribution: "partial",
+          });
           this.agentMessages.delete(key);
         }
         if (
           body.event === "context" ||
           (body.event === "write" &&
-            this.contextVersions.get(key) !== team.version)
+            this.contextVersions.get(key) !== contextVersion)
         ) {
-          this.contextVersions.set(key, team.version);
+          this.contextVersions.set(key, contextVersion);
+          if (this.contextVersions.size > 64)
+            this.contextVersions.delete(
+              this.contextVersions.keys().next().value!,
+            );
           return {
+            activeUntil: this.agentEvents.active(team.id).until || undefined,
             context: agentContext(
               team,
               typeof body.prompt === "string" ? body.prompt : "",
+              this.store.planMemory.retrieve(team, {
+                query: typeof body.prompt === "string" ? body.prompt : "",
+              }),
             ),
           };
         }
+        const active = this.agentEvents.active(team.id);
+        return active.until
+          ? { activeUntil: active.until, displayAgent: active.agent }
+          : undefined;
       },
     );
     this.network = new TeamNetwork(
@@ -98,6 +193,7 @@ export class CobbleService extends EventEmitter {
       },
       secrets.protect,
       secrets.unprotect,
+      options.measureCapacity,
     );
   }
   async start() {
@@ -108,6 +204,49 @@ export class CobbleService extends EventEmitter {
       this.emit("diagnostic", `Saved team connection is unavailable: ${error}`);
     }
     await this.monitor();
+    await this.observe();
+    await this.drainAgentEvents();
+  }
+  async createBackup(destination: string) {
+    if (this.closed) throw new Error("Cobble is closing");
+    if (this.backupTasks.size)
+      throw new Error("A backup or recovery is already in progress");
+    const task = createDatabaseBackup(this.store, destination, this.secrets);
+    this.backupTasks.add(task);
+    try {
+      return await task;
+    } finally {
+      this.backupTasks.delete(task);
+    }
+  }
+  async restoreBackupCopy(source: string, destination: string) {
+    if (this.closed) throw new Error("Cobble is closing");
+    if (this.backupTasks.size)
+      throw new Error("A backup or recovery is already in progress");
+    const task = restoreDatabaseCopy(source, destination, this.secrets);
+    this.backupTasks.add(task);
+    try {
+      return await task;
+    } finally {
+      this.backupTasks.delete(task);
+    }
+  }
+  maintenance(days = 30) {
+    return maintenanceStatus(this.store, days);
+  }
+  pruneLocalHistory(days: number) {
+    if (
+      this.closed ||
+      this.integrating ||
+      this.observing ||
+      this.network.hosting.frozen
+    )
+      throw new Error(
+        "Wait for current work to finish before maintaining local history",
+      );
+    const result = pruneResolvedBatches(this.store, days);
+    this.changed();
+    return result;
   }
   activeTeam(): Team | null {
     const id = this.store.setting<string | null>("activeTeamId", null);
@@ -118,6 +257,28 @@ export class CobbleService extends EventEmitter {
     const team = this.activeTeam();
     const paused = this.store.setting("paused", false);
     return {
+      hosting: this.network.hosting.state(),
+      policy: team
+        ? {
+            pendingManagerChanges: Number(
+              this.store.db
+                .prepare(
+                  "SELECT COUNT(*) AS n FROM outbox WHERE team_id=? AND kind='owner-admin' AND json_extract(data,'$.command') IN ('approve-plan-exception','revoke-plan-exception')",
+                )
+                .get(team.id)!.n,
+            ),
+          }
+        : undefined,
+      analysis: team ? this.analysis.summary(team.id) : undefined,
+      monitoring: this.observer?.status,
+      review: {
+        mode: this.reviewWorker ? "preflight-only" : "not-configured",
+        semanticEnabled: false,
+        busy: this.reviewWorker?.state.busy ?? false,
+        resourceControl:
+          this.reviewWorker?.state.resourceControl ?? "process-only",
+      },
+      agentTracking: team ? this.agentEvents.summary(team.id) : undefined,
       profile,
       teams: this.store.teams(),
       activeTeamId: team?.id ?? null,
@@ -133,7 +294,10 @@ export class CobbleService extends EventEmitter {
         mode: "normal",
         availability: profile?.availability ?? "available",
       },
-      network: this.network.state,
+      network: {
+        ...this.network.state,
+        relayUrl: this.store.setting("internetRelay", ""),
+      },
       coverage: this.monitoringError
         ? [this.monitoringError]
         : (this.observer?.coverage ?? [
@@ -150,13 +314,14 @@ export class CobbleService extends EventEmitter {
   }
   schedule() {
     clearTimeout(this.timer);
+    if (this.closed) return;
     this.timer = setTimeout(() => {
       if (this.bridge.agentActive()) {
         this.schedule();
         return;
       }
-      void this.observe().catch((error) =>
-        this.emit("diagnostic", String(error)),
+      void this.observe(null, { kind: "saved_checkpoint" }, true).catch(
+        (error) => this.emit("diagnostic", String(error)),
       );
     }, 2500);
   }
@@ -167,14 +332,20 @@ export class CobbleService extends EventEmitter {
       await this.monitorTask;
     } finally {
       this.monitorTask = undefined;
+      this.wakeAnalysis();
+      this.wakeAgentEvents();
     }
   }
   private async configureMonitor() {
     const team = this.activeTeam();
     if (this.monitoredTeam === `${team?.id}:${team?.workspace}`) return;
     await this.watcher?.close();
+    await this.gitWatcher?.close();
+    clearInterval(this.reconciliationTimer);
+    this.gitWatcher = undefined;
     this.watcher = undefined;
     this.observer = undefined;
+    this.reconciledRoot = undefined;
     this.bridge.reset();
     this.monitoredTeam = `${team?.id}:${team?.workspace}`;
     this.monitoringError = undefined;
@@ -201,19 +372,83 @@ export class CobbleService extends EventEmitter {
       ]);
     this.watcher = chokidar.watch(root, {
       ignoreInitial: true,
+      followSymlinks: false,
       ignored: (path, stats) =>
-        /(?:^|[\\/])(?:node_modules|\.git|\.cobble|\.claude|\.cursor|dist|build|coverage|\.aws|\.ssh|\.codex)(?:[\\/]|$)/.test(
+        /(?:^|[\\/])(?:node_modules|\.git|\.cobble|\.claude|\.cursor|\.gemini|dist|build|coverage|\.aws|\.ssh|\.codex)(?:[\\/]|$)/.test(
           path,
         ),
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
     });
-    this.watcher.on("all", () => this.schedule());
-    this.watcher.on("error", (error) =>
-      this.emit("diagnostic", `File watcher: ${error}`),
-    );
+    const observer = this.observer;
+    this.watcher.on("all", (event, path) => {
+      observer.markDirty(path, event);
+      this.schedule();
+    });
+    this.watcher.on("ready", () => {
+      observer.trackEvents(true);
+      this.schedule();
+    });
+    this.watcher.on("error", (error) => {
+      observer.trackEvents(false);
+      this.emit("diagnostic", `File watcher: ${error}`);
+      this.schedule();
+    });
+    const metadataPaths = await observer.gitMetadataPaths();
+    if (metadataPaths.length) {
+      this.gitWatcher = chokidar.watch(metadataPaths, {
+        ignoreInitial: true,
+        followSymlinks: false,
+      });
+      this.gitWatcher.on("all", () => {
+        observer.requestReconcile();
+        this.schedule();
+      });
+      this.gitWatcher.on("error", (error) => {
+        observer.requestReconcile();
+        this.emit("diagnostic", `Git watcher: ${error}`);
+      });
+    }
+    this.reconciliationTimer = setInterval(() => {
+      observer.requestReconcile();
+      this.schedule();
+    }, OBSERVER_LIMITS.reconcileMs);
+    this.reconciliationTimer.unref();
+    this.schedule();
   }
-  async observe(agent: AgentPayload | null = null): Promise<Activity | null> {
-    if (this.observing || !this.observer || this.store.setting("paused", false))
+  observe(
+    agent: AgentPayload | null = null,
+    trigger: CaptureTrigger = { kind: "saved_checkpoint" },
+    incremental = false,
+  ): Promise<Activity | null> {
+    if (this.observationTask) {
+      if (!incremental) {
+        this.observer?.requestReconcile();
+        return this.observationTask.then(() => this.observe(agent, trigger));
+      }
+      return this.observationTask;
+    }
+    const task = this.observeChanges(agent, trigger, incremental);
+    this.observationTask = task;
+    void task
+      .finally(() => {
+        if (this.observationTask === task) this.observationTask = undefined;
+      })
+      .catch(() => {});
+    return task;
+  }
+  private async observeChanges(
+    agent: AgentPayload | null,
+    trigger: CaptureTrigger,
+    incremental: boolean,
+  ): Promise<Activity | null> {
+    if (
+      this.closed ||
+      this.network.hosting.frozen ||
+      this.integrating ||
+      this.observing ||
+      !this.observer ||
+      this.store.setting("paused", false)
+    )
       return null;
     this.observing = true;
     try {
@@ -221,88 +456,483 @@ export class CobbleService extends EventEmitter {
       const observer = this.observer;
       const profile = this.store.profile();
       if (!team || !profile) return null;
-      const changes = await observer.changes();
-      if (this.activeTeam()?.id !== team.id || this.observer !== observer)
+      const previousCheckpoint = observer.checkpoint();
+      this.reconciledRoot = undefined;
+      const changes = await observer.changes({ incremental });
+      if (
+        this.network.hosting.frozen ||
+        this.integrating ||
+        this.store.setting("paused", false)
+      ) {
+        observer.restore(previousCheckpoint);
         return null;
-      this.store.set(`baseline:${team.id}:${observer.root}`, [
-        ...observer.baseline,
-      ]);
-      if (!changes.length) return null;
-      const assessment = assess(team, changes, agent);
-      const impacts = impact(team, changes, profile.id);
+      }
+      if (
+        this.closed ||
+        this.activeTeam()?.id !== team.id ||
+        this.observer !== observer
+      )
+        return null;
+      if (!changes.length) {
+        if (
+          observer.baseline.size !== previousCheckpoint.baseline.size ||
+          [...observer.baseline].some(
+            ([path, source]) =>
+              previousCheckpoint.baseline.get(path) !== source,
+          )
+        ) {
+          try {
+            this.store.set(`baseline:${team.id}:${observer.root}`, [
+              ...observer.baseline,
+            ]);
+          } catch (error) {
+            observer.restore(previousCheckpoint);
+            throw error;
+          }
+        }
+        this.reconciledRoot = observer.root;
+        await this.drainAnalysis();
+        return null;
+      }
+      try {
+        this.analysis.capture(
+          team,
+          profile,
+          observer.root,
+          changes,
+          observer.baseline,
+          observer.coverage,
+          trigger,
+          agent?.rich_explanation,
+        );
+        this.reconciledRoot = observer.root;
+      } catch (error) {
+        observer.restore(previousCheckpoint);
+        throw error;
+      }
+      await this.drainAnalysis();
+      this.changed();
       const key = fingerprint(
-        changes.sort((a, b) => a.path.localeCompare(b.path)),
+        [...changes].sort((a, b) => a.path.localeCompare(b.path)),
       );
-      const old = this.store
-        .activities(team.id)
-        .find((a) => a.fingerprint === key);
-      const lastAlert = this.store.setting<number>(
-        `alert:${team.id}:${profile.id}`,
-        0,
+      return this.store.activityByFingerprint(team.id, key);
+    } finally {
+      this.observing = false;
+      this.wakeAgentEvents();
+      if (
+        !this.closed &&
+        !this.store.setting("paused", false) &&
+        (this.observer?.status.pendingPaths ||
+          this.observer?.status.reconciliationPending)
+      )
+        this.schedule();
+    }
+  }
+  async ingest(text: string, trigger: CaptureTrigger = { kind: "manual" }) {
+    const payload = parseManifest(text);
+    return {
+      validManifest: !!payload,
+      activity: await this.observe(payload, trigger),
+    };
+  }
+  private drainAgentEvents(): Promise<void> {
+    if (this.agentTask) return this.agentTask;
+    const task = this.processAgentEvents();
+    this.agentTask = task;
+    void task
+      .finally(() => {
+        if (this.agentTask === task) this.agentTask = undefined;
+        this.wakeAgentEvents();
+      })
+      .catch(() => {});
+    return task;
+  }
+  private wakeAgentEvents() {
+    clearTimeout(this.agentTimer);
+    if (this.closed) return;
+    const team = this.activeTeam();
+    if (
+      this.closed ||
+      this.agentTask ||
+      !team ||
+      !this.observer ||
+      this.store.setting("paused", false) ||
+      this.network.hosting.frozen ||
+      this.integrating ||
+      this.store.setting(`restored-offline:${team.id}`, false) ||
+      !this.agentEvents.summary(team.id).pendingCheckpoints
+    )
+      return;
+    this.agentTimer = setTimeout(() => {
+      void this.drainAgentEvents().catch((error) =>
+        this.emit("diagnostic", `Agent checkpoint deferred: ${error}`),
       );
-      const accepted = this.store.setting(`accepted:${team.id}:${key}`, false);
+    }, 1000);
+    this.agentTimer.unref();
+  }
+  private async processAgentEvents() {
+    const team = this.activeTeam();
+    if (
+      !team ||
+      !this.observer ||
+      this.closed ||
+      this.network.hosting.frozen ||
+      this.integrating ||
+      this.store.setting("paused", false) ||
+      this.store.setting(`restored-offline:${team.id}`, false)
+    )
+      return;
+    for (const record of this.agentEvents.pending(team.id)) {
+      if (
+        this.closed ||
+        this.activeTeam()?.id !== team.id ||
+        this.store.setting("paused", false) ||
+        this.network.hosting.frozen ||
+        this.integrating
+      )
+        return;
+      const event: AgentEnvelope = record.envelope;
+      const delayed =
+        event.replayed ||
+        Date.now() - Date.parse(event.occurredAt) > 5000 ||
+        Date.now() - record.receivedAt > 5000;
+      const attribution = delayed
+        ? "delayed"
+        : this.agentEvents.active(team.id).count > 0
+          ? "overlapping"
+          : !record.started ||
+              event.identity !== "native" ||
+              event.event !== "complete"
+            ? "partial"
+            : "turn_boundary";
+      const trigger: CaptureTrigger = {
+        kind:
+          attribution === "turn_boundary"
+            ? "agent_complete"
+            : "saved_checkpoint",
+        agent: event.agent,
+        sessionId: event.sessionId,
+        turnId: event.turnId,
+        eventId: event.eventId,
+        eventKey: record.id,
+        attribution,
+      };
+      // A hook boundary is not proof that its agent authored every changed file.
+      // Preserve receipt linkage without attaching the assistant's claim to a mixed saved diff.
+      await this.observe(null, trigger);
+      if (
+        this.closed ||
+        this.activeTeam()?.id !== team.id ||
+        this.store.setting("paused", false) ||
+        this.network.hosting.frozen ||
+        this.integrating
+      )
+        return;
+      this.agentEvents.finish(record.id, team.id); // A no-change checkpoint still has a durable receipt.
+    }
+  }
+  private wakeAnalysis() {
+    clearTimeout(this.analysisTimer);
+    if (
+      this.closed ||
+      this.network.hosting.frozen ||
+      this.integrating ||
+      this.store.setting("paused", false)
+    )
+      return;
+    const team = this.activeTeam();
+    if (!team) return;
+    const summary = this.analysis.summary(team.id);
+    if (!summary.pending && !summary.running) return;
+    if (!this.observer || this.reconciledRoot !== this.observer.root) {
+      this.schedule();
+      return;
+    }
+    this.analysisTimer = setTimeout(() => {
+      void this.drainAnalysis().catch((error) =>
+        this.emit("diagnostic", String(error)),
+      );
+    }, 1000);
+    this.analysisTimer.unref();
+  }
+  private drainAnalysis(): Promise<void> {
+    if (this.analysisTask) return this.analysisTask;
+    if (this.closed) return Promise.resolve();
+    const task = this.runAnalysis();
+    this.analysisTask = task;
+    void task
+      .finally(() => {
+        if (this.analysisTask === task) this.analysisTask = undefined;
+        this.changed();
+        this.wakeAnalysis();
+      })
+      .catch(() => {});
+    return task;
+  }
+  private async runAnalysis() {
+    // Yield between a bounded number of cheap rule jobs; no model or repository rescan here.
+    for (let i = 0; i < 8; i++) {
+      if (
+        this.closed ||
+        this.network.hosting.frozen ||
+        this.integrating ||
+        this.store.setting("paused", false)
+      )
+        return;
+      const team = this.activeTeam();
+      if (!team || this.store.setting(`restored-offline:${team.id}`, false))
+        return;
+      if (
+        !this.observer ||
+        this.reconciledRoot !== this.observer.root ||
+        this.monitoredTeam !== `${team.id}:${team.workspace}`
+      )
+        return;
+      const job = this.analysis.claim(team.id);
+      if (!job) return;
+      try {
+        const batch = this.analysis.batch(job.batchId);
+        const changes = batch.changes.map(({ path, before, after }) => ({
+          path,
+          before,
+          after,
+        }));
+        const key = fingerprint(
+          [...changes].sort((a, b) => a.path.localeCompare(b.path)),
+        );
+        const accepted = this.store.setting(
+          `accepted:${team.id}:${key}`,
+          false,
+        );
+        const evaluationTime = Date.now();
+        const membershipEpoch = this.store.setting<number>(
+          `membershipEpoch:${team.id}`,
+          0,
+        );
+        const baseline = this.store.setting<[string, string][] | null>(
+          `baseline:${team.id}:${batch.root}`,
+          null,
+        );
+        const current = baseline && new Map(baseline);
+        // Old saved evidence is retained; it must not produce a current notification.
+        if (
+          !current ||
+          batch.root !== this.observer?.root ||
+          batch.actor.id !== this.store.profile()?.id ||
+          batch.changes.some(
+            (c) => hash(current.get(c.path) ?? null) !== c.afterHash,
+          )
+        ) {
+          this.analysis.finish(job, "stale");
+        } else if (
+          job.analyzerVersion !== ANALYZER_VERSION ||
+          job.contextHash !==
+            analysisContext(team, accepted, membershipEpoch, evaluationTime)
+        ) {
+          this.store.transaction(() => {
+            this.analysis.finish(job, "stale");
+            this.analysis.enqueue(batch, team, accepted);
+          });
+        } else {
+          const activity = this.commitAnalysis(
+            job,
+            batch,
+            changes,
+            key,
+            evaluationTime,
+          );
+          if (activity) await this.network.publish("activity", activity);
+        }
+      } catch (error) {
+        this.analysis.fail(job, error);
+        this.emit(
+          "diagnostic",
+          `Analysis deferred: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  private commitAnalysis(
+    job: AnalysisJob,
+    batch: EvidenceBatch,
+    changes: import("../shared/types").Change[],
+    key: string,
+    now: number,
+  ) {
+    const symbols = analyzeSymbols(changes, batch.dependencyContext);
+    return this.store.transaction(() => {
+      const assessment = assess(job.context, changes, null, {
+        authorId: batch.actor.id,
+        now,
+        observedAt: batch.capturedAt,
+        observedPlanVersion: batch.planVersion,
+        membershipEpoch: job.membershipEpoch ?? 0,
+        observedMembershipEpoch: batch.membershipEpoch ?? 0,
+      });
+      const result = {
+        planVersion: job.context.version,
+        contextHash: job.contextHash,
+        assessment,
+        evaluatedAt: new Date(now).toISOString(),
+        symbols,
+        retrieval: this.store.planMemory.retrieve(job.context, {
+          query: [
+            ...changes.map((change) => change.path),
+            ...symbols.symbols.slice(0, 40).map((symbol) => symbol.name),
+          ]
+            .join(" ")
+            .slice(0, 4000),
+          paths: changes.map((change) => change.path),
+          now,
+          authorId: batch.actor.id,
+        }),
+      };
+      const old = this.store.activityByFingerprint(batch.teamId, key);
+      if (old) {
+        this.analysis.finish(job, "completed", old.id, result);
+        return null;
+      }
+      const impacts = impact(job.context, changes, batch.actor.id);
       const activity: Activity = {
         ...assessment,
         ...impacts,
-        id: randomUUID(),
-        teamId: team.id,
-        authorId: profile.id,
-        authorName: profile.name,
-        source: agent ? "agent" : "diff",
+        id: batch.id,
+        teamId: batch.teamId,
+        authorId: batch.actor.id,
+        authorName: batch.actor.name,
+        source: batch.agentExplanation ? "agent" : "diff",
         paths: changes.map((c) => c.path),
         fingerprint: key,
-        planVersion: team.version,
-        createdAt: new Date().toISOString(),
-        resolution: accepted ? "kept" : null,
-        agentExplanation: agent?.rich_explanation,
-        agentName: agent ? this.bridge.current.agent : undefined,
+        planVersion: job.context.version,
+        observation: {
+          capturedAt: batch.capturedAt,
+          planVersion: batch.planVersion,
+          membershipEpoch: batch.membershipEpoch ?? 0,
+        },
+        createdAt: batch.capturedAt,
+        resolution: job.accepted ? "kept" : null,
+        agentExplanation: batch.agentExplanation,
+        agentName: batch.trigger.agent,
         alert:
           assessment.alert &&
-          !accepted &&
-          !old &&
-          Date.now() - lastAlert >= 300_000,
+          !job.accepted &&
+          Date.now() -
+            this.store.setting<number>(
+              `alert:${batch.teamId}:${batch.actor.id}`,
+              0,
+            ) >=
+            300_000,
       };
-      if (this.store.addActivity(activity)) {
-        this.store.saveBatch(activity.id, team.id, changes);
-        const structural = impacts.findings.some((f) => f.type === "contract");
-        const audience = notificationAudience(
-          team,
+      this.store.addActivity(activity);
+      this.store.saveBatch(activity.id, batch.teamId, changes);
+      const structural = impacts.findings.some((f) => f.type === "contract");
+      if (
+        (activity.alert || structural) &&
+        notificationAudience(
+          job.context,
           activity,
-          activity.alert ? "scope" : structural ? "structure" : "routine",
+          activity.alert ? "scope" : "structure",
+        ).includes(batch.actor.id)
+      )
+        this.store.notify(
+          batch.teamId,
+          activity.alert
+            ? "A plan boundary needs your attention"
+            : "A shared interface changed",
+          activity.explanation,
+          `activity-notice:${activity.id}`,
         );
-        if (activity.alert || structural) {
-          if (audience.includes(profile.id))
-            this.store.notify(
-              team.id,
-              activity.alert
-                ? "A plan boundary needs your attention"
-                : "A shared interface changed",
-              activity.explanation,
-              `activity-notice:${activity.id}`,
-            );
-        }
-        if (activity.alert)
-          this.store.set(`alert:${team.id}:${profile.id}`, Date.now());
-        await this.network.publish("activity", activity);
-      }
-      this.changed();
+      if (activity.alert)
+        this.store.set(`alert:${batch.teamId}:${batch.actor.id}`, Date.now());
+      // Stage network delivery in the same transaction as the result, so a restart cannot lose it.
+      if (this.network.state.role !== "local")
+        this.store.db
+          .prepare("INSERT OR IGNORE INTO outbox VALUES(?,?,?,?)")
+          .run(activity.id, batch.teamId, "activity", JSON.stringify(activity));
+      this.analysis.finish(job, "completed", activity.id, result);
       return activity;
-    } finally {
-      this.observing = false;
-    }
-  }
-  async ingest(text: string) {
-    const payload = parseManifest(text);
-    return { validManifest: !!payload, activity: await this.observe(payload) };
+    });
   }
   async action(action: ExtendedAction): Promise<AppState> {
+    if (this.closed) throw new Error("Cobble is closing");
     if (
       !action ||
       typeof action !== "object" ||
       typeof action.type !== "string"
     )
       throw new Error("Invalid action");
+    const beforeTeam = this.activeTeam();
+    if (
+      this.network.hosting.frozen &&
+      [
+        "deleteTeam",
+        "createTeam",
+        "selectTeam",
+        "join",
+        "host",
+        "updatePlan",
+        "approvePlanException",
+        "revokePlanException",
+        "configureModule",
+        "captureContracts",
+        "amendFromActivity",
+        "revokeMember",
+        "rotateCode",
+        "decideJoin",
+        "configureHosting",
+        "evaluateHosting",
+      ].includes(action.type)
+    )
+      throw new Error(
+        "Host handover is in progress; wait for the acknowledged server",
+      );
+    if (
+      this.integrating &&
+      [
+        "deleteTeam",
+        "createTeam",
+        "selectTeam",
+        "join",
+        "host",
+        "updatePlan",
+        "approvePlanException",
+        "revokePlanException",
+        "configureModule",
+        "captureContracts",
+        "amendFromActivity",
+        "revokeMember",
+        "decideJoin",
+        "configureHosting",
+        "evaluateHosting",
+      ].includes(action.type)
+    )
+      throw new Error(
+        "Finish the approved main integration before changing the team or its agreements",
+      );
     switch (action.type) {
+      case "approvePlanException":
+        this.requireOwner();
+        await this.network.changePlanException(
+          "approve-plan-exception",
+          action,
+        );
+        break;
+      case "revokePlanException":
+        this.requireOwner();
+        await this.network.changePlanException("revoke-plan-exception", action);
+        break;
+      case "refreshConnection":
+        await this.network.refreshConnection(
+          requiredText(action.address, "Current invitation", 12000),
+        );
+        break;
+      case "configureHosting":
+        await this.network.hosting.configure(action.allow, action.address);
+        break;
+      case "evaluateHosting":
+        await this.network.evaluateHosting();
+        break;
       case "profile":
         this.store.saveProfile(
           action.name,
@@ -320,6 +950,19 @@ export class CobbleService extends EventEmitter {
           : "";
         this.store.createTeam(action.name, action.plan, folder);
         await this.monitor();
+        break;
+      }
+      case "deleteTeam": {
+        requiredText(action.teamId, "Team ID", 100);
+        this.store.team(action.teamId);
+        const deletingActive = beforeTeam?.id === action.teamId;
+        if (deletingActive) this.network.disconnect();
+        this.store.deleteTeam(action.teamId);
+        const active = this.activeTeam();
+        if (deletingActive && active) {
+          await this.network.resume(active.id);
+        }
+        if (deletingActive) await this.monitor();
         break;
       }
       case "selectTeam":
@@ -362,6 +1005,10 @@ export class CobbleService extends EventEmitter {
         if (typeof action.paused !== "boolean")
           throw new Error("Invalid pause state");
         this.store.set("paused", action.paused);
+        if (!action.paused) {
+          this.observer?.requestReconcile();
+          this.schedule();
+        }
         break;
       case "send": {
         const team = this.activeTeam();
@@ -384,12 +1031,23 @@ export class CobbleService extends EventEmitter {
           sentVia: action.sentVia,
           createdAt: new Date().toISOString(),
           state:
-            this.network.state.role === "client"
+            this.network.state.role === "client" || this.network.hosting.frozen
               ? ("queued" as const)
               : ("local" as const),
         };
-        this.store.putMessage(message, this.network.state.role === "client");
+        this.store.putMessage(
+          message,
+          this.network.state.role === "client" || this.network.hosting.frozen,
+        );
         await this.network.publish("chat", message);
+        break;
+      }
+      case "deleteMessage": {
+        const team = this.activeTeam();
+        const profile = this.store.profile();
+        if (!team || !profile) throw new Error("Select a team first");
+        requiredText(action.messageId, "Message ID", 100);
+        this.store.deleteMessage(action.messageId, profile.id, team.id);
         break;
       }
       case "resolve":
@@ -482,6 +1140,17 @@ export class CobbleService extends EventEmitter {
             "Choose a work area and connect its local folder first",
           );
         const files = await this.observer.snapshot();
+        const current = this.activeTeam();
+        if (
+          this.closed ||
+          this.integrating ||
+          current?.id !== team.id ||
+          current.version !== team.version ||
+          (current.graph?.version ?? 0) !== graph.version
+        )
+          throw new Error(
+            "The team or its agreements changed while reading contracts. Try again.",
+          );
         const contracts = [...files]
           .filter(([path]) => matchesPath(path, module.pathGlob))
           .flatMap(([path, text]) => extractContracts(path, text, module.id));
@@ -518,10 +1187,12 @@ export class CobbleService extends EventEmitter {
         break;
       }
       case "revokeMember":
-        this.network.revoke(action.memberId);
+        this.requireOwner();
+        await this.network.revoke(action.memberId);
         break;
       case "rotateCode":
-        this.network.rotateCode();
+        this.requireOwner();
+        await this.network.rotateCode();
         break;
       case "acknowledgeNotice":
         this.store.acknowledgeNotice(action.id);
@@ -541,15 +1212,37 @@ export class CobbleService extends EventEmitter {
         const team = this.activeTeam();
         if (!team?.workspace)
           throw new Error("Choose the repository folder first");
+        const policyKey = exceptionPolicyKey(
+          team,
+          this.store.setting(`membershipEpoch:${team.id}`, 0),
+        );
         const facts = await gitFacts(
           team.workspace,
           action.sourceRef,
           this.gitBinary,
         );
+        const current = this.activeTeam();
+        if (
+          this.closed ||
+          current?.id !== team.id ||
+          current.version !== team.version ||
+          (current.graph?.version ?? 0) !== (team.graph?.version ?? 0) ||
+          policyKey !==
+            exceptionPolicyKey(
+              current!,
+              this.store.setting(`membershipEpoch:${team.id}`, 0),
+            )
+        )
+          throw new Error(
+            "The team or its agreements changed while preparing the proposal. Try again.",
+          );
         await this.network.collaborate("proposal", {
           id: randomUUID(),
           teamId: team.id,
           title: action.title,
+          expectedPlanVersion: team.version,
+          expectedGraphVersion: team.graph?.version ?? 0,
+          expectedExceptionPolicyKey: policyKey,
           ...facts,
         });
         break;
@@ -562,6 +1255,10 @@ export class CobbleService extends EventEmitter {
           teamId: team.id,
           proposalId: action.proposalId,
           choice: action.choice,
+          expectedExceptionPolicyKey: exceptionPolicyKey(
+            team,
+            this.store.setting(`membershipEpoch:${team.id}`, 0),
+          ),
         });
         break;
       }
@@ -571,23 +1268,47 @@ export class CobbleService extends EventEmitter {
       case "host": {
         const t = this.activeTeam();
         if (!t) throw new Error("Select a team first");
-        await this.network.host(t);
+        if (action.relayUrl !== undefined)
+          requiredText(action.relayUrl, "Relay URL", 2000);
+        if (action.publicAddress !== undefined)
+          requiredText(
+            action.publicAddress,
+            "Reachable teammate address",
+            2000,
+          );
+        await this.network.host(t, action.relayUrl, action.publicAddress);
+        if (action.relayUrl) this.store.set("internetRelay", action.relayUrl);
         break;
       }
       case "join":
         await this.network.join(
-          requiredText(action.address, "Host address", 2000),
+          requiredText(action.address, "Host address", 12000),
           requiredText(action.code, "Join code", 100),
         );
         break;
       case "decideJoin":
         if (typeof action.accept !== "boolean")
           throw new Error("Invalid decision");
-        this.network.decide(action.requestId, action.accept);
+        this.requireOwner();
+        await this.network.decide(action.requestId, action.accept);
         break;
       default:
         throw new Error("Unsupported action");
     }
+    const afterTeam = this.activeTeam();
+    if (
+      beforeTeam &&
+      afterTeam?.id === beforeTeam.id &&
+      afterTeam.ownerId === this.store.profile()?.id &&
+      [
+        "updatePlan",
+        "configureModule",
+        "captureContracts",
+        "amendFromActivity",
+      ].includes(action.type)
+    )
+      await this.network.publishOwnerTeam(beforeTeam, afterTeam);
+    this.wakeAnalysis();
     this.changed();
     return this.state();
   }
@@ -607,6 +1328,10 @@ export class CobbleService extends EventEmitter {
       !team.workspace
     )
       throw new Error("Only your own local changes can be reverted");
+    if (!this.store.batch(activityId).length)
+      throw new Error(
+        "No local revert snapshot remains for this change; it may have been removed by history maintenance",
+      );
     return previewRevert(
       activityId,
       team.workspace,
@@ -634,10 +1359,24 @@ export class CobbleService extends EventEmitter {
       this.store.set(`baseline:${team!.id}:${this.observer.root}`, [
         ...this.observer.baseline,
       ]);
+      this.observer.requestReconcile();
     }
     this.changed();
   }
   async integrateMain(proposalId: string) {
+    if (this.closed || this.network.hosting.frozen)
+      throw new Error("Wait for the team host to be ready");
+    if (this.integrationTask)
+      throw new Error("An integration is already in progress");
+    const task = this.performIntegration(proposalId);
+    this.integrationTask = task;
+    try {
+      await task;
+    } finally {
+      if (this.integrationTask === task) this.integrationTask = undefined;
+    }
+  }
+  private async performIntegration(proposalId: string) {
     if (this.integrating)
       throw new Error("An integration is already in progress");
     const team = this.requireOwner();
@@ -646,18 +1385,23 @@ export class CobbleService extends EventEmitter {
       throw new Error("This proposal belongs to another team");
     this.integrating = true;
     this.network.mainIntegrationActive = true;
+    let authorizedAt: number | undefined;
     try {
+      await this.network.acquireMain(proposalId);
       const sha = await integrateApproved(
         team.workspace,
         proposal,
         this.store.profile()!,
         this.gitBinary,
         () => {
-          if (this.collaboration.proposal(proposalId).status !== "approved")
+          const at = Date.now();
+          if (this.collaboration.proposal(proposalId, at).status !== "approved")
             throw new Error("Approval changed while preparing the integration");
+          authorizedAt = at;
         },
       );
-      this.collaboration.integrated(proposalId, sha);
+      this.collaboration.integrated(proposalId, sha, authorizedAt);
+      await this.network.publishIntegrated(proposalId, sha);
       this.changed();
     } catch (error) {
       if ((error as { code?: string }).code === "MAIN_MOVED") {
@@ -665,15 +1409,30 @@ export class CobbleService extends EventEmitter {
           proposalId,
           error instanceof Error ? error.message : "Main changed",
         );
+        await this.network.publishStale(
+          proposalId,
+          error instanceof Error ? error.message : "Main changed",
+        );
         this.changed();
       }
       throw error;
     } finally {
-      this.integrating = false;
-      this.network.mainIntegrationActive = false;
+      try {
+        await this.network.releaseMain();
+      } finally {
+        this.integrating = false;
+        this.network.mainIntegrationActive = false;
+        this.reconciledRoot = undefined;
+        this.schedule();
+        this.wakeAnalysis();
+      }
     }
   }
   async bindWorkspace(path: string) {
+    if (this.closed || this.integrating || this.network.hosting.frozen)
+      throw new Error(
+        "Finish the approved main integration before changing the project folder",
+      );
     const team = this.activeTeam();
     if (!team) throw new Error("Select a team first");
     const root = await realpath(path);
@@ -705,12 +1464,140 @@ export class CobbleService extends EventEmitter {
       ...this.state().coverage.map((c) => `- ${c}`),
     ].join("\n");
   }
-  async close() {
+  searchPlan(query: string) {
+    if (typeof query !== "string" || query.length > 4000)
+      throw new Error("Plan query must be text of at most 4000 characters");
+    const team = this.activeTeam();
+    if (!team) throw new Error("Select a team first");
+    return this.store.planMemory.retrieve(team, { query });
+  }
+  /** Trusted backend diagnostic only; no renderer action, model execution or alert authority. */
+  async preflightReview(batchId: string): Promise<ReviewOutcome> {
+    if (this.closed || !this.reviewWorker)
+      throw new Error("Review worker is not configured");
+    if (!this.activeTeam() || !this.observer)
+      throw new Error("Select an available local workspace first");
+    if (
+      this.store.setting("paused", false) ||
+      this.network.hosting.frozen ||
+      this.integrating
+    )
+      throw new Error("Resume the workspace before review preflight");
+    await this.observe();
+    if (this.closed || !this.activeTeam() || !this.observer)
+      throw new Error("Workspace closed during review preflight");
+    const team = this.activeTeam()!,
+      observer = this.observer!;
+    const batch = this.analysis.batch(
+      requiredText(batchId, "Evidence batch", 100),
+    );
+    if (batch.teamId !== team.id)
+      throw new Error("This evidence belongs to another team");
+    const rows = this.store.rows<AnalysisJob>(
+      "SELECT data FROM analysis_jobs WHERE batch_id=? AND team_id=? AND status='completed' ORDER BY rowid DESC LIMIT 1",
+      batch.id,
+      team.id,
+    );
+    const job = rows[0];
+    if (
+      !job?.result ||
+      batch.planVersion !== team.version ||
+      (batch.membershipEpoch ?? 0) !==
+        this.store.setting(`membershipEpoch:${team.id}`, 0)
+    )
+      throw new Error("Review requires current analyzed evidence");
+    const baseline = observer.baseline;
+    if (
+      batch.root !== observer.root ||
+      batch.changes.some(
+        (change) =>
+          hash(baseline.get(change.path) ?? null) !== change.afterHash,
+      ) ||
+      batch.dependencyContext?.files.some(
+        (file) => baseline.get(file.path) !== file.source,
+      )
+    )
+      throw new Error("Saved source changed since this evidence checkpoint");
+    const retrieval = this.store.planMemory.retrieve(team, {
+      query: batch.changes.map((change) => change.path).join(" "),
+      paths: batch.changes.map((change) => change.path),
+      authorId: batch.actor.id,
+    });
+    const packet = buildReviewPacket(team, batch, job, retrieval);
+    const available = () =>
+      !this.closed &&
+      !this.store.setting("paused", false) &&
+      !this.network.hosting.frozen &&
+      !this.integrating &&
+      !this.store.setting(`restored-offline:${team.id}`, false);
+    let invalidation: string | undefined;
+    const invalid = (why: string) => {
+      invalidation ??= why;
+      return false;
+    };
+    const current = () => {
+      if (!available()) return invalid("workspace_unavailable");
+      if (this.observer !== observer) return invalid("workspace_replaced");
+      if (observer.baseline !== baseline)
+        return invalid("source_checkpoint_replaced");
+      if (observer.status.pendingPaths > 0)
+        return invalid("pending_saved_files");
+      if (observer.status.reconciliationPending)
+        return invalid("pending_reconciliation");
+      const selected = this.activeTeam();
+      if (selected?.id !== team.id || selected.workspace !== team.workspace)
+        return invalid("workspace_selection_changed");
+      if (
+        analysisContext(
+          selected,
+          job.accepted,
+          this.store.setting(`membershipEpoch:${team.id}`, 0),
+        ) !== job.contextHash
+      )
+        return invalid("agreement_changed");
+      return true;
+    };
+    const result = await this.reviewWorker.run(packet, {
+      isCurrent: current,
+      canRun: available,
+    });
+    if (result.reason === "stale" && !this.closed)
+      this.emit(
+        "diagnostic",
+        `Review preflight invalidated: ${invalidation ?? "unknown_revision_change"}`,
+      );
+    return result;
+  }
+
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
     this.closed = true;
+    this.closeTask = this.finishClose();
+    return this.closeTask;
+  }
+  private async finishClose() {
     clearTimeout(this.timer);
+    clearTimeout(this.analysisTimer);
+    clearTimeout(this.agentTimer);
+    clearInterval(this.reconciliationTimer);
+    await Promise.allSettled([
+      this.watcher?.close(),
+      this.gitWatcher?.close(),
+      this.monitorTask,
+      this.integrationTask,
+      this.observationTask,
+      this.analysisTask,
+      this.agentTask,
+      this.reviewWorker?.close(),
+      ...this.backupTasks,
+    ]);
+    // A monitor operation may have created a new watcher while shutdown awaited it.
     await this.watcher?.close();
+    await this.gitWatcher?.close();
+    clearInterval(this.reconciliationTimer);
     this.bridge.close();
     this.network.close();
+    await this.network.hosting.settled();
     this.store.close();
   }
 }

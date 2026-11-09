@@ -1,12 +1,13 @@
 import type { BrowserWindow } from "electron";
-import { app } from "electron";
+import { app, BrowserWindow as ElectronWindow } from "electron";
 import type { CobbleService } from "../core/service";
 import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 export async function runSmoke(
   main: BrowserWindow,
   companion: BrowserWindow,
@@ -36,6 +37,13 @@ export async function runSmoke(
   );
   await wait('!!document.querySelector(".sidebar")');
   await wait('!!document.querySelector("textarea[required]")');
+  await wait('document.body.innerText.includes("Detected apps")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      'Array.from(document.querySelectorAll("button")).some(b => b.innerText.includes("Choose project folder"))',
+    ),
+    true,
+  );
   assert.equal(
     await main.webContents.executeJavaScript(
       'document.querySelector("textarea[required]").checkValidity()',
@@ -44,6 +52,21 @@ export async function runSmoke(
   );
   const root = join(process.cwd(), ".cobble");
   await mkdir(root, { recursive: true });
+  const screenshot = async (win: BrowserWindow, name: string) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const frame = await win.webContents.capturePage();
+        if (frame.isEmpty()) throw new Error("Empty compositor frame");
+        await writeFile(join(root, name), frame.toPNG());
+        return;
+      } catch (error) {
+        if (attempt === 2)
+          throw new Error(`Screenshot ${name} failed: ${String(error)}`);
+        win.webContents.invalidate();
+      }
+    }
+  };
   const workspace = await mkdtemp(join(tmpdir(), "cobble-desktop-smoke-"));
   const git = async (...args: string[]) =>
     (
@@ -75,6 +98,16 @@ export async function runSmoke(
     plan: "# A calmer way to build\n- Build shared tasks and team chat\n- Keep everything local\n- Do not modify `legacy/`",
     workspace,
   });
+  const retrieved = await main.webContents.executeJavaScript(
+    "window.cobble.searchPlan('team chat')",
+  );
+  assert.equal(retrieved.engine, "fts5-bm25");
+  assert.equal(retrieved.purpose, "context_only");
+  assert.ok(
+    retrieved.items.some((item: { text: string }) =>
+      item.text.includes("legacy/"),
+    ),
+  );
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[2].click()`,
   );
@@ -89,7 +122,7 @@ export async function runSmoke(
     await main.webContents.executeJavaScript(
       'document.querySelectorAll("nav button").length',
     ),
-    5,
+    4,
   );
   const fill = async (selector: string, value: string) =>
     main.webContents.executeJavaScript(
@@ -118,7 +151,7 @@ export async function runSmoke(
   });
   assert.equal(service.activeTeam()!.graph!.contracts.length, 1);
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[0].click()`,
+    `document.querySelectorAll('nav button')[2].click()`,
   );
   await wait(
     "!!document.querySelector('form[aria-label=\"Mark completed work\"]')",
@@ -182,12 +215,59 @@ export async function runSmoke(
   );
   await wait('document.querySelectorAll(".bubble").length === 2');
   assert.equal(service.state().messages.length, 2);
+  const observationStart = Date.now();
+  while (!service.observer?.status.trackingEvents) {
+    if (Date.now() - observationStart > 8000)
+      throw new Error("File watcher did not become ready for preflight");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
   await mkdir(join(workspace, "legacy"));
-  await writeFile(
-    join(workspace, "legacy", "old.ts"),
-    "export const changed = true;",
+  const savedPath = join(workspace, "legacy", "old.ts");
+  const watcher = service.watcher!;
+  const savedEvent = new Promise<void>((resolve, reject) => {
+    const onSaved = (event: string, path: string) => {
+      if (
+        (event === "add" || event === "change") &&
+        resolvePath(path) === resolvePath(savedPath)
+      ) {
+        clearTimeout(timeout);
+        watcher.off("all", onSaved);
+        resolve();
+      }
+    };
+    const timeout = setTimeout(() => {
+      watcher.off("all", onSaved);
+      reject(
+        new Error(
+          "The target saved-file event did not arrive for review preflight",
+        ),
+      );
+    }, 8000);
+    watcher.on("all", onSaved);
+  });
+  await writeFile(savedPath, "export const changed = true;");
+  await savedEvent;
+  const reviewCheckpoint = await service.observe();
+  assert.ok(reviewCheckpoint);
+  const reviewPreflight = await service.preflightReview(reviewCheckpoint.id);
+  assert.equal(
+    reviewPreflight.reason,
+    "model_not_configured",
+    JSON.stringify(reviewPreflight),
   );
-  await service.observe();
+  assert.equal(reviewPreflight.semanticEnabled, false);
+  if (process.platform === "win32") {
+    assert.equal(
+      reviewPreflight.resourceGuard,
+      "windows-appcontainer",
+      JSON.stringify(reviewPreflight),
+    );
+    assert.equal(reviewPreflight.osUsage!.inJob, true);
+    assert.equal(reviewPreflight.osUsage!.inAppContainer, true);
+    assert.equal(reviewPreflight.osUsage!.capabilityCount, 0);
+    assert.ok(reviewPreflight.osUsage!.peakCommitBytes > 0);
+  }
+  assert.equal(service.state().analysis!.semanticReview, false);
   assert.equal(service.state().activities[0].alert, true);
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[0].click()`,
@@ -226,7 +306,32 @@ export async function runSmoke(
     }),
   });
   assert.equal(paired.status, 200);
-  await wait('document.body.innerText.includes("IDE connected")');
+  await wait("/IDE (linked|connected)/.test(document.body.innerText)");
+  await main.webContents.executeJavaScript(
+    `document.querySelectorAll('nav button')[2].click()`,
+  );
+  const second = await fetch(`http://127.0.0.1:${service.bridge.port}/ide`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${service.bridge.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      type: "heartbeat",
+      workspace,
+      editor: "Second IDE",
+      sessionId: "second-smoke",
+    }),
+  });
+  assert.equal(second.status, 200);
+  await wait(
+    'document.body.innerText.includes("Verified project connections:") && document.body.innerText.includes("Second IDE")',
+  );
+  assert.equal(service.bridge.current.connections?.length, 2);
+  await screenshot(main, "smoke-ides.png");
+  await main.webContents.executeJavaScript(
+    `document.querySelectorAll('nav button')[0].click()`,
+  );
   await companion.webContents.executeJavaScript(
     `window.cobble.companion('drag-start')`,
   );
@@ -247,19 +352,175 @@ export async function runSmoke(
     false,
   );
   await new Promise((resolve) => setTimeout(resolve, 300));
-  await writeFile(
-    join(root, "smoke-home.png"),
-    (await main.webContents.capturePage()).toPNG(),
-  );
+  await screenshot(main, "smoke-home.png");
   await main.webContents.executeJavaScript(
     `document.querySelectorAll('nav button')[2].click()`,
   );
   await wait('!!document.querySelector(".plan-items")');
   await new Promise((resolve) => setTimeout(resolve, 300));
-  await writeFile(
-    join(root, "smoke-plan.png"),
-    (await main.webContents.capturePage()).toPNG(),
+  await screenshot(main, "smoke-plan.png");
+  await main.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Workspace & Hosting').click()`,
   );
+  await wait('!!document.querySelector("[role=dialog] .cobble-hosting-panel")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.cobble-hosting-panel button')).find(b=>b.textContent.includes('Team ready')).disabled`,
+    ),
+    true,
+  );
+  await main.webContents.executeJavaScript(
+    `(() => {const element=Array.from(document.querySelectorAll('[role=dialog] label')).find(l=>l.textContent.includes('Connect your team')).querySelector('select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,'lan');element.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+  );
+  await wait(
+    `Array.from(document.querySelectorAll('button')).some(b=>b.textContent.trim()==='Host on LAN')`,
+  );
+  await main.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Host on LAN').click()`,
+  );
+  await wait(`window.cobble.state().then(s=>s.network.role==='host')`);
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.cobble-hosting-panel').scrollIntoView({block:'start'})`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await screenshot(main, "smoke-hosting-light.png");
+  await main.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+  );
+  await wait('!document.querySelector("[role=dialog]")');
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.sidebar-action-btn').focus(); document.querySelector('.sidebar-action-btn').click()`,
+  );
+  await wait('!!document.querySelector(".workspace-setup-modal")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `document.querySelector('.workspace-setup-modal textarea[required]').checkValidity()`,
+    ),
+    false,
+  );
+  await main.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+  );
+  await wait('!document.querySelector("[role=dialog]")');
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `document.activeElement.matches('.sidebar-action-btn')`,
+    ),
+    true,
+  );
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.theme-toggle-btn').click()`,
+  );
+  await wait(`document.documentElement.dataset.theme==='dark'`);
+  await main.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Workspace & Hosting').click()`,
+  );
+  await wait('!!document.querySelector("[role=dialog] .cobble-hosting-panel")');
+  await main.webContents.executeJavaScript(
+    `document.querySelector('.cobble-hosting-panel').scrollIntoView({block:'start'})`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await screenshot(main, "smoke-hosting-dark.png");
+  await main.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+  );
+  await wait('!document.querySelector("[role=dialog]")');
+  const beforeChat = ElectronWindow.getAllWindows().length;
+  assert.equal(
+    (
+      await main.webContents.executeJavaScript(
+        `window.cobble.chatWindow('status')`,
+      )
+    ).visible,
+    false,
+  );
+  assert.equal(
+    ElectronWindow.getAllWindows().length,
+    beforeChat,
+    "status must not allocate a window",
+  );
+  await main.webContents.executeJavaScript(`window.cobble.chatWindow('show')`);
+  const mini =
+    ElectronWindow.getAllWindows().find((win) =>
+      win.webContents.getURL().includes("view=mini-chat"),
+    ) ??
+    ElectronWindow.getAllWindows().find(
+      (win) => win !== main && win !== companion,
+    )!;
+  const waitMini = async (condition: string) => {
+    const start = Date.now();
+    while (!(await mini.webContents.executeJavaScript(condition))) {
+      if (Date.now() - start > 8000)
+        throw new Error(`Mini chat wait failed: ${condition}`);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+  };
+  await waitMini('!!document.querySelector(".mini-chat-composer")');
+  await mini.webContents.executeJavaScript(
+    `(()=>{const input=document.querySelector('.mini-chat-composer input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Native mini-chat delivery');input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await mini.webContents.executeJavaScript(
+    `document.querySelector('.mini-chat-composer').requestSubmit()`,
+  );
+  await wait(
+    `window.cobble.state().then(s=>s.messages.some(m=>m.content==='Native mini-chat delivery'))`,
+  );
+  await mini.webContents.executeJavaScript(
+    `window.cobble.chatWindow('minimize')`,
+  );
+  await waitMini('!!document.querySelector(".mini-chat-host.minimized")');
+  assert.ok(
+    Math.abs(mini.getBounds().height - 44) <= 1,
+    "minimized pill must respect DPI rounding, rather than the expanded minimum height",
+  );
+  await main.webContents.executeJavaScript(`window.cobble.chatWindow('hide')`);
+  await main.webContents.executeJavaScript(`window.cobble.chatWindow('show')`);
+  await waitMini('!!document.querySelector(".mini-chat-composer")');
+  assert.ok(mini.getBounds().height >= 400);
+  await screenshot(mini, "smoke-mini-chat.png");
+  await mini.webContents.executeJavaScript(
+    `window.cobble.chatWindow('redirect')`,
+  );
+  await wait('!!document.querySelector(".chat-panel")');
+  assert.equal(mini.isVisible(), false);
+  const originalSize = main.getSize();
+  main.setSize(850, 620);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      "document.documentElement.scrollWidth > innerWidth",
+    ),
+    false,
+    "minimum supported window must not overflow horizontally",
+  );
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      `document.querySelector('.composer').getBoundingClientRect().right <= innerWidth`,
+    ),
+    true,
+  );
+  main.setSize(originalSize[0], originalSize[1]);
+  const maintenance = await main.webContents.executeJavaScript(
+    "window.cobble.maintenance()",
+  );
+  assert.ok(maintenance.databaseBytes > 0);
+  assert.ok(maintenance.activities > 0);
+  const archive = join(root, `desktop-backup-${process.pid}.cobblebackup`);
+  const recovery = join(root, `desktop-recovered-${process.pid}.sqlite`);
+  await service.createBackup(archive);
+  await service.restoreBackupCopy(archive, recovery);
+  const recovered = new DatabaseSync(recovery, { readOnly: true });
+  try {
+    assert.equal(
+      recovered
+        .prepare("SELECT value FROM settings WHERE key=?")
+        .get(`restored-offline:${service.activeTeam()!.id}`)?.value,
+      "true",
+    );
+  } finally {
+    recovered.close();
+  }
   if (errors.length) throw new Error(`Renderer errors: ${errors.join("; ")}`);
   if (app.isPackaged) {
     const runtime = JSON.parse(
@@ -283,10 +544,17 @@ export async function runSmoke(
     );
     await writeFile(
       join(root, "packaged-smoke.json"),
-      JSON.stringify({ runId: process.env.COBBLE_SMOKE_ID, success: true }),
+      JSON.stringify({
+        runId: process.env.COBBLE_SMOKE_ID,
+        success: true,
+        version: app.getVersion(),
+        reviewWorker: reviewPreflight.reason,
+        reviewResourceGuard: reviewPreflight.resourceGuard,
+        reviewPeakCommitBytes: reviewPreflight.osUsage?.peakCommitBytes,
+      }),
     );
   }
   console.log(
-    "COBBLE_SMOKE_OK: profile, plan, work areas, completion, votes, actual Git merge, chat, saved diff, revert preview, IDE auth, companion poses, screenshots",
+    "COBBLE_SMOKE_OK: profile, plan, work areas, completion, votes, Git merge, chat, saved diff/revert, IDE auth, poses, hosting dialog, themes, native mini-chat and secure backup",
   );
 }

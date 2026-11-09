@@ -12,5 +12,11 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src", "test", "extensions/vscode/src", "scripts/*.ts"]
+  "include": [
+    "src",
+    "test",
+    "extensions/vscode/src",
+    "scripts/*.ts",
+    "evaluation/*.ts"
+  ]
 }
