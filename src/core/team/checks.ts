@@ -24,6 +24,28 @@ export function validCheckCommand(command: unknown): string | undefined {
   return value;
 }
 
+/**
+ * Environment for the check: the user's environment minus variables that
+ * look like credentials. The check runs code the agents wrote (finding 2),
+ * so it gets no tokens or keys from Cobble's process. This reduces, but does
+ * not remove, the risk: the code still runs with the user's file access.
+ */
+export function checkEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  // Secret-looking words anywhere (any case), plus provider prefixes in
+  // upper case only, so npm's own "npm_config_*" settings are kept.
+  const secretWord =
+    /(TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|API_?KEY|ACCESS_?KEY|AUTH|SESSION|COOKIE)/i;
+  const providerPrefix =
+    /^(AWS|AZURE|GCP|GOOGLE_APPLICATION|GH|GITHUB|NPM|NETLIFY|VERCEL|RENDER|FIREBASE|OPENAI|ANTHROPIC|GEMINI|CLOUDFLARE|HEROKU|STRIPE|SUPABASE)_/;
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env))
+    if (!secretWord.test(key) && !providerPrefix.test(key)) out[key] = value;
+  out.CI = "1";
+  return out;
+}
+
 export function runCheck(
   command: string,
   cwd: string,
@@ -35,7 +57,7 @@ export function runCheck(
       cwd,
       shell: true,
       windowsHide: true,
-      env: { ...process.env, CI: "1" },
+      env: checkEnvironment(),
       detached: process.platform !== "win32",
     });
     let output = "";

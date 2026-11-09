@@ -550,7 +550,11 @@ test("Cobble enforces production approval even if the planner skips ask_human", 
     await f.orchestrator.idle(run.id);
     snap = f.orchestrator.snapshot(run.id)!;
     assert.equal(snap.tasks[0].state, "done");
-    assert.ok(snap.run.approvals.includes("production"));
+    assert.equal(
+      snap.tasks[0].approved,
+      true,
+      "the approval covers this task only",
+    );
   } finally {
     await f.cleanup();
   }

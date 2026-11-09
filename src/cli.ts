@@ -390,6 +390,22 @@ async function followRun(service: CobbleService, runId: string) {
         service.agentTeam.resolveGate(runId, "done", undefined, "", answers);
         continue;
       }
+      if (
+        snap.run.state === "needs_human" &&
+        snap.run.gate?.kind === "approval"
+      ) {
+        const answer = await prompt.question(
+          `\nApproval needed: ${snap.run.gate.message}\nType "approve" to allow one production deploy, anything else to deny: `,
+        );
+        const yes = answer.trim().toLowerCase() === "approve";
+        service.agentTeam.resolveGate(
+          runId,
+          yes ? "approve" : "deny",
+          undefined,
+          yes ? "" : answer,
+        );
+        continue;
+      }
       if (snap.run.state === "needs_human" && snap.run.gate) {
         const answer = await prompt.question(
           `\nThe planner needs you (${snap.run.gate.kind}): ${snap.run.gate.message}\nType your answer, or "skip": `,
@@ -404,15 +420,21 @@ async function followRun(service: CobbleService, runId: string) {
       }
       if (waiting.length && snap.run.state === "running") {
         const task = waiting[0];
+        const approval = task.gate?.kind === "approval";
         const answer = await prompt.question(
-          `\n${task.id} needs you: ${task.gate?.message}\nFolder: ${task.worktree ?? snap.run.workspace}\nPress Enter when done${task.gate?.kind === "approval" ? " to approve" : ""}, or type "skip": `,
+          approval
+            ? `\n${task.id} needs approval: ${task.gate?.message}\nType "approve" to allow this one production deploy, anything else to deny: `
+            : `\n${task.id} needs you: ${task.gate?.message}\nFolder: ${task.worktree ?? snap.run.workspace}\nPress Enter when done, or type "skip": `,
         );
+        const reply = answer.trim().toLowerCase();
         service.agentTeam.resolveGate(
           runId,
-          answer.trim() === "skip"
-            ? "skip"
-            : task.gate?.kind === "approval"
+          approval
+            ? reply === "approve"
               ? "approve"
+              : "deny"
+            : reply === "skip"
+              ? "skip"
               : "done",
           task.id,
         );

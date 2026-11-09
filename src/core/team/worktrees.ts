@@ -11,13 +11,14 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   rmdir,
   symlink,
   unlink,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative, isAbsolute, resolve } from "node:path";
 import type { Change } from "../../shared/types";
 
 const exec = promisify(execFile);
@@ -25,6 +26,46 @@ const exec = promisify(execFile);
 export const DEPENDENCY_DIRS = ["node_modules"] as const;
 export const REPORT_DIR = ".cobble-task";
 export const REPORT_FILE = `${REPORT_DIR}/report.json`;
+export const REPORT_MAX_BYTES = 256 * 1024;
+
+/** Files Cobble never commits automatically (credentials and keys). */
+const SECRET_PATHS = [
+  /(^|\/)\.env(\.(?!example$|sample$|template$|dist$)[^/]+)?$/i,
+  /\.(pem|key|p12|pfx|keystore|jks)$/i,
+  /(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i,
+  /(^|\/)\.(npmrc|pypirc|netrc|git-credentials)$/i,
+  /(^|\/)(credentials|secrets?|service-account)[^/]*\.(json|ya?ml|toml)$/i,
+];
+export function isSecretPath(path: string) {
+  const clean = path.replaceAll("\\", "/");
+  return SECRET_PATHS.some((p) => p.test(clean));
+}
+
+export function normalizePath(path: string) {
+  const full = resolve(path).replaceAll("\\", "/");
+  return process.platform === "win32" ? full.toLowerCase() : full;
+}
+/** True when `child` is `root` or inside it (by path components). */
+export function isInside(root: string, child: string) {
+  const rel = relative(resolve(root), resolve(child));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function parseNameStatus(status: string): Change[] {
+  return status
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const [kind, ...rest] = line.split("\t");
+      // Paths are the evidence used by plan policy; contents stay in Git.
+      return {
+        path: rest.join("\t"),
+        before: kind === "A" ? null : "",
+        after: kind === "D" ? null : "",
+      };
+    })
+    .filter((c) => !c.path.startsWith(`${REPORT_DIR}/`));
+}
 const IDENTITY = [
   "-c",
   "user.name=Cobble Agent Team",
@@ -173,27 +214,147 @@ export class Worktrees {
     return { branch, path, base };
   }
 
+  /**
+   * Reads the worker's report only if it is a regular file (not a link or
+   * junction), inside the worktree, and at most REPORT_MAX_BYTES.
+   */
   async readReport(path: string): Promise<string | null> {
     try {
-      return await readFile(join(path, REPORT_FILE), "utf8");
+      const dir = join(path, REPORT_DIR);
+      const file = join(path, REPORT_FILE);
+      const [dirInfo, fileInfo] = [await lstat(dir), await lstat(file)];
+      if (dirInfo.isSymbolicLink() || !dirInfo.isDirectory()) return null;
+      if (!fileInfo.isFile() || fileInfo.size > REPORT_MAX_BYTES) return null;
+      const [realRoot, realFile] = [await realpath(path), await realpath(file)];
+      if (!isInside(realRoot, realFile)) return null;
+      return await readFile(file, "utf8");
     } catch {
       return null;
     }
   }
 
+  /** Removes any report left by an earlier invocation (never following links). */
+  async clearReport(path: string) {
+    const dir = join(path, REPORT_DIR);
+    let info;
+    try {
+      info = await lstat(dir);
+    } catch {
+      return;
+    }
+    if (info.isSymbolicLink()) await unlink(dir).catch(() => rmdir(dir));
+    else await rm(join(path, REPORT_FILE), { force: true });
+  }
+
   /**
-   * Commits everything the agent left in its worktree (except the report) and
-   * returns the changed paths relative to `base`.
+   * The Git admin folder Git itself registered for the worktree at `path`.
+   * Workers can rewrite the worktree's `.git` file, so Cobble never trusts it:
+   * it looks the path up in the repository's own worktree registry.
+   */
+  async trustedGitDir(path: string): Promise<string> {
+    const common = await this.run(
+      this.repo,
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    );
+    const want = normalizePath(await realpath(path));
+    const admin = join(common, "worktrees");
+    for (const name of existsSync(admin) ? await readdir(admin) : []) {
+      try {
+        const pointer = (
+          await readFile(join(admin, name, "gitdir"), "utf8")
+        ).trim();
+        if (normalizePath(dirname(pointer)) === want) return join(admin, name);
+      } catch {
+        /* not a worktree entry */
+      }
+    }
+    throw new Error(`No registered Git worktree for ${path}`);
+  }
+
+  /** Runs git against a pinned admin folder and work tree (no .git lookup). */
+  private async pinned(gitDir: string, workTree: string, ...args: string[]) {
+    const { stdout } = await exec(
+      this.git,
+      [`--git-dir=${gitDir}`, `--work-tree=${workTree}`, ...args],
+      {
+        cwd: workTree,
+        windowsHide: true,
+        timeout: 60_000,
+        maxBuffer: 4_000_000,
+      },
+    );
+    return stdout.trim();
+  }
+
+  /**
+   * Commits everything the agent left in its worktree and returns the changed
+   * paths relative to `base`. Git is pinned to the worktree Git registered
+   * and the branch must be `branch`, so a redirected `.git` file can never
+   * commit to the user's branch. The report and secret-looking files are
+   * never committed; blocked files are returned for the planner.
    */
   async capture(
     path: string,
     base: string,
     message: string,
-  ): Promise<Change[]> {
-    await this.run(path, "add", "-A", "--", ".", `:(exclude)${REPORT_DIR}`);
-    const staged = await this.run(path, "diff", "--cached", "--name-only");
-    if (staged)
-      await this.run(
+    branch?: string,
+  ): Promise<{ changes: Change[]; blocked: string[] }> {
+    const gitDir = await this.trustedGitDir(path);
+    if (branch) {
+      const head = await this.pinned(
+        gitDir,
+        path,
+        "symbolic-ref",
+        "-q",
+        "HEAD",
+      ).catch(() => "");
+      if (head !== `refs/heads/${branch}`)
+        throw new Error(
+          `Refusing to commit: the task worktree is on ${head || "a detached HEAD"}, not ${branch}`,
+        );
+    }
+    await this.pinned(gitDir, path, "add", "-A", "--", ".");
+    // A worker may have staged the report itself; it is never committed.
+    await this.pinned(
+      gitDir,
+      path,
+      "rm",
+      "-r",
+      "-q",
+      "--cached",
+      "--ignore-unmatch",
+      "--",
+      REPORT_DIR,
+    );
+    const stagedNames = (
+      await this.pinned(
+        gitDir,
+        path,
+        "diff",
+        "--cached",
+        "--name-only",
+        "--no-renames",
+      )
+    )
+      .split(/\r?\n/)
+      .filter(Boolean);
+    const blocked = stagedNames.filter(isSecretPath);
+    for (const file of blocked)
+      await this.pinned(
+        gitDir,
+        path,
+        "rm",
+        "-q",
+        "--cached",
+        "--ignore-unmatch",
+        "--",
+        file,
+      );
+    if (stagedNames.length > blocked.length)
+      await this.pinned(
+        gitDir,
         path,
         ...IDENTITY,
         "commit",
@@ -202,27 +363,15 @@ export class Worktrees {
         "-m",
         message,
       );
-    const status = await this.run(
+    const status = await this.pinned(
+      gitDir,
       path,
       "diff",
       "--name-status",
       "--no-renames",
       `${base}..HEAD`,
     );
-    return status
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => {
-        const [kind, ...rest] = line.split("\t");
-        const file = rest.join("\t");
-        // Paths are the evidence used by plan policy; contents stay in Git.
-        return {
-          path: file,
-          before: kind === "A" ? null : "",
-          after: kind === "D" ? null : "",
-        };
-      })
-      .filter((c) => !c.path.startsWith(`${REPORT_DIR}/`));
+    return { changes: parseNameStatus(status), blocked };
   }
 
   /** A short `git diff --stat` for the planner. */
@@ -288,12 +437,9 @@ export class Worktrees {
     for (const line of list.split(/\r?\n/))
       if (line.startsWith("worktree ")) {
         const wt = line.slice(9);
-        if (
-          wt
-            .replaceAll("\\", "/")
-            .toLowerCase()
-            .startsWith(dir.replaceAll("\\", "/").toLowerCase())
-        ) {
+        // Component-wise containment: run "a1234567" must never match a
+        // sibling folder such as "a1234567-user".
+        if (isInside(normalizePath(dir), normalizePath(wt))) {
           await this.unlinkDependencies(wt);
           await this.run(this.repo, "worktree", "remove", "--force", wt).catch(
             () => {},

@@ -204,7 +204,7 @@ test("shared dependencies: ignored node_modules is linked into tasks and removin
       "module.exports = 1;",
     );
     assert.deepEqual(await wt.linkDependencies(task.path), [], "idempotent");
-    const changes = await wt.capture(task.path, task.base, "noop");
+    const { changes } = await wt.capture(task.path, task.base, "noop");
     assert.equal(
       changes.length,
       0,

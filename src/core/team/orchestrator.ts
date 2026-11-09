@@ -55,6 +55,33 @@ export interface OrchestratorOptions {
 }
 
 export type GateAnswer = "done" | "approve" | "skip" | "deny";
+/** Key of the planner's abort controller in `running`. */
+const PLANNER_KEY = "__planner";
+
+/**
+ * True when deploy instructions ask for a production action, ignoring
+ * negated mentions such as "NO --prod" or "never deploy to production".
+ */
+export function asksForProduction(text: string): boolean {
+  // A negation covers the rest of its clause: "never use --prod or deploy
+  // to production" is entirely negative; "deploy to production, not
+  // staging" stays affirmative.
+  const affirmative = text.replace(
+    /\b(no|not|never|without|avoid|don'?t|do not|must not|mustn'?t)\b[^.\n;,]*/gi,
+    " ",
+  );
+  return (
+    /(^|[\s"'`(])--prod(uction)?\b/i.test(affirmative) ||
+    /\b(deploy|publish|release|promote|push)\w*\s+(it\s+|this\s+|the site\s+)?(to|into|on)\s+(the\s+)?(production|prod|live)\b/i.test(
+      affirmative,
+    ) ||
+    /\b(env(ironment)?|target|stage)\s*[=:]\s*["']?(prod|production|live)\b/i.test(
+      affirmative,
+    )
+  );
+}
+/** A run lease older than this belongs to a process that is gone. */
+export const LEASE_MS = 45_000;
 /** A task may ask the planner this many questions before it fails. */
 export const TASK_QUESTION_LIMIT = 3;
 
@@ -132,13 +159,37 @@ export class TeamOrchestrator extends EventEmitter {
         );
       }
     }
-    const active = this.store
-      .runsInState(["running", "needs_human", "paused"])
-      .filter((r) => r.teamId === teamId);
-    if (active.length)
-      throw new Error(
-        "Finish or stop the current team run before starting another",
+    // Atomic across processes: the check and the reservation share one
+    // database transaction, so two starters cannot both pass (finding 7).
+    this.store.reserveRunStart(teamId, this.ownerId, this.now());
+    try {
+      return await this.createRun(
+        teamId,
+        team,
+        cleanGoal,
+        budget,
+        policy,
+        extras,
+        checkCommand,
       );
+    } finally {
+      this.store.releaseRunStart(teamId, this.ownerId);
+    }
+  }
+
+  private async createRun(
+    teamId: string,
+    team: Team,
+    cleanGoal: string,
+    budget: Partial<TeamBudget>,
+    policy: Partial<ApprovalPolicy>,
+    extras: {
+      baseRef?: string;
+      shareDependencies?: boolean;
+      fullAccessRoles?: TeamRole[];
+    },
+    checkCommand: string | undefined,
+  ): Promise<TeamRun> {
     const id = randomUUID();
     const workspace = team.workspace;
     const wt = new Worktrees(
@@ -176,6 +227,8 @@ export class TeamOrchestrator extends EventEmitter {
       fullAccessRoles: (
         extras.fullAccessRoles ?? this.store.fullAccessRoles(teamId)
       ).filter((r) => FULL_ACCESS_ROLES.includes(r)),
+      ownerId: this.ownerId,
+      ownerSeen: stamp,
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -204,6 +257,7 @@ export class TeamOrchestrator extends EventEmitter {
   resume(runId: string) {
     const run = this.require(runId);
     if (run.state !== "paused") return run;
+    this.claim(run);
     for (const task of this.store.tasks(runId))
       if (task.state === "interrupted") {
         task.state = "queued";
@@ -223,6 +277,8 @@ export class TeamOrchestrator extends EventEmitter {
   stop(runId: string) {
     const run = this.require(runId);
     if (["done", "failed", "stopped"].includes(run.state)) return run;
+    // Also abort an in-flight planner turn so its late reply cannot act.
+    this.running.get(`${runId}:${PLANNER_KEY}`)?.abort();
     for (const task of this.store.tasks(runId)) {
       this.running.get(`${runId}:${task.id}`)?.abort();
       if (!TERMINAL_TASK_STATES.has(task.state)) {
@@ -261,8 +317,12 @@ export class TeamOrchestrator extends EventEmitter {
         task.error = `User ${answer === "deny" ? "declined" : "skipped"}: ${gate.message}${extra ? ` (${extra})` : ""}`;
         task.finishedAt = new Date(this.now()).toISOString();
       } else {
-        if (gate.kind === "approval" && task.target === "production")
-          run.approvals = [...new Set([...run.approvals, "production"])];
+        // Approval must be explicit and covers this task only (finding 4).
+        if (gate.kind === "approval") {
+          if (answer !== "approve")
+            throw new Error("Use Approve or Deny for an approval request");
+          task.approved = true;
+        }
         task.state = "queued";
         task.resumeNote = `The user handled this for you: ${gate.message}.${extra ? ` They said: ${extra}.` : ""} Continue the task.`;
       }
@@ -274,11 +334,12 @@ export class TeamOrchestrator extends EventEmitter {
       if (run.state !== "needs_human" || !run.gate)
         throw new Error("The run is not waiting for you");
       const gate = run.gate;
-      if (
-        gate.kind === "approval" &&
-        (answer === "approve" || answer === "done")
-      )
-        run.approvals = [...new Set([...run.approvals, "production"])];
+      if (gate.kind === "approval" && answer === "done")
+        throw new Error("Use Approve or Deny for an approval request");
+      // A run-level approval allows exactly one production deploy task: the
+      // next one the planner delegates (finding 4).
+      if (gate.kind === "approval" && answer === "approve")
+        run.productionApprovals = (run.productionApprovals ?? 0) + 1;
       if (gate.kind === "questions" && gate.questions?.length) {
         const declined = answer === "skip" || answer === "deny";
         const given = gate.questions.map((q, i) => ({
@@ -332,8 +393,16 @@ export class TeamOrchestrator extends EventEmitter {
    * Cobble process (e.g. a CLI status call) never pauses another's run.
    */
   recover(only?: ReadonlySet<string>) {
-    for (const run of this.store.runsInState(["running", "needs_human"])) {
+    // Paused runs are included: a task can still be "running" in a run that
+    // was paused while the worker was busy (review finding 11).
+    for (const run of this.store.runsInState([
+      "running",
+      "needs_human",
+      "paused",
+    ])) {
       if (only && !only.has(run.id)) continue;
+      // Never take over a run another live Cobble process is driving.
+      if (!only && this.leasedElsewhere(run)) continue;
       for (const task of this.store.tasks(run.id))
         if (task.state === "running") {
           task.state = "interrupted";
@@ -344,8 +413,42 @@ export class TeamOrchestrator extends EventEmitter {
         run.state = "paused";
         run.pausedReason =
           "Cobble restarted. Resume the run when you are ready.";
-        this.store.saveRun(run);
       }
+      if (run.ownerId === this.ownerId || !this.leasedElsewhere(run)) {
+        run.ownerId = undefined;
+        run.ownerSeen = undefined;
+      }
+      this.store.saveRun(run);
+    }
+  }
+
+  /** True when another Cobble process holds a live lease on this run. */
+  private leasedElsewhere(run: TeamRun) {
+    return (
+      !!run.ownerId &&
+      run.ownerId !== this.ownerId &&
+      this.now() - Date.parse(run.ownerSeen ?? "") < LEASE_MS
+    );
+  }
+
+  /** Claims (or refreshes) this process's lease on a run it drives. */
+  private claim(run: TeamRun) {
+    if (this.leasedElsewhere(run))
+      throw new Error(
+        "Another Cobble process (the desktop app or a terminal) is driving this run. Use that one, or close it and wait a minute.",
+      );
+    run.ownerId = this.ownerId;
+    run.ownerSeen = new Date(this.now()).toISOString();
+  }
+
+  /** Keeps leases fresh while this process has work in flight. */
+  private heartbeat() {
+    for (const [runId, n] of this.active) {
+      if (n <= 0) continue;
+      const run = this.store.run(runId);
+      if (!run || run.ownerId !== this.ownerId) continue;
+      run.ownerSeen = new Date(this.now()).toISOString();
+      this.store.saveRun(run);
     }
   }
 
@@ -359,6 +462,7 @@ export class TeamOrchestrator extends EventEmitter {
 
   async close() {
     this.closed = true;
+    clearInterval(this.leaseTimer);
     this.interruptedOnClose = new Set(
       [...this.active].filter(([, n]) => n > 0).map(([id]) => id),
     );
@@ -370,6 +474,9 @@ export class TeamOrchestrator extends EventEmitter {
   /** Runs with a planner turn or task in flight in this process. */
   private readonly active = new Map<string, number>();
   private interruptedOnClose = new Set<string>();
+  /** Identifies this Cobble process in run leases. */
+  readonly ownerId = randomUUID();
+  private leaseTimer?: ReturnType<typeof setInterval>;
 
   /** Resolves once no planner turn or task of this run is in flight. */
   async idle(runId?: string) {
@@ -407,9 +514,17 @@ export class TeamOrchestrator extends EventEmitter {
   private track<T>(runId: string, promise: Promise<T>) {
     this.inflight.add(promise);
     this.active.set(runId, (this.active.get(runId) ?? 0) + 1);
+    if (!this.leaseTimer) {
+      this.leaseTimer = setInterval(() => this.heartbeat(), LEASE_MS / 3);
+      this.leaseTimer.unref?.();
+    }
     void promise.finally(() => {
       this.inflight.delete(promise);
       this.active.set(runId, (this.active.get(runId) ?? 1) - 1);
+      if (![...this.active.values()].some((n) => n > 0)) {
+        clearInterval(this.leaseTimer);
+        this.leaseTimer = undefined;
+      }
     });
     return promise;
   }
@@ -418,6 +533,12 @@ export class TeamOrchestrator extends EventEmitter {
     if (this.closed) return;
     const run = this.store.run(runId);
     if (!run || !["running", "needs_human"].includes(run.state)) return;
+    // Only the process holding the lease drives a run (review finding 7).
+    if (this.leasedElsewhere(run)) return;
+    if (run.ownerId !== this.ownerId) {
+      this.claim(run);
+      this.store.saveRun(run);
+    }
     if (this.now() - Date.parse(run.createdAt) > run.budget.wallClockMs) {
       this.pauseFor(run, "Time budget used up");
       return;
@@ -529,6 +650,15 @@ export class TeamOrchestrator extends EventEmitter {
     const finished = tasks.filter(
       (t) => !t.delivered && TERMINAL_TASK_STATES.has(t.state),
     );
+    // Exactly the worker questions this prompt shows. A question asked while
+    // the planner is thinking stays undelivered and wakes it again (finding 10).
+    const askedInPrompt = new Map(
+      run.plannerTurns === 0
+        ? []
+        : tasks
+            .filter((t) => t.state === "needs_decision" && t.question)
+            .map((t) => [t.id, t.question!.text] as const),
+    );
     const notes = [...run.pendingNotes];
     if (!finished.length && !notes.length && !run.wakeRequested)
       notes.push("No work is in progress. Delegate the next step or finish.");
@@ -563,6 +693,8 @@ export class TeamOrchestrator extends EventEmitter {
           : "Planner is deciding the next step",
       );
       let result: AdapterResult;
+      const controller = new AbortController();
+      this.running.set(`${runId}:${PLANNER_KEY}`, controller);
       try {
         result = await this.options.adapters[agent].run({
           cwd: wt.runPath(run.id),
@@ -571,15 +703,26 @@ export class TeamOrchestrator extends EventEmitter {
           readOnly: true,
           network: false,
           timeoutMs: run.budget.taskTimeoutMs,
+          signal: controller.signal,
         });
       } catch (error) {
         run = this.require(runId);
+        if (["done", "failed", "stopped"].includes(run.state)) return;
         return this.pauseFor(
           run,
           `Planner (${agent}) could not start: ${error instanceof Error ? error.message : error}`,
         );
+      } finally {
+        this.running.delete(`${runId}:${PLANNER_KEY}`);
       }
       run = this.require(runId);
+      // Stopped or finished while the planner was thinking: its late reply
+      // (including errors) must not change anything (review finding 8).
+      if (
+        controller.signal.aborted ||
+        ["done", "failed", "stopped"].includes(run.state)
+      )
+        return;
       if (result.sessionId) run.plannerSessionId = result.sessionId;
       if (result.authRequired) {
         this.store.saveRun(run);
@@ -624,7 +767,8 @@ export class TeamOrchestrator extends EventEmitter {
       if (
         task.state === "needs_decision" &&
         task.question &&
-        !task.question.delivered
+        !task.question.delivered &&
+        askedInPrompt.get(task.id) === task.question.text
       ) {
         task.question.delivered = true;
         this.store.saveTask(task);
@@ -716,21 +860,32 @@ export class TeamOrchestrator extends EventEmitter {
           createdAt: new Date(this.now()).toISOString(),
         };
         // Cobble enforces the approval policy itself, whatever the planner says.
-        // An explicit "preview" target is trusted (the worker is then told it
-        // must never use production flags); a deploy with no target that
-        // mentions production is treated as production. Live run 3 showed a
-        // preview task saying "NO --prod" being gated by the word alone.
+        // - target "production", or no target and any mention of production:
+        //   production.
+        // - target "preview": production only if the instructions actually
+        //   ask for a production action ("--prod", "deploy to production"),
+        //   ignoring negations like "NO --prod" (live run 3, finding 3).
+        // This is best effort: a full-access deployer could still ignore its
+        // instructions, which the user accepted when opting in.
+        const text = `${action.title} ${action.instructions}`;
         const production =
           action.role === "deployer" &&
           (action.target === "production" ||
             (action.target === undefined &&
-              /\b(prod|production)\b/i.test(
-                `${action.title} ${action.instructions}`,
-              )));
+              /\b(prod|production)\b/i.test(text)) ||
+            (action.target === "preview" && asksForProduction(text)));
+        if (production && run.policy.requireApprovalForProduction) {
+          if ((run.productionApprovals ?? 0) > 0) {
+            run.productionApprovals = (run.productionApprovals ?? 0) - 1;
+            task.target = "production";
+            task.approved = true;
+            this.store.saveRun(run);
+          }
+        }
         if (
           production &&
           run.policy.requireApprovalForProduction &&
-          !run.approvals.includes("production")
+          !task.approved
         ) {
           task.target = "production";
           task.state = "needs_human";
@@ -868,6 +1023,7 @@ export class TeamOrchestrator extends EventEmitter {
             } else conflicts.push(task.id);
           }
         run.state = "done";
+        run.unmerged = conflicts;
         run.summary = conflicts.length
           ? `${action.summary}\n\nNot merged because of conflicts: ${conflicts.join(", ")} (their branches are kept).`
           : action.summary;
@@ -923,6 +1079,8 @@ export class TeamOrchestrator extends EventEmitter {
       }
       const latest = this.store.tasks(runId).find((t) => t.id === taskId);
       if (latest?.state !== "running") return; // stopped while preparing
+      // A report from an earlier invocation must never decide this one.
+      if (writing) await wt.clearReport(cwd);
       const note = task.resumeNote;
       task.resumeNote = undefined;
       this.store.saveTask(task);
@@ -983,18 +1141,28 @@ export class TeamOrchestrator extends EventEmitter {
               }),
       };
       if (writing && base) {
-        const changes = await wt.capture(
+        const { changes, blocked } = await wt.capture(
           cwd,
           base,
           `${task.id}: ${task.title}`.slice(0, 200),
+          task.branch,
         );
         const assessment = assess(team, changes);
         patch.drift = {
           classification: assessment.classification,
-          alert: assessment.alert,
-          explanation: assessment.explanation,
+          alert: assessment.alert || blocked.length > 0,
+          explanation: blocked.length
+            ? `Cobble refused to commit secret-looking files (${blocked.slice(0, 5).join(", ")}); they stay uncommitted in the task worktree. ${assessment.explanation}`
+            : assessment.explanation,
           paths: changes.map((c) => c.path).slice(0, 200),
         };
+        if (blocked.length)
+          this.log(
+            run,
+            "drift",
+            `${task.id}: not committed (secret-looking): ${blocked.slice(0, 5).join(", ")}`,
+            task.id,
+          );
         if (assessment.alert)
           this.log(
             run,

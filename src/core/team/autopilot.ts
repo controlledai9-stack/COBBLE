@@ -17,11 +17,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, isAbsolute } from "node:path";
 import type { Team } from "../../shared/types";
 import type { TeamOrchestrator } from "./orchestrator";
 import type { ApprovalPolicy, TeamBudget, TeamRun } from "./types";
+import { isInside } from "./worktrees";
 
 const exec = promisify(execFile);
 export const AUTOPILOT_BRANCH = "cobble/autopilot";
@@ -41,7 +42,11 @@ export interface BacklogItem {
 }
 export type ItemOutcome =
   | { status: "merged"; message: string }
-  | { status: "no_changes" | "conflict"; message: string }
+  | {
+      /** Flagged "- [!]" and skipped. */
+      status: "no_changes" | "conflict" | "incomplete" | "check_failed";
+      message: string;
+    }
   | { status: "not_done"; message: string };
 
 const OPEN = /^(\s*)[-*] \[ \] (.+?)\s*$/;
@@ -151,12 +156,40 @@ export class Autopilot {
   }
 
   async next(teamId: string, backlogPath: string): Promise<BacklogItem | null> {
-    const file = join(this.path(teamId), validBacklogPath(backlogPath));
+    const file = await this.backlogFile(teamId, backlogPath);
+    return nextBacklogItem(await readFile(file, "utf8"));
+  }
+
+  /**
+   * The backlog file, only if it is a tracked, regular file inside the
+   * autopilot worktree with no link or junction anywhere on its path, so a
+   * crafted path can never make autopilot read or write outside (finding 5).
+   */
+  private async backlogFile(teamId: string, backlogPath: string) {
+    const root = this.path(teamId);
+    const rel = validBacklogPath(backlogPath);
+    const file = join(root, rel);
     if (!existsSync(file))
       throw new Error(
         `${backlogPath} was not found on ${AUTOPILOT_BRANCH}. Create it with lines like "- [ ] Add X" and commit it.`,
       );
-    return nextBacklogItem(await readFile(file, "utf8"));
+    let current = root;
+    for (const part of rel.split("/")) {
+      current = join(current, part);
+      const info = await lstat(current);
+      if (info.isSymbolicLink())
+        throw new Error(
+          `${backlogPath} must not go through a link or junction`,
+        );
+    }
+    if (!(await lstat(file)).isFile())
+      throw new Error(`${backlogPath} must be a regular file`);
+    if (!isInside(await realpath(root), await realpath(file)))
+      throw new Error(`${backlogPath} must be inside the autopilot worktree`);
+    await this.git(root, "ls-files", "--error-unmatch", "--", rel).catch(() => {
+      throw new Error(`${backlogPath} must be committed (tracked by Git)`);
+    });
+    return file;
   }
 
   /** Starts the Agent Team run for one item, building on the autopilot branch. */
@@ -198,7 +231,16 @@ export class Autopilot {
         message: `Run ${run.id.slice(0, 8)} is ${run.state}${run.pausedReason ? ` (${run.pausedReason})` : ""}. Autopilot stopped; resume or stop the run, then start autopilot again.`,
       };
     const path = this.path(teamId);
+    const rel = validBacklogPath(backlogPath);
     const short = run.id.slice(0, 8);
+    const tasks = this.deps.orchestrator.snapshot(run.id)?.tasks ?? [];
+    // Finding 12: an item is only done if every finished task reached the
+    // run branch and the most recent test check (if any) passed.
+    const unmerged = run.unmerged ?? [];
+    const lastChecked = tasks
+      .filter((t) => t.check && t.finishedAt)
+      .sort((a, b) => Date.parse(a.finishedAt!) - Date.parse(b.finishedAt!))
+      .at(-1);
     const changed = Number(
       await this.git(
         path,
@@ -208,25 +250,39 @@ export class Autopilot {
       ),
     );
     let outcome: ItemOutcome;
-    if (!changed) {
+    if (!changed)
       outcome = {
         status: "no_changes",
         message: `Run ${short} finished without changes`,
       };
-    } else {
+    else if (unmerged.length)
+      outcome = {
+        status: "incomplete",
+        message: `Run ${short} could not merge ${unmerged.join(", ")}; branch ${run.runBranch} is kept`,
+      };
+    else if (lastChecked?.check && !lastChecked.check.passed)
+      outcome = {
+        status: "check_failed",
+        message: `Run ${short}: the last test check (${lastChecked.id}) failed; branch ${run.runBranch} is kept`,
+      };
+    else
+      outcome = {
+        status: "merged",
+        message: `Run ${short} merged into ${AUTOPILOT_BRANCH}`,
+      };
+
+    // Finding 13: the merge and the backlog tick land in ONE commit, or
+    // neither does. The item is located in the merged tree before committing.
+    if (outcome.status === "merged") {
       try {
         await this.git(
           path,
           ...IDENTITY,
           "merge",
           "--no-ff",
-          "--no-edit",
+          "--no-commit",
           run.runBranch,
         );
-        outcome = {
-          status: "merged",
-          message: `Run ${short} merged into ${AUTOPILOT_BRANCH}`,
-        };
       } catch {
         await this.git(path, "merge", "--abort").catch(() => {});
         outcome = {
@@ -235,19 +291,51 @@ export class Autopilot {
         };
       }
     }
-    const file = join(path, validBacklogPath(backlogPath));
+    if (outcome.status === "merged") {
+      try {
+        const file = await this.backlogFile(teamId, backlogPath);
+        const merged = await readFile(file, "utf8");
+        await writeFile(
+          file,
+          markBacklogItem(merged, item, "x", `(run ${short})`),
+          "utf8",
+        );
+        await this.git(path, "add", "--", rel);
+        await this.git(
+          path,
+          ...IDENTITY,
+          "commit",
+          "--no-verify",
+          "-q",
+          "-m",
+          `autopilot: done: ${item.text.slice(0, 120)} (run ${short})`,
+        );
+        return outcome;
+      } catch {
+        // The run changed the backlog or something else went wrong: undo the
+        // whole merge and flag the item instead of half-applying it.
+        await this.git(path, "merge", "--abort").catch(() =>
+          this.git(path, "reset", "--merge"),
+        );
+        outcome = {
+          status: "conflict",
+          message: `Run ${short} changed ${rel} or could not be recorded; nothing was merged. Branch ${run.runBranch} is kept`,
+        };
+      }
+    }
+    const file = await this.backlogFile(teamId, backlogPath);
     const content = await readFile(file, "utf8");
-    const updated =
-      outcome.status === "merged"
-        ? markBacklogItem(content, item, "x", `(run ${short})`)
-        : markBacklogItem(
-            content,
-            item,
-            "!",
-            `— needs attention: ${outcome.message}`,
-          );
-    await writeFile(file, updated, "utf8");
-    await this.git(path, "add", "--", validBacklogPath(backlogPath));
+    await writeFile(
+      file,
+      markBacklogItem(
+        content,
+        item,
+        "!",
+        `— needs attention: ${outcome.message}`,
+      ),
+      "utf8",
+    );
+    await this.git(path, "add", "--", rel);
     await this.git(
       path,
       ...IDENTITY,
@@ -255,7 +343,7 @@ export class Autopilot {
       "--no-verify",
       "-q",
       "-m",
-      `autopilot: ${outcome.status === "merged" ? "done" : "flagged"}: ${item.text.slice(0, 120)}`,
+      `autopilot: flagged: ${item.text.slice(0, 120)}`,
     );
     return outcome;
   }

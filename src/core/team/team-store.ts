@@ -127,6 +127,39 @@ export class TeamStore {
         .all(teamId, limit) as { data: string }[]
     ).map((r) => JSON.parse(r.data) as TeamRun);
   }
+  /**
+   * Atomically checks that the team has no open run and reserves the start
+   * (BEGIN IMMEDIATE, so another Cobble process cannot pass at the same time).
+   * A reservation older than two minutes is treated as abandoned.
+   */
+  reserveRunStart(teamId: string, owner: string, now: number) {
+    this.store.transaction(() => {
+      if (
+        this.runsInState(["running", "needs_human", "paused"]).some(
+          (r) => r.teamId === teamId,
+        )
+      )
+        throw new Error(
+          "Finish or stop the current team run before starting another",
+        );
+      const key = `teamRunStarting:${teamId}`;
+      const held = this.store.setting<{ owner: string; at: number } | null>(
+        key,
+        null,
+      );
+      if (held && held.owner !== owner && now - held.at < 120_000)
+        throw new Error(
+          "Another Agent Team run is already starting for this team",
+        );
+      this.store.set(key, { owner, at: now });
+    });
+  }
+  releaseRunStart(teamId: string, owner: string) {
+    const key = `teamRunStarting:${teamId}`;
+    const held = this.store.setting<{ owner: string } | null>(key, null);
+    if (held?.owner === owner) this.store.set(key, null);
+  }
+
   runsInState(states: string[]): TeamRun[] {
     return (
       this.store.db

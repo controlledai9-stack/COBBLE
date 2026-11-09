@@ -468,6 +468,9 @@ function TeamPanelContent({
             <p id="agent-team-check-hint" className="small">
               Runs in each task’s worktree when the task captures changes. The
               command must install its own dependencies unless they are shared.
+              It runs code the agents wrote, with your file access (like
+              running a teammate’s tests); Cobble removes tokens and keys from
+              its environment.
             </p>
           </fieldset>
         </details>
@@ -1145,7 +1148,7 @@ function RunGate({
   gate: NonNullable<RunSnapshot["run"]["gate"]>;
   pending: boolean;
   command: (
-    command: "done" | "skip",
+    command: "done" | "skip" | "approve" | "deny",
     taskId?: string,
     note?: string,
     answers?: string[],
@@ -1240,10 +1243,13 @@ function RunGate({
       <h3>Run needs you</h3>
       <p className="agent-team-text">{gate.message}</p>
       {gate.kind === "approval" && (
-        <p>Choosing Done grants the production approval.</p>
+        <p>
+          Approve allows exactly one production deploy (the next one the planner
+          starts). Deny tells the planner to continue without it.
+        </p>
       )}
       <label className="agent-team-field">
-        Answer
+        {gate.kind === "approval" ? "Note (optional)" : "Answer"}
         <input
           value={note}
           maxLength={1000}
@@ -1254,17 +1260,25 @@ function RunGate({
         <button
           type="button"
           disabled={pending}
-          onClick={() => command("done", undefined, note)}
+          onClick={() =>
+            command(
+              gate.kind === "approval" ? "approve" : "done",
+              undefined,
+              note,
+            )
+          }
         >
-          Done
+          {gate.kind === "approval" ? "Approve" : "Done"}
         </button>
         <button
           type="button"
           className="secondary"
           disabled={pending}
-          onClick={() => command("skip", undefined, note)}
+          onClick={() =>
+            command(gate.kind === "approval" ? "deny" : "skip", undefined, note)
+          }
         >
-          Skip
+          {gate.kind === "approval" ? "Deny" : "Skip"}
         </button>
       </div>
     </section>

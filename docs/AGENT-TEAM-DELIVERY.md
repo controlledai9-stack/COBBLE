@@ -72,6 +72,32 @@
 - `--max-runs` limits each session (default 3, at most 20).
 - Nothing is pushed and `main` is never touched. The user reviews `cobble/autopilot` and merges it when ready.
 
+## Full access, intake interview and the independent review (10 November 2026)
+
+**Full access (user opt-in per writing role).** Codex's Windows sandbox refuses to start any program outside the project folder ("Access is denied"), so a sandboxed deployer can never use installed CLIs such as Netlify. A team can mark coder, generator or deployer as full access (`cobble team access deployer`, or the Full access column in the Roles table). Those roles then run without the agent's own sandbox: Codex `danger-full-access`, Claude `bypassPermissions`, Gemini `yolo`. The planner and reviewers stay read-only. The setting is off by default, and the panel warns about it.
+
+**Intake interview.** On its first turn the planner asks the user what only they can decide (`ask_user`, up to 12 questions per round, several rounds allowed): where to deploy, must-use or must-avoid technology, design, budget. Answers are saved per team as project decisions, which appear in every planner and worker prompt and are reused by later runs and autopilot. If the chosen deploy target is unavailable, the planner asks the user rather than switching on its own.
+
+**Independent review:** Codex reviewed `298cb0b` and reported 15 findings. All were checked against the code. Each fixed finding has a regression test in `test/agent-team-review.test.ts`.
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | A redirected task `.git` file could commit to the user's branch | Capture uses the admin folder Git registered for the worktree (never the worktree's `.git` file) and refuses unless HEAD is the task branch |
+| 2 | The check command runs agent-written code with the user's environment | Partly mitigated. Secret-looking environment variables are removed, and the panel states the risk. It still runs with the user's file access, like running a teammate's tests |
+| 3 | A "preview" label could hide `--prod` | Preview tasks whose instructions ask for production (affirmative `--prod`, "deploy to production", `env=prod`; negated clauses ignored) are gated. This is best effort for full-access deployers, which can ignore instructions |
+| 4 | "Done" granted run-wide production approval | Approval needs an explicit Approve, covers one task, and a run-level approval allows exactly one production task |
+| 5 | The autopilot backlog could be reached through a junction | The backlog must be a tracked regular file with no link on its path, inside the canonical worktree |
+| 6 | Cleanup matched sibling folders by prefix | Component-wise containment |
+| 7 | Two processes could drive one run, and concurrent starts could both pass | Database lease per run (owner ID plus heartbeat, 45 s). Other processes never recover, resume or tick a live leased run. Starts are reserved in one `BEGIN IMMEDIATE` transaction |
+| 8 | Stop during a planner turn could be undone by its reply | The planner gets an abort signal on stop, and late results (including errors) are dropped |
+| 9 | Capture could commit `.env` or a staged report | The report is always unstaged. Secret-looking files (`.env*` except examples, keys, `.npmrc`, credentials files) are never committed, and the planner is told |
+| 10 | A worker question could be marked delivered unseen | Only questions shown in that planner prompt are acknowledged |
+| 11 | Pause, then close, could strand a running task | Recovery also fixes tasks in paused runs |
+| 12 | Autopilot ticked partial or failing runs | Items are flagged `incomplete` if any task stayed unmerged, or `check_failed` if the last test check failed |
+| 13 | Autopilot merged before updating the backlog | The merge and the tick happen in one commit (`--no-commit` merge), or the merge is aborted and the item flagged |
+| 14 | Reports were read through links, without a size cap | Regular file inside the worktree only, at most 256 KB |
+| 15 | A stale report could decide a later invocation | The report is cleared before each worker invocation |
+
 ## Interfaces
 
 **Desktop API** (`window.cobble`, every field validated in main):

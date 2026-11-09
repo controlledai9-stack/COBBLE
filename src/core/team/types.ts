@@ -145,6 +145,8 @@ export interface TeamTask {
   delivered?: boolean;
   /** Set when the user cleared this task's gate; sent to the resumed agent. */
   resumeNote?: string;
+  /** Production deploy explicitly approved by the user for this task only. */
+  approved?: boolean;
   /** Reviewer tasks: the task whose changes are reviewed. */
   reviews?: string;
   /** Open question for the planner (state needs_decision). */
@@ -190,8 +192,15 @@ export interface TeamRun {
   /** Worker roles running with full access in this run (user opt-in). */
   fullAccessRoles?: TeamRole[];
   summary?: string;
-  /** Approvals the user granted, e.g. "production". */
+  /** Legacy, no longer used for gating (kept for older stored runs). */
   approvals: string[];
+  /**
+   * Run-level production approvals not yet used: each lets exactly one
+   * production deploy task start without its own approval gate.
+   */
+  productionApprovals?: number;
+  /** Finished tasks that could not be merged into the run branch at finish. */
+  unmerged?: string[];
   invalidPlannerReplies: number;
   pausedReason?: string;
   /** Messages for the planner's next wake-up (gate answers, merge failures). */
@@ -200,6 +209,9 @@ export interface TeamRun {
   wakeRequested: boolean;
   /** Workspace the run was started for; worktrees branch from its repo. */
   workspace: string;
+  /** Lease: the Cobble process currently driving this run, and when it last confirmed. */
+  ownerId?: string;
+  ownerSeen?: string;
   /**
    * Architecture brief written by the planner (set_brief): stack, layout,
    * contracts between tasks, conventions. Every worker receives it.
