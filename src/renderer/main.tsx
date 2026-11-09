@@ -17,6 +17,7 @@ import {
   WorkAreas,
   AgentConnections,
 } from "./collaboration-panel";
+import { TeamPanel } from "./team-panel";
 import { RevertDialog } from "./revert-dialog";
 import {
   IconHome,
@@ -159,6 +160,12 @@ function App() {
     new URLSearchParams(location.search).get("view") === "companion";
   const isMiniChat =
     new URLSearchParams(location.search).get("view") === "mini-chat";
+  useEffect(() => {
+    if (companion || isMiniChat) return;
+    return window.cobble?.onTeamAttention?.((event) => {
+      setNotice(`Agent Team needs you: ${event.message}`);
+    });
+  }, [companion, isMiniChat]);
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const [workspaceModalMode, setWorkspaceModalMode] = useState<
     "create" | "join"
@@ -1568,6 +1575,7 @@ function Teams({
           <WorkAreas state={state} act={act} />
           <CollaborationPanel state={state} act={act} onError={onError} />
           <AgentConnections state={state} onError={onError} notice={notice} />
+          <TeamPanel teamId={team.id} hasWorkspace={!!team.workspace} />
         </>
       )}
     </>

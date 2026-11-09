@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import { Store } from "./store";
 import { Observer, OBSERVER_LIMITS } from "./observer";
@@ -28,6 +28,19 @@ import { ReviewSupervisor, type ReviewOutcome } from "./review/supervisor";
 import { buildReviewPacket } from "./review/packet";
 import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
+import { TeamStore } from "./team/team-store";
+import { TeamOrchestrator, type GateAnswer } from "./team/orchestrator";
+import { defaultAdapters, type AgentAdapter } from "./team/adapters";
+import {
+  TEAM_AGENTS,
+  TEAM_ROLES,
+  type AgentDetection,
+  type ApprovalPolicy,
+  type TeamAgentId,
+  type TeamBudget,
+  type TeamRole,
+} from "./team/types";
+import { tmpdir } from "node:os";
 import { maintenanceStatus, pruneResolvedBatches } from "./maintenance";
 import {
   ANALYZER_VERSION,
@@ -54,6 +67,9 @@ export class CobbleService extends EventEmitter {
   readonly analysis: AnalysisLedger;
   readonly reviewWorker?: ReviewSupervisor;
   readonly agentEvents: AgentEvents;
+  readonly teamStore: TeamStore;
+  readonly agentTeam: TeamOrchestrator;
+  private readonly teamAdapters: Record<TeamAgentId, AgentAdapter>;
   private agentTask?: Promise<void>;
   private agentTimer?: ReturnType<typeof setTimeout>;
   observer?: Observer;
@@ -86,6 +102,10 @@ export class CobbleService extends EventEmitter {
     options: {
       measureCapacity?: typeof capacity;
       reviewWorker?: { file: string; executable?: string; guard?: string };
+      /** Agent Team CLI adapters; tests inject scripted fakes. */
+      teamAdapters?: Record<TeamAgentId, AgentAdapter>;
+      /** Where run/task worktrees live (defaults beside the database). */
+      teamWorktreeRoot?: string;
     } = {},
   ) {
     super();
@@ -99,6 +119,33 @@ export class CobbleService extends EventEmitter {
         options.reviewWorker.guard,
       );
     this.agentEvents = new AgentEvents(this.store);
+    this.teamStore = new TeamStore(this.store);
+    this.teamAdapters = options.teamAdapters ?? defaultAdapters();
+    this.agentTeam = new TeamOrchestrator({
+      teamStore: this.teamStore,
+      adapters: this.teamAdapters,
+      worktreeRoot:
+        options.teamWorktreeRoot ??
+        join(
+          file === ":memory:" ? tmpdir() : dirname(resolve(file)),
+          "team-worktrees",
+        ),
+      gitBinary: () => this.gitBinary,
+      team: (id) => {
+        try {
+          return this.store.team(id);
+        } catch {
+          return null;
+        }
+      },
+    });
+    this.agentTeam.on("update", (runId: string) => this.emit("team", runId));
+    this.agentTeam.on("attention", (event) =>
+      this.emit("team-attention", event),
+    );
+    this.agentTeam.on("diagnostic", (message) =>
+      this.emit("diagnostic", message),
+    );
     this.collaboration = new Collaboration(this.store);
     this.bridge = new IdeBridge(
       () => this.activeTeam(),
@@ -197,6 +244,8 @@ export class CobbleService extends EventEmitter {
     );
   }
   async start() {
+    // Runs left "running" by a previous process are paused, never relaunched.
+    this.agentTeam.recover();
     await this.bridge.start();
     try {
       await this.network.resume();
@@ -1569,6 +1618,123 @@ export class CobbleService extends EventEmitter {
     return result;
   }
 
+  // ------------------------------------------------------------ Agent Team
+
+  private teamId() {
+    const team = this.activeTeam();
+    if (!team) throw new Error("Choose a team first");
+    return team.id;
+  }
+  teamRoles(): Partial<Record<TeamRole, TeamAgentId>> {
+    return this.teamStore.roles(this.teamId());
+  }
+  setTeamRole(role: string, agent: string | null) {
+    if (!TEAM_ROLES.includes(role as TeamRole)) throw new Error("Unknown role");
+    if (agent !== null && !TEAM_AGENTS.includes(agent as TeamAgentId))
+      throw new Error("Unsupported agent");
+    this.teamStore.setRole(
+      this.teamId(),
+      role as TeamRole,
+      agent as TeamAgentId | null,
+    );
+    this.emit("team", null);
+    return this.teamRoles();
+  }
+  async detectTeamAgents(): Promise<AgentDetection[]> {
+    return Promise.all(TEAM_AGENTS.map((id) => this.teamAdapters[id].detect()));
+  }
+  /** Sends a one-line prompt to an agent to prove headless mode and sign-in. */
+  async testTeamAgent(agent: string) {
+    if (!TEAM_AGENTS.includes(agent as TeamAgentId))
+      throw new Error("Unsupported agent");
+    const result = await this.teamAdapters[agent as TeamAgentId].run({
+      cwd: this.activeTeam()?.workspace || tmpdir(),
+      prompt:
+        "Reply with exactly the word READY and nothing else. Do not use any tools.",
+      readOnly: true,
+      network: false,
+      timeoutMs: 120_000,
+    });
+    return {
+      ok: result.exitCode === 0 && /READY/i.test(result.finalText),
+      exitCode: result.exitCode,
+      signInNeeded: !!result.authRequired,
+      rateLimited: !!result.rateLimited,
+      output: result.finalText.slice(0, 500),
+      durationMs: result.durationMs,
+    };
+  }
+  startTeamRun(
+    goal: string,
+    budget?: Partial<TeamBudget>,
+    policy?: Partial<ApprovalPolicy>,
+    options?: { checkCommand?: string },
+  ) {
+    return this.agentTeam.startRun(
+      this.teamId(),
+      String(goal ?? ""),
+      sanitizeBudget(budget),
+      sanitizePolicy(policy),
+      {
+        checkCommand:
+          options && typeof options === "object"
+            ? (options.checkCommand as string | undefined)
+            : undefined,
+      },
+    );
+  }
+  teamRuns() {
+    return this.teamStore.runs(this.teamId());
+  }
+  teamRun(runId: string) {
+    const snapshot = this.agentTeam.snapshot(String(runId));
+    if (!snapshot || snapshot.run.teamId !== this.teamId())
+      throw new Error("Unknown team run");
+    return snapshot;
+  }
+  async teamRunCommand(
+    runId: string,
+    command: "pause" | "resume" | "stop" | "cleanup" | GateAnswer,
+    taskId?: string,
+    note?: string,
+  ) {
+    this.teamRun(runId); // ownership check
+    switch (command) {
+      case "pause":
+        this.agentTeam.pause(runId);
+        break;
+      case "resume":
+        this.agentTeam.resume(runId);
+        break;
+      case "stop":
+        this.agentTeam.stop(runId);
+        break;
+      case "cleanup":
+        await this.agentTeam.cleanup(runId);
+        break;
+      case "done":
+      case "approve":
+      case "skip":
+      case "deny":
+        this.agentTeam.resolveGate(
+          runId,
+          command,
+          taskId ? String(taskId) : undefined,
+          typeof note === "string" ? note : "",
+        );
+        break;
+      default:
+        throw new Error("Unknown team command");
+    }
+    return this.teamRun(runId);
+  }
+  /** The folder a waiting task works in, for "Open terminal here". */
+  teamTaskFolder(runId: string, taskId?: string) {
+    const snapshot = this.teamRun(runId);
+    const task = snapshot.tasks.find((t) => t.id === taskId);
+    return task?.worktree ?? snapshot.run.workspace;
+  }
+
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.closed = true;
@@ -1581,6 +1747,7 @@ export class CobbleService extends EventEmitter {
     clearTimeout(this.agentTimer);
     clearInterval(this.reconciliationTimer);
     await Promise.allSettled([
+      this.agentTeam.close(),
       this.watcher?.close(),
       this.gitWatcher?.close(),
       this.monitorTask,
@@ -1600,4 +1767,37 @@ export class CobbleService extends EventEmitter {
     await this.network.hosting.settled();
     this.store.close();
   }
+}
+
+function sanitizeBudget(budget?: Partial<TeamBudget>): Partial<TeamBudget> {
+  if (!budget || typeof budget !== "object") return {};
+  const out: Partial<TeamBudget> = {};
+  const bounds: Record<keyof TeamBudget, [number, number]> = {
+    maxTasks: [1, 100],
+    maxPlannerTurns: [1, 50],
+    maxParallel: [1, 6],
+    maxAttempts: [1, 5],
+    wallClockMs: [60_000, 24 * 3_600_000],
+    taskTimeoutMs: [60_000, 3 * 3_600_000],
+  };
+  for (const [key, [min, max]] of Object.entries(bounds) as [
+    keyof TeamBudget,
+    [number, number],
+  ][]) {
+    const value = budget[key];
+    if (typeof value === "number" && Number.isFinite(value))
+      out[key] = Math.min(max, Math.max(min, Math.round(value)));
+  }
+  return out;
+}
+function sanitizePolicy(
+  policy?: Partial<ApprovalPolicy>,
+): Partial<ApprovalPolicy> {
+  if (!policy || typeof policy !== "object") return {};
+  const out: Partial<ApprovalPolicy> = {};
+  if (typeof policy.autoPreviewDeploy === "boolean")
+    out.autoPreviewDeploy = policy.autoPreviewDeploy;
+  if (typeof policy.requireApprovalForProduction === "boolean")
+    out.requireApprovalForProduction = policy.requireApprovalForProduction;
+  return out;
 }
