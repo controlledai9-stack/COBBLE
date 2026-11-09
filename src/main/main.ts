@@ -26,6 +26,7 @@ import { IdeDiscovery, discoverIdes } from "./ide-discovery";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import type { ExtendedAction as Action, Tab, AppState } from "../shared/types";
 import { installAgentHooks } from "../core/agents";
+import { spawn } from "node:child_process";
 import { runRelay } from "../internet/cli";
 import { diagnoseIntegrations } from "./integration-diagnostics";
 let service: CobbleService;
@@ -404,6 +405,95 @@ else {
           join(app.getPath("userData"), "ide-pairing.json"),
           remove,
         );
+      });
+      // Agent Team (docs/AGENT-TEAM-PLAN.md). Main validates every field.
+      const text = (value: unknown, max = 200) => {
+        if (typeof value !== "string" || value.length > max)
+          throw new Error("Invalid team request");
+        return value;
+      };
+      handle("team-roles", () => service.teamRoles());
+      handle("team-set-role", (_, role: unknown, agent: unknown) =>
+        service.setTeamRole(
+          text(role, 32),
+          agent === null ? null : text(agent, 32),
+        ),
+      );
+      handle("team-detect-agents", () => service.detectTeamAgents());
+      handle("team-test-agent", (_, agent: unknown) =>
+        service.testTeamAgent(text(agent, 32)),
+      );
+      handle(
+        "team-start-run",
+        (_, goal: unknown, budget: unknown, policy: unknown) =>
+          service.startTeamRun(
+            text(goal, 4_000),
+            budget && typeof budget === "object"
+              ? (budget as object)
+              : undefined,
+            policy && typeof policy === "object"
+              ? (policy as object)
+              : undefined,
+          ),
+      );
+      handle("team-runs", () => service.teamRuns());
+      handle("team-run", (_, runId: unknown) =>
+        service.teamRun(text(runId, 64)),
+      );
+      handle(
+        "team-command",
+        (
+          _,
+          runId: unknown,
+          command: unknown,
+          taskId: unknown,
+          note: unknown,
+        ) => {
+          const allowedCommands = [
+            "pause",
+            "resume",
+            "stop",
+            "cleanup",
+            "done",
+            "approve",
+            "skip",
+            "deny",
+          ] as const;
+          const name = text(command, 16) as (typeof allowedCommands)[number];
+          if (!allowedCommands.includes(name))
+            throw new Error("Unknown team command");
+          return service.teamRunCommand(
+            text(runId, 64),
+            name,
+            taskId === undefined || taskId === null
+              ? undefined
+              : text(taskId, 32),
+            note === undefined || note === null ? undefined : text(note, 1_000),
+          );
+        },
+      );
+      handle("team-open-terminal", (_, runId: unknown, taskId: unknown) => {
+        // The folder comes from Cobble's own records, never from the renderer.
+        const folder = service.teamTaskFolder(
+          text(runId, 64),
+          taskId === undefined || taskId === null
+            ? undefined
+            : text(taskId, 32),
+        );
+        if (process.platform !== "win32")
+          throw new Error(
+            "Opening a terminal is only supported on Windows for now",
+          );
+        spawn(
+          "cmd.exe",
+          ["/d", "/c", "start", "", "powershell.exe", "-NoExit"],
+          {
+            cwd: folder,
+            detached: true,
+            stdio: "ignore",
+            windowsHide: false,
+          },
+        ).unref();
       });
       handle("preview-revert", (_, id: string) => service.previewRevert(id));
       handle("apply-revert", async (_, id: string, token: string) => {
@@ -883,6 +973,29 @@ else {
           if (!win.isDestroyed()) win.webContents.send("cobble:changed", state);
       });
       service.on("diagnostic", (message) => console.error("[Cobble]", message));
+      service.on("team", (runId: string | null) => {
+        if (quitting) return;
+        for (const win of [
+          main,
+          companion,
+          ...(chatWindow && !chatWindow.isDestroyed() ? [chatWindow] : []),
+        ])
+          if (!win.isDestroyed()) win.webContents.send("cobble:team", runId);
+      });
+      service.on(
+        "team-attention",
+        (event: { runId: string; taskId?: string; message: string }) => {
+          if (quitting) return;
+          if (!smoke && Notification.isSupported())
+            new Notification({
+              title: "Agent team needs you",
+              body: event.message.slice(0, 240),
+            }).show();
+          for (const win of [main, companion])
+            if (!win.isDestroyed())
+              win.webContents.send("cobble:team-attention", event);
+        },
+      );
       main.on("close", (event) => {
         if (!shutdownComplete) {
           event.preventDefault();

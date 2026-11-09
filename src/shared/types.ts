@@ -1,3 +1,24 @@
+import type {
+  AgentDetection,
+  ApprovalPolicy,
+  RunSnapshot,
+  TeamAgentId,
+  TeamBudget,
+  TeamRole,
+  TeamRun,
+} from "../core/team/types";
+export type {
+  AgentDetection,
+  ApprovalPolicy,
+  RunSnapshot,
+  TeamAgentId,
+  TeamBudget,
+  TeamRole,
+  TeamRun,
+  TeamTask,
+  TeamDecision,
+  TeamEvent,
+} from "../core/team/types";
 export type Availability = "available" | "focused" | "away";
 export type CompanionMode = "normal" | "idle" | "dragging";
 export type Classification = "covered" | "required" | "uncertain" | "extra";
@@ -508,6 +529,51 @@ export interface DesktopApi {
     agent: "claude" | "cursor" | "gemini",
     remove?: boolean,
   ): Promise<void>;
+  // Agent Team (docs/AGENT-TEAM-PLAN.md). Optional so older test doubles still type-check.
+  teamRoles?(): Promise<Partial<Record<TeamRole, TeamAgentId>>>;
+  setTeamRole?(
+    role: TeamRole,
+    agent: TeamAgentId | null,
+  ): Promise<Partial<Record<TeamRole, TeamAgentId>>>;
+  detectTeamAgents?(): Promise<AgentDetection[]>;
+  testTeamAgent?(agent: TeamAgentId): Promise<{
+    ok: boolean;
+    exitCode: number;
+    signInNeeded: boolean;
+    rateLimited: boolean;
+    output: string;
+    durationMs: number;
+  }>;
+  startTeamRun?(
+    goal: string,
+    budget?: Partial<TeamBudget>,
+    policy?: Partial<ApprovalPolicy>,
+  ): Promise<TeamRun>;
+  teamRuns?(): Promise<TeamRun[]>;
+  teamRun?(runId: string): Promise<RunSnapshot>;
+  teamCommand?(
+    runId: string,
+    command:
+      | "pause"
+      | "resume"
+      | "stop"
+      | "cleanup"
+      | "done"
+      | "approve"
+      | "skip"
+      | "deny",
+    taskId?: string,
+    note?: string,
+  ): Promise<RunSnapshot>;
+  openTeamTerminal?(runId: string, taskId?: string): Promise<void>;
+  onTeam?(callback: (runId: string | null) => void): () => void;
+  onTeamAttention?(
+    callback: (event: {
+      runId: string;
+      taskId?: string;
+      message: string;
+    }) => void,
+  ): () => void;
   previewRevert(activityId: string): Promise<RevertPreview>;
   applyRevert(activityId: string, token: string): Promise<void>;
   integrateMain(proposalId: string): Promise<void>;

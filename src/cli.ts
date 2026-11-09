@@ -16,6 +16,8 @@ async function main() {
       file: { type: "string" },
       stdin: { type: "boolean" },
       "from-transcript": { type: "boolean" },
+      "max-tasks": { type: "string" },
+      "max-turns": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -28,6 +30,14 @@ async function main() {
   cobble status
   cobble report
 
+  cobble team detect                 which agent CLIs are installed
+  cobble team roles                  show role assignments
+  cobble team role ROLE AGENT|none   e.g. team role planner claude
+  cobble team test AGENT             one-line headless round trip
+  cobble team run "GOAL" [--max-tasks N] [--max-turns N]
+  cobble team status [RUN_ID]
+
+Do not run "team run" while the desktop app is open on the same data.
 Optional: --data PATH uses an isolated SQLite database.
 The desktop handles encrypted team hosting and IDE pairing.
 Transcript ingest accepts current-turn text or {assistant_message: text}.
@@ -125,6 +135,8 @@ Agent hook installation is not yet automatic.`);
       }
       await service.monitor();
       console.log(JSON.stringify(await service.ingest(input), null, 2));
+    } else if (command === "team") {
+      await teamCommand(service, positionals.slice(1), values);
     } else if (command === "report") {
       const report = service.report();
       const directory = join(
@@ -143,6 +155,101 @@ Agent hook installation is not yet automatic.`);
   } finally {
     await service.close();
   }
+}
+async function teamCommand(
+  service: CobbleService,
+  args: string[],
+  values: Record<string, unknown>,
+) {
+  const [sub, ...rest] = args;
+  const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  if (sub === "detect") return print(await service.detectTeamAgents());
+  if (sub === "roles") return print(service.teamRoles());
+  if (sub === "role") {
+    const [role, agent] = rest;
+    if (!role || !agent)
+      throw new Error("Usage: cobble team role ROLE AGENT|none");
+    return print(service.setTeamRole(role, agent === "none" ? null : agent));
+  }
+  if (sub === "test") {
+    if (!rest[0]) throw new Error("Usage: cobble team test AGENT");
+    return print(await service.testTeamAgent(rest[0]));
+  }
+  if (sub === "status") {
+    const id = rest[0] ?? service.teamRuns()[0]?.id;
+    if (!id) return console.log("No team runs yet.");
+    return print(service.teamRun(id));
+  }
+  if (sub === "run") {
+    const goal = rest.join(" ").trim();
+    if (!goal) throw new Error('Usage: cobble team run "GOAL"');
+    const number = (v: unknown) =>
+      typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
+    const run = await service.startTeamRun(goal, {
+      ...(number(values["max-tasks"])
+        ? { maxTasks: number(values["max-tasks"]) }
+        : {}),
+      ...(number(values["max-turns"])
+        ? { maxPlannerTurns: number(values["max-turns"]) }
+        : {}),
+    });
+    console.log(`Run ${run.id} on branch ${run.runBranch}`);
+    const prompt = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    let shown = 0;
+    try {
+      for (;;) {
+        await service.agentTeam.idle(run.id);
+        const snap = service.teamRun(run.id);
+        for (const event of snap.events.slice(shown))
+          console.log(`[${event.kind}] ${event.message}`);
+        shown = snap.events.length;
+        const waiting = snap.tasks.filter((t) => t.state === "needs_human");
+        if (snap.run.state === "needs_human" && snap.run.gate) {
+          const answer = await prompt.question(
+            `\nThe planner needs you (${snap.run.gate.kind}): ${snap.run.gate.message}\nType your answer, or "skip": `,
+          );
+          service.agentTeam.resolveGate(
+            run.id,
+            answer.trim() === "skip" ? "skip" : "done",
+            undefined,
+            answer,
+          );
+          continue;
+        }
+        if (waiting.length && snap.run.state === "running") {
+          const task = waiting[0];
+          const answer = await prompt.question(
+            `\n${task.id} needs you: ${task.gate?.message}\nFolder: ${task.worktree ?? snap.run.workspace}\nPress Enter when done${task.gate?.kind === "approval" ? " to approve" : ""}, or type "skip": `,
+          );
+          service.agentTeam.resolveGate(
+            run.id,
+            answer.trim() === "skip"
+              ? "skip"
+              : task.gate?.kind === "approval"
+                ? "approve"
+                : "done",
+            task.id,
+          );
+          continue;
+        }
+        if (snap.run.state === "paused" && snap.run.pausedReason)
+          console.log(`Paused: ${snap.run.pausedReason}`);
+        if (snap.run.summary) console.log(`\nSummary: ${snap.run.summary}`);
+        console.log(
+          `Run state: ${snap.run.state}. Work is on branch ${snap.run.runBranch}.`,
+        );
+        for (const d of snap.decisions)
+          console.log(`- decided: ${d.question} -> ${d.choice} (${d.why})`);
+        return;
+      }
+    } finally {
+      prompt.close();
+    }
+  }
+  throw new Error("Usage: cobble team detect|roles|role|test|run|status");
 }
 void main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
