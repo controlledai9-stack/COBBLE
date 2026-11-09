@@ -13,7 +13,11 @@ import { join } from "node:path";
 import { Store } from "../src/core/store";
 import { TeamStore } from "../src/core/team/team-store";
 import { TeamOrchestrator } from "../src/core/team/orchestrator";
-import { parsePlannerReply, parseTaskReport } from "../src/core/team/actions";
+import {
+  parsePlannerReply,
+  parseTaskReport,
+  reportFromReply,
+} from "../src/core/team/actions";
 import {
   classifyFailure,
   codexSpec,
@@ -1327,4 +1331,63 @@ test("live-run regressions: another process closing never pauses this run; pause
     if (!paused) release();
     await f.cleanup();
   }
+});
+
+test("live-run regression: code fences inside JSON strings do not cut the action or report block", () => {
+  const instructions =
+    'Create assets/logo.svg like:\n```svg\n<svg viewBox="0 0 64 64"></svg>\n```\nThen add it to README.';
+  const reply =
+    "Plan below.\n```cobble-actions\n" +
+    JSON.stringify(
+      {
+        actions: [
+          {
+            type: "delegate",
+            id: "T1",
+            role: "generator",
+            title: "Logo",
+            instructions,
+          },
+        ],
+      },
+      null,
+      1,
+    ) +
+    "\n```\nThanks!";
+  const parsed = parsePlannerReply(
+    reply,
+    new Set(),
+    new Set<TeamRole>(["planner", "generator"]),
+  );
+  assert.equal(
+    (parsed.actions[0] as { instructions: string }).instructions,
+    instructions,
+  );
+  // Raw newlines and a fence together, as a model would write them.
+  const raw =
+    '```cobble-actions\n{"actions":[{"type":"set_brief","content":"# Brief\nUse:\n```js\nrequire(\'x\')\n```\nDone"}]}\n```';
+  assert.match(
+    (
+      parsePlannerReply(raw, new Set(), new Set<TeamRole>(["planner"]))
+        .actions[0] as { content: string }
+    ).content,
+    /```js/,
+  );
+  // Reviewer report with a fenced snippet inside the summary.
+  const report =
+    'Looks good.\n```cobble-report\n{"status":"done","summary":"Use ```<img>``` tags","verdict":"approve"}\n```';
+  assert.equal(
+    parseTaskReport(reportFromReply(report) ?? "")?.verdict,
+    "approve",
+  );
+  // The last block wins when the model repeats itself.
+  const twice =
+    '```cobble-actions\n{"actions":[{"type":"wait","reason":"a"}]}\n```\nfixed:\n```cobble-actions\n{"actions":[{"type":"wait","reason":"b"}]}\n```';
+  assert.equal(
+    (
+      parsePlannerReply(twice, new Set(), new Set<TeamRole>(["planner"]))
+        .actions[0] as { reason: string }
+    ).reason,
+    "b",
+  );
 });

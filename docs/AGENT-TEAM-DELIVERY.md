@@ -87,7 +87,7 @@ Still open:
 
 ## Tests
 
-`test/agent-team.test.ts` has 12 tests:
+`test/agent-team.test.ts` has 13 tests:
 
 - planner-output validation
 - report and CLI parsing
@@ -122,7 +122,18 @@ Full suite: **227 passed, 0 failed**. `tsc --noEmit` is clean and `scripts/build
 - **Pause during a planner turn dropped the planner's delegated tasks.** Now the tasks are queued and start when the run resumes.
 - **Raw line breaks inside JSON strings:** models often write them in a long brief. Cobble now repairs them, saving a planner turn.
 - **Resume from the CLI:** `cobble team resume [RUN_ID] [--max-turns N]` added.
+- **The real cause of the "invalid JSON" replies (found in run 2):** when the planner's instructions contained a code example with a ` ``` ` fence, the old reader treated that fence as the end of the block and cut the JSON in half (`Unterminated string … column 392`). Blocks are now read by JSON brace structure, so fences inside strings no longer end them. This applies to both `cobble-actions` and `cobble-report`.
 - Known, not fixed: `cobble init` asks for a display name interactively, and that prompt fails when input is piped.
+
+**Run 2: Gemini on the team and recovery from a provider failure.**
+
+- Gemini was switched to an API key (`~/.gemini/.env`, set up by the user), and `cobble team test gemini` passed (READY in 7.3 s).
+- Plan v2 added "SVG logo at `assets/logo.svg` shown at the top of README.md". Roles: planner Claude, generator Gemini, coder Codex, reviewer Claude. Budget: 4 tasks and 5 planner turns.
+- What happened:
+  1. The planner gave the logo task (T1) to Gemini. Gemini's free tier failed after about 7 minutes of internal retries (a 503 or usage-limit error). Cobble marked T1 failed with "gemini hit a usage limit" and cancelled its dependent review (T2).
+  2. The planner decided by itself to reassign the work to the coder (Codex, T3) and review it (T4, Claude, approved). It recorded the reason in the decision log and finished.
+- Verified on `team/0400b205`: only `assets/logo.svg` (a valid SVG with no scripts) and the README header changed. `main` was untouched and the user was never asked.
+- Takeaway: the free Gemini API tier is unreliable for agent work. Prefer a faster model or a paid key for Gemini roles, or keep a fallback role assigned.
 
 ## Live verification checklist (remaining items)
 

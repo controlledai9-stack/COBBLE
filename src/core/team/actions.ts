@@ -97,10 +97,50 @@ export function escapeControlCharsInStrings(text: string): string {
   return out;
 }
 
+/**
+ * Returns the JSON object that starts at the first "{" after `from`, found by
+ * matching braces outside string literals. Code fences (```) inside JSON
+ * strings — e.g. an example in a task's instructions — do not end it.
+ */
+function jsonObjectAfter(text: string, from: number): string | null {
+  const start = text.indexOf("{", from);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
+/** The last fenced block with this tag, read by JSON structure, not by ``` . */
+function taggedBlock(reply: string, tag: string): string | null {
+  const marker = `\`\`\`${tag}`;
+  const at = reply.lastIndexOf(marker);
+  if (at < 0) return null;
+  return (
+    jsonObjectAfter(reply, at + marker.length) ??
+    // Unbalanced JSON: fall back to the text up to the next fence so the
+    // error message points at the real problem.
+    reply.slice(at + marker.length).match(/^\s*\n([\s\S]*?)```/)?.[1] ??
+    null
+  );
+}
+
 /** Extracts the last ```cobble-actions block, or a bare JSON object reply. */
 export function extractActionBlock(reply: string): string | null {
-  const blocks = [...reply.matchAll(/```cobble-actions\s*\n([\s\S]*?)```/g)];
-  if (blocks.length) return blocks[blocks.length - 1][1];
+  const block = taggedBlock(reply, "cobble-actions");
+  if (block !== null) return block;
   const trimmed = reply.trim();
   return trimmed.startsWith("{") && trimmed.endsWith("}") ? trimmed : null;
 }
@@ -279,8 +319,7 @@ export function parsePlannerReply(
 
 /** Extracts a worker report from a ```cobble-report block in its reply. */
 export function reportFromReply(reply: string): string | null {
-  const blocks = [...reply.matchAll(/```cobble-report\s*\n([\s\S]*?)```/g)];
-  return blocks.length ? blocks[blocks.length - 1][1] : null;
+  return taggedBlock(reply, "cobble-report");
 }
 
 /** Parses a worker's .cobble-task/report.json; returns null when unusable. */
