@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentDetection,
+  AutopilotOptions,
+  AutopilotStatus,
   PhoneNotifyView,
   DesktopApi,
   RunSnapshot,
@@ -47,6 +49,9 @@ const apiMethods = [
   "detectTeamAgents",
   "testTeamAgent",
   "startTeamRun",
+  "startAutopilot",
+  "stopAutopilot",
+  "autopilotStatus",
   "teamRuns",
   "teamRun",
   "teamCommand",
@@ -119,11 +124,16 @@ function TeamPanelContent({
   });
   const [requireApprovalForProduction, setRequireApproval] = useState(true);
   const [checkCommand, setCheckCommand] = useState("");
+  const [shareDependencies, setShareDependencies] = useState(false);
+  const [autopilot, setAutopilot] = useState<AutopilotStatus>();
 
   const refreshRuns = useCallback(async () => {
     const request = ++runRequest.current;
     try {
-      const [latest] = await api.teamRuns();
+      const [[latest], status] = await Promise.all([
+        api.teamRuns(),
+        api.autopilotStatus(),
+      ]);
       if (request !== runRequest.current) return;
       if (latest && latest.teamId !== teamId) return;
       const next = latest ? await api.teamRun(latest.id) : null;
@@ -132,6 +142,7 @@ function TeamPanelContent({
         (!next || next.run.teamId === teamId)
       ) {
         setSnapshot(next);
+        setAutopilot(status);
         setRunError("");
       }
     } catch (error) {
@@ -206,6 +217,7 @@ function TeamPanelContent({
   const startDisabled =
     pending ||
     !!activeRun ||
+    autopilot?.active !== false ||
     snapshot === undefined ||
     !hasWorkspace ||
     !readyRoles ||
@@ -325,7 +337,10 @@ function TeamPanelContent({
                 maxParallel: Number(budget.maxParallel),
               },
               { requireApprovalForProduction },
-              { checkCommand: checkCommand.trim() || undefined },
+              {
+                checkCommand: checkCommand.trim() || undefined,
+                shareDependencies,
+              },
             );
             setGoal("");
             await refreshRuns();
@@ -384,9 +399,17 @@ function TeamPanelContent({
                 aria-describedby="agent-team-check-hint"
               />
             </label>
+            <label className="agent-team-checkbox">
+              <input
+                type="checkbox"
+                checked={shareDependencies}
+                onChange={(event) => setShareDependencies(event.target.checked)}
+              />
+              Share node_modules
+            </label>
             <p id="agent-team-check-hint" className="small">
               Runs in each task’s worktree when the task captures changes. The
-              command must install its own dependencies.
+              command must install its own dependencies unless they are shared.
             </p>
           </fieldset>
         </details>
@@ -395,6 +418,25 @@ function TeamPanelContent({
         </button>
         {startHint && <p className="small">{startHint}</p>}
       </form>
+
+      <AutopilotCard
+        status={autopilot}
+        currentRun={snapshot?.run.id}
+        startDisabled={startDisabled}
+        pending={pending}
+        start={(options) =>
+          void perform(async () => {
+            await api.startAutopilot(options);
+            await refreshRuns();
+          })
+        }
+        stop={() =>
+          void perform(async () => {
+            await api.stopAutopilot();
+            await refreshRuns();
+          })
+        }
+      />
 
       {actionError && (
         <p role="alert" className="error">
@@ -416,22 +458,154 @@ function TeamPanelContent({
         <p className="small">No Agent Team runs yet.</p>
       )}
       {snapshot && (
-        <RunView
-          key={snapshot.run.id}
-          snapshot={snapshot}
-          pending={pending}
-          command={(command, taskId, note) =>
-            void perform(async () => {
-              await api.teamCommand(snapshot.run.id, command, taskId, note);
-              await refreshRuns();
-            })
-          }
-          openTerminal={(taskId) =>
-            void perform(() => api.openTeamTerminal(snapshot.run.id, taskId))
-          }
-        />
+        <div id="agent-team-run-view" tabIndex={-1}>
+          <RunView
+            key={snapshot.run.id}
+            snapshot={snapshot}
+            pending={pending}
+            command={(command, taskId, note) =>
+              void perform(async () => {
+                await api.teamCommand(snapshot.run.id, command, taskId, note);
+                await refreshRuns();
+              })
+            }
+            openTerminal={(taskId) =>
+              void perform(() => api.openTeamTerminal(snapshot.run.id, taskId))
+            }
+          />
+        </div>
       )}
     </section>
+  );
+}
+
+function AutopilotCard({
+  status,
+  currentRun,
+  startDisabled,
+  pending,
+  start,
+  stop,
+}: {
+  status?: AutopilotStatus;
+  currentRun?: string;
+  startDisabled: boolean;
+  pending: boolean;
+  start: (options: AutopilotOptions) => void;
+  stop: () => void;
+}) {
+  const [backlogPath, setBacklogPath] = useState(
+    status?.backlogPath ?? "docs/BACKLOG.md",
+  );
+  const [maxRuns, setMaxRuns] = useState("3");
+  const [checkCommand, setCheckCommand] = useState("");
+  const [shareDependencies, setShareDependencies] = useState(false);
+
+  return (
+    <form
+      className="agent-team-card"
+      aria-labelledby="agent-team-autopilot-heading"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!startDisabled)
+          start({
+            backlogPath: backlogPath.trim(),
+            maxRuns: Number(maxRuns),
+            checkCommand: checkCommand.trim() || undefined,
+            shareDependencies,
+          });
+      }}
+    >
+      <h3 id="agent-team-autopilot-heading">Autopilot</h3>
+      <p className="small">
+        Work lands on branch <code>cobble/autopilot</code>. Nothing is pushed or
+        merged into main.
+      </p>
+      <fieldset disabled={pending || status?.active}>
+        <legend>Session options</legend>
+        <div className="agent-team-budget">
+          <label className="agent-team-field">
+            Backlog path
+            <input
+              value={status?.active ? status.backlogPath : backlogPath}
+              onChange={(event) => setBacklogPath(event.target.value)}
+              required
+              maxLength={500}
+            />
+          </label>
+          <label className="agent-team-field">
+            Maximum runs
+            <input
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              required
+              value={maxRuns}
+              onChange={(event) => setMaxRuns(event.target.value)}
+            />
+          </label>
+          <label className="agent-team-field">
+            Test command
+            <input
+              value={checkCommand}
+              maxLength={500}
+              placeholder="npm test"
+              onChange={(event) => setCheckCommand(event.target.value)}
+            />
+          </label>
+        </div>
+        <label className="agent-team-checkbox">
+          <input
+            type="checkbox"
+            checked={shareDependencies}
+            onChange={(event) => setShareDependencies(event.target.checked)}
+          />
+          Share node_modules
+        </label>
+      </fieldset>
+      <div className="agent-team-actions">
+        <button type="submit" disabled={startDisabled || !backlogPath.trim()}>
+          Start Autopilot
+        </button>
+        <button
+          type="button"
+          onClick={stop}
+          disabled={pending || !status?.active || !!status.stoppedReason}
+        >
+          Stop Autopilot
+        </button>
+      </div>
+      <div role="status">
+        <p>
+          {status?.active ? "Autopilot is running." : "Autopilot is stopped."}
+        </p>
+        {status?.currentItem && <p>Current item: {status.currentItem}</p>}
+        {status?.runId && status.runId === currentRun && (
+          <a href="#agent-team-run-view">
+            View Autopilot run {status.runId.slice(0, 8)}
+          </a>
+        )}
+        {status?.stoppedReason && <p>{status.stoppedReason}</p>}
+      </div>
+      {!!status?.completed.length && (
+        <ul
+          className="agent-team-autopilot-results"
+          aria-label="Completed Autopilot items"
+        >
+          {status.completed.map(({ item, status: outcome, runId }) => (
+            <li key={runId}>
+              <span
+                className={`agent-team-badge${outcome === "flagged" ? " agent-team-warning" : ""}`}
+              >
+                {outcome === "merged" ? "Merged" : "Flagged"}
+              </span>
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </form>
   );
 }
 

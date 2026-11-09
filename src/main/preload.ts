@@ -32,6 +32,10 @@ const api: DesktopApi = {
   testTeamAgent: (agent) => ipcRenderer.invoke("cobble:team-test-agent", agent),
   startTeamRun: (goal, budget, policy, options) =>
     ipcRenderer.invoke("cobble:team-start-run", goal, budget, policy, options),
+  startAutopilot: (options) =>
+    ipcRenderer.invoke("cobble:team-start-autopilot", options),
+  stopAutopilot: () => ipcRenderer.invoke("cobble:team-stop-autopilot"),
+  autopilotStatus: () => ipcRenderer.invoke("cobble:team-autopilot-status"),
   teamRuns: () => ipcRenderer.invoke("cobble:team-runs"),
   teamRun: (runId) => ipcRenderer.invoke("cobble:team-run", runId),
   teamCommand: (runId, command, taskId, note) =>

@@ -466,6 +466,72 @@ else {
               : undefined,
           ),
       );
+      handle("team-start-autopilot", (_, value: unknown) => {
+        const record = (input: unknown, allowed: readonly string[]) => {
+          if (
+            !input ||
+            typeof input !== "object" ||
+            Array.isArray(input) ||
+            Object.keys(input).some((key) => !allowed.includes(key))
+          )
+            throw new Error("Invalid Autopilot options");
+          return input as Record<string, unknown>;
+        };
+        const options = record(value === undefined ? {} : value, [
+          "backlogPath",
+          "maxRuns",
+          "checkCommand",
+          "shareDependencies",
+          "budget",
+        ]);
+        const {
+          backlogPath,
+          maxRuns,
+          checkCommand,
+          shareDependencies,
+          budget,
+        } = options;
+        const positiveInteger = (input: unknown) => {
+          if (
+            typeof input !== "number" ||
+            !Number.isSafeInteger(input) ||
+            input < 1
+          )
+            throw new Error("Autopilot limits must be positive integers");
+          return input;
+        };
+        if (
+          shareDependencies !== undefined &&
+          typeof shareDependencies !== "boolean"
+        )
+          throw new Error("Share node_modules must be a boolean");
+        const limits =
+          budget === undefined
+            ? undefined
+            : Object.fromEntries(
+                Object.entries(
+                  record(budget, [
+                    "maxTasks",
+                    "maxPlannerTurns",
+                    "maxParallel",
+                    "maxAttempts",
+                    "wallClockMs",
+                    "taskTimeoutMs",
+                  ]),
+                ).map(([key, limit]) => [key, positiveInteger(limit)]),
+              );
+        return service.startAutopilot({
+          backlogPath:
+            backlogPath === undefined ? undefined : text(backlogPath, 500),
+          maxRuns: maxRuns === undefined ? undefined : positiveInteger(maxRuns),
+          checkCommand:
+            checkCommand === undefined ? undefined : text(checkCommand, 500),
+          shareDependencies,
+          budget: limits,
+        });
+      });
+      handle("team-stop-autopilot", () => service.stopAutopilot());
+      handle("team-autopilot-status", () => service.autopilotStatus());
       handle("team-runs", () => service.teamRuns());
       handle("team-run", (_, runId: unknown) =>
         service.teamRun(text(runId, 64)),

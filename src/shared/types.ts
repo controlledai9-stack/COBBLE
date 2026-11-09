@@ -25,6 +25,25 @@ export type Availability = "available" | "focused" | "away";
 export type CompanionMode = "normal" | "idle" | "dragging";
 export type Classification = "covered" | "required" | "uncertain" | "extra";
 export type Tab = "Home" | "Chats" | "Teams" | "Invites" | "Profile";
+export interface AutopilotOptions {
+  backlogPath?: string;
+  maxRuns?: number;
+  checkCommand?: string;
+  shareDependencies?: boolean;
+  budget?: Partial<TeamBudget>;
+}
+
+export interface AutopilotStatus {
+  active: boolean;
+  branch: string;
+  worktree: string;
+  backlogPath: string;
+  currentItem?: string;
+  runId?: string;
+  completed: { item: string; status: "merged" | "flagged"; runId: string }[];
+  stoppedReason?: string;
+}
+
 export interface Profile {
   id: string;
   name: string;
@@ -561,6 +580,9 @@ export interface DesktopApi {
       baseRef?: string;
     },
   ): Promise<TeamRun>;
+  startAutopilot?(options?: AutopilotOptions): Promise<AutopilotStatus>;
+  stopAutopilot?(): Promise<AutopilotStatus>;
+  autopilotStatus?(): Promise<AutopilotStatus>;
   teamRuns?(): Promise<TeamRun[]>;
   teamRun?(runId: string): Promise<RunSnapshot>;
   teamCommand?(

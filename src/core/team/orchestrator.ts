@@ -101,6 +101,7 @@ export class TeamOrchestrator extends EventEmitter {
       shareDependencies?: boolean;
     } = {},
   ): Promise<TeamRun> {
+    if (this.closed) throw new Error("Cobble is closing");
     const checkCommand = validCheckCommand(extras.checkCommand);
     const team = this.options.team(teamId);
     if (!team) throw new Error("Choose a team first");
@@ -143,6 +144,10 @@ export class TeamOrchestrator extends EventEmitter {
     );
     const base = await wt.head(extras.baseRef || "HEAD");
     const prepared = await wt.prepareRun(id, base);
+    if (this.closed) {
+      await wt.removeRun(id);
+      throw new Error("Cobble is closing");
+    }
     const stamp = new Date(this.now()).toISOString();
     const run: TeamRun = {
       id,
