@@ -222,7 +222,7 @@ ${
 }- Never ask for, print or store passwords, API keys or tokens.${
     deploy
       ? `
-- Deploy target: ${task.target ?? "preview"}. Use CLIs the user is already signed in to. If a sign-in is needed, stop and report needs_human with the exact command the user should run.`
+- Deploy target: ${task.target ?? "preview"}.${task.target === "production" ? "" : " This is NOT approved for production: never run a production deploy or use production flags such as --prod or --production. If production seems necessary, report needs_decision instead."} Use CLIs the user is already signed in to. If a sign-in is needed, stop and report needs_human with the exact command the user should run.`
       : ""
   }
 - ${reviewer ? "Do not write any files. End your reply with a fenced \`\`\`cobble-report block containing this JSON" : `Before you stop, write \`${REPORT_FILE}\` with this JSON (or end your reply with a fenced \`\`\`cobble-report block)`}:

@@ -45,6 +45,7 @@ async function main() {
   cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps]
       works through "- [ ] item" lines one run at a time on branch cobble/autopilot
   run/autopilot options: --base BRANCH (start from it), --share-deps (link node_modules)
+  cobble team stop [RUN_ID]
   cobble team status [RUN_ID]
 
 Do not run "team run" while the desktop app is open on the same data.
@@ -202,6 +203,12 @@ async function teamCommand(
       "Usage: cobble team notify status|on|off|test|new-topic|server URL",
     );
   }
+  if (sub === "stop") {
+    const id = rest[0] ?? service.teamRuns()[0]?.id;
+    if (!id) return console.log("No team runs yet.");
+    const snap = await service.teamRunCommand(id, "stop");
+    return console.log(`Run ${id} is ${snap.run.state}. Branches are kept.`);
+  }
   if (sub === "status") {
     const id = rest[0] ?? service.teamRuns()[0]?.id;
     if (!id) return console.log("No team runs yet.");
@@ -319,7 +326,7 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|autopilot|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|stop|autopilot|notify|status",
   );
 }
 

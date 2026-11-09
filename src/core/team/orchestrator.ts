@@ -658,12 +658,17 @@ export class TeamOrchestrator extends EventEmitter {
           createdAt: new Date(this.now()).toISOString(),
         };
         // Cobble enforces the approval policy itself, whatever the planner says.
+        // An explicit "preview" target is trusted (the worker is then told it
+        // must never use production flags); a deploy with no target that
+        // mentions production is treated as production. Live run 3 showed a
+        // preview task saying "NO --prod" being gated by the word alone.
         const production =
           action.role === "deployer" &&
           (action.target === "production" ||
-            /\b(prod|production)\b/i.test(
-              `${action.title} ${action.instructions}`,
-            ));
+            (action.target === undefined &&
+              /\b(prod|production)\b/i.test(
+                `${action.title} ${action.instructions}`,
+              )));
         if (
           production &&
           run.policy.requireApprovalForProduction &&

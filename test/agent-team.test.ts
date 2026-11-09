@@ -1391,3 +1391,64 @@ test("live-run regression: code fences inside JSON strings do not cut the action
     "b",
   );
 });
+
+test("live-run regression: an explicit preview deploy that says 'NO --prod' is not gated; unmarked production still is", async () => {
+  const f = setup(
+    (_input, call) =>
+      call === 1
+        ? {
+            finalText: actions({
+              actions: [
+                {
+                  type: "delegate",
+                  id: "P1",
+                  role: "deployer",
+                  title: "Preview deploy",
+                  instructions: "netlify deploy --dir . with NO --prod",
+                  target: "preview",
+                },
+                {
+                  type: "delegate",
+                  id: "P2",
+                  role: "deployer",
+                  title: "Ship it",
+                  instructions: "deploy to production",
+                },
+              ],
+            }),
+          }
+        : {
+            finalText: actions({
+              actions: [{ type: "wait", reason: "approval" }],
+            }),
+          },
+    {
+      codex: (input) => {
+        assert.match(
+          input.prompt,
+          /NOT approved for production: never run a production deploy/,
+        );
+        writeReport(input.cwd, { status: "done", summary: "preview ok" });
+        return {};
+      },
+    },
+  );
+  try {
+    const run = await f.orchestrator.startRun(f.team.id, "Deploy");
+    await f.orchestrator.idle(run.id);
+    const snap = f.orchestrator.snapshot(run.id)!;
+    const p1 = snap.tasks.find((t) => t.id === "P1")!;
+    const p2 = snap.tasks.find((t) => t.id === "P2")!;
+    assert.equal(p1.state, "done", "explicit preview ran without approval");
+    assert.equal(p1.target, "preview");
+    assert.equal(
+      p2.state,
+      "needs_human",
+      "unmarked production waits for approval",
+    );
+    assert.equal(p2.gate?.kind, "approval");
+    assert.equal(f.codexCalls.length, 1);
+  } finally {
+    await f.cleanup();
+  }
+});
