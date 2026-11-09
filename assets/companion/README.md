@@ -1,13 +1,18 @@
-# Companion artwork handoff
+# Pebble companion
 
-Add these three transparent PNGs here; Cobble loads them when it starts:
+The desktop companion uses the approved cinematic Pebble assets in `pebble/`.
+See [runtime asset notes](pebble/README.md) for formats and playback behavior.
 
-- `normal.png`: awake / chatting / quick-menu pose
-- `idle.png`: resting or peeking from a screen edge
-- `dragging.png`: hanging while being dragged
+The renderer bundles the transparent standard/lite WebM clips and PNG fallbacks
+using Vite asset URLs. It does not depend on preview exports in output/ or files
+in Downloads. The sleep video includes the repaired ring/body alpha.
 
-Use the same transparent canvas and character baseline for all three. Recommended canvas: 256 × 256 or 512 × 512 pixels; maximum 2 MB each. Keep the silhouette legible at about 80–110 logical pixels. Leave enough space for feet/ears/hanging details inside the canvas. No animation or sprite sheet is required.
+Pebble waits, stretches left/right during dragging, settles after release,
+greets interactions, and dozes before sleeping after the existing 45-second
+idle timeout. Profile and companion controls expose Auto, Full, Lite,
+and Off motion settings. Auto considers reduced motion and CPU concurrency;
+hidden playback is unloaded and decoding failures use still fallbacks.
 
-Without artwork the application shows a plainly labeled control placeholder. Rendering and lifecycle state are separate; the artist does not need to change TypeScript. Idle docking, dragging, and menu actions work independently of the images.
-
-Current implementation docks to a screen edge. Mapping the widget to the bounds of a specific IDE window is still pending Windows adapter validation. No screen reading or continuous idle speech is enabled.
+The current UI preserves the location where the user places Pebble, including
+when it becomes idle. Specific IDE-window anchoring and live gaze tracking are
+separate from these pre-rendered animations.

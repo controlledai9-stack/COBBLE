@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { screen, type BrowserWindow } from "electron";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /** Isolated test profile only. No physical mouse input or user windows are changed. */
 export async function runCompanionSmoke(companion: BrowserWindow) {
@@ -18,6 +20,31 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
   screen.getCursorScreenPoint = () => ({ ...cursor });
   try {
     await settle();
+    await js(
+      `localStorage.setItem('cobble.pebble.motion','full'); window.dispatchEvent(new Event('pebble-motion-change'));`,
+    );
+    const mediaStart = Date.now();
+    while (
+      !(await js(
+        `(() => {const v=document.querySelector('video.pebble-media');return !!v && v.readyState>=2 && v.videoWidth===512 && v.currentTime>0;})()`,
+      ))
+    ) {
+      if (Date.now() - mediaStart > 8000)
+        throw new Error(
+          "Native Pebble playback failed: " +
+            JSON.stringify(
+              await js(
+                `(() => {const v=document.querySelector('video'),i=document.querySelector('img.pebble-media');return {hidden:document.hidden,video:v&&{src:v.currentSrc,ready:v.readyState,error:v.error?.message},image:i&&{src:i.src,width:i.naturalWidth},html:document.querySelector('.companion-placeholder')?.outerHTML};})()`,
+              ),
+            ),
+        );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    await mkdir(join(process.cwd(), ".cobble"), { recursive: true });
+    await writeFile(
+      join(process.cwd(), ".cobble", "pebble-native-current-ui.png"),
+      (await companion.webContents.capturePage()).toPNG(),
+    );
     await command("menu-close");
     const menuAnchor = companion.getPosition();
     for (let i = 0; i < 12; i++) {
@@ -100,10 +127,9 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
       js("document.querySelector('.companion-host').className");
     const facePoint = () =>
       js(`(() => {
-      const element = document.querySelector('.pebble-main-pod') || document.querySelector('.pebble-avatar');
-      const matrix = element.getScreenCTM();
-      const point = new DOMPoint(100,97).matrixTransform(matrix);
-      return {x:point.x,y:point.y};
+      const element = document.querySelector('.companion-cinematic');
+      const rect = element.getBoundingClientRect();
+      return {x:rect.left+rect.width/2,y:rect.top+rect.height/2};
     })()`);
     for (const zoom of [1, 1.25, 1.5]) {
       companion.webContents.setZoomFactor(zoom);
@@ -135,7 +161,7 @@ export async function runCompanionSmoke(companion: BrowserWindow) {
           `${label}: grabbed face must follow cursor vertically at zoom ${zoom}`,
         );
       };
-      await assertGrab("vertical drag and existing hanging transform");
+      await assertGrab("vertical drag and fixed animation canvas");
       // Native sampling continues while held, without relying on a backlog of
       // window-relative pointermove events. The grabbed graphic point is fixed.
       cursor = { x: cursor.x + 60, y: cursor.y };

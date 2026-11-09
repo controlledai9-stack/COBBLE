@@ -34,7 +34,7 @@ import {
   IconClose,
   IconEmpty,
 } from "./icons";
-import { PebbleRobot } from "./pebble";
+import { Pebble, PebbleMotionSettings } from "./cinematic-pebble";
 import "./styles.css";
 declare global {
   interface Window {
@@ -589,16 +589,17 @@ function App() {
                 </label>
               </section>
               <section className="panel">
-                <span className="eyebrow">COMPANION ART</span>
-                <h2>Ready for its own personality.</h2>
+                <span className="eyebrow">PEBBLE</span>
+                <h2>A little presence beside your work.</h2>
                 <p>
-                  The normal, idle, and dragging poses have code hooks. Your
-                  artist's assets can be added later without changing the app
-                  logic.
+                  Pebble floats while you work, stretches when dragged, and
+                  settles into sleep after a quiet moment.
                 </p>
+                <PebbleMotionSettings />
                 <p className="small">
-                  Idle controls dock to the nearest screen edge after 45
-                  seconds. Editor-window anchoring is not enabled yet.
+                  Auto respects reduced motion and uses lighter playback on
+                  devices with fewer CPU threads. After 45 quiet seconds, Pebble
+                  dozes where you placed it.
                 </p>
                 <h3>Local voice</h3>
                 <p className="small">
@@ -1331,14 +1332,16 @@ function Companion({
 }) {
   const [mode, setMode] = useState<CompanionMode>("normal");
   const [menu, setMenu] = useState(false);
-  const [art, setArt] = useState<Partial<Record<CompanionMode, string>>>({});
+  const [direction, setDirection] = useState<"left" | "right">("right");
+  const [greeting, setGreeting] = useState(0);
   const [bubbleText, setBubbleText] = useState<string | null>(null);
   const lastNoticeId = useRef<string | null>(null);
   const drag = useRef(false);
   const pointerId = useRef<number | null>(null);
   const origin = useRef({ x: 0, y: 0 });
+  const lastPoint = useRef({ x: 0, y: 0 });
   const grabAnchor = useRef<{
-    svg: SVGGraphicsElement;
+    element: HTMLElement;
     x: number;
     y: number;
   } | null>(null);
@@ -1346,10 +1349,12 @@ function Companion({
   const dragGeneration = useRef(0);
   const grabOffset = () => {
     const anchor = grabAnchor.current;
-    const matrix = anchor?.svg.getScreenCTM();
-    if (!anchor || !matrix) return undefined;
-    const point = new DOMPoint(anchor.x, anchor.y).matrixTransform(matrix);
-    return { x: point.x, y: point.y };
+    if (!anchor) return undefined;
+    const rect = anchor.element.getBoundingClientRect();
+    return {
+      x: rect.left + anchor.x * rect.width,
+      y: rect.top + anchor.y * rect.height,
+    };
   };
   const finishDrag = (sampleFinalPosition = false) => {
     if (pointerId.current === null) return;
@@ -1412,7 +1417,6 @@ function Companion({
   }, [state.notifications]);
 
   useEffect(() => {
-    void window.cobble.artwork().then(setArt);
     return window.cobble.onCompanion((pose) => {
       setMode(pose);
       if (pose === "idle") setMenu(false);
@@ -1467,6 +1471,7 @@ function Companion({
             <option value="focused">Mark focused</option>
             <option value="away">Mark away</option>
           </select>
+          <PebbleMotionSettings />
           <button
             onClick={() => void act({ type: "pause", paused: !state.paused })}
           >
@@ -1481,9 +1486,13 @@ function Companion({
         </div>
       )}
       <button
-        className="companion-placeholder"
+        className="companion-placeholder companion-cinematic"
         aria-label={`Pebble companion avatar, ${mode}`}
-        onMouseEnter={() => void window.cobble.companion("pointer-on")}
+        aria-expanded={menu}
+        onMouseEnter={() => {
+          void window.cobble.companion("pointer-on");
+          if (mode === "idle") void window.cobble.companion("interact");
+        }}
         onMouseLeave={() => {
           if (!drag.current) void window.cobble.companion("pointer-off");
         }}
@@ -1493,18 +1502,14 @@ function Companion({
           dragGeneration.current++;
           e.currentTarget.setPointerCapture(e.pointerId);
           origin.current = { x: e.screenX, y: e.screenY };
+          lastPoint.current = origin.current;
           drag.current = false;
-          const svg =
-            e.currentTarget.querySelector<SVGGraphicsElement>(
-              ".pebble-main-pod",
-            ) ?? e.currentTarget.querySelector("svg");
-          const matrix = svg?.getScreenCTM();
-          if (svg && matrix) {
-            const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(
-              matrix.inverse(),
-            );
-            grabAnchor.current = { svg, x: point.x, y: point.y };
-          }
+          const rect = e.currentTarget.getBoundingClientRect();
+          grabAnchor.current = {
+            element: e.currentTarget,
+            x: (e.clientX - rect.left) / rect.width,
+            y: (e.clientY - rect.top) / rect.height,
+          };
           void window.cobble.companion("drag-start", {
             x: e.clientX,
             y: e.clientY,
@@ -1529,9 +1534,11 @@ function Companion({
             setMode("dragging");
           }
           if (drag.current) {
+            const delta = e.screenX - lastPoint.current.x;
+            if (Math.abs(delta) > 2) setDirection(delta < 0 ? "left" : "right");
+            lastPoint.current = { x: e.screenX, y: e.screenY };
             // Native main-process coordinates are stable while the window moves.
-            // Keep the exact grabbed artwork point under the native cursor,
-            // including the existing normal-to-hanging pose transform.
+            // Keep the grabbed point on the fixed video canvas under the cursor.
             sampleDrag();
           }
         }}
@@ -1543,6 +1550,7 @@ function Companion({
             e.currentTarget.releasePointerCapture(e.pointerId);
           if (!wasDragging) {
             setMenu((open) => !open);
+            setGreeting((value) => value + 1);
             void window.cobble.companion("interact");
           }
           const rect = e.currentTarget.getBoundingClientRect();
@@ -1569,11 +1577,12 @@ function Companion({
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             setMenu(!menu);
+            setGreeting((value) => value + 1);
             void window.cobble.companion("interact");
           }
         }}
       >
-        <PebbleRobot mode={mode} />
+        <Pebble mode={mode} direction={direction} greeting={greeting} />
       </button>
     </div>
   );

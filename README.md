@@ -4,6 +4,10 @@ A local-first desktop workspace for a team's plan, saved code changes, and conve
 
 ## Install the app
 
+Download the [Windows x64 installer](https://github.com/controlledai9-stack/COBBLE/releases/download/v0.2.0/Cobble-Setup-0.2.0-x64.exe) from [GitHub Releases](https://github.com/controlledai9-stack/COBBLE/releases/tag/v0.2.0). A [SHA-256 checksum file](https://github.com/controlledai9-stack/COBBLE/releases/download/v0.2.0/Cobble-Setup-0.2.0-x64.exe.sha256) is included.
+
+The 0.2.0 installer predates the merged native-window adapter. That adapter and the new robot sketches are not active in this download.
+
 The Windows x64 download is `release/Cobble-Setup-0.2.0-x64.exe`. It includes Electron/Node, application dependencies, portable Git, the CPU voice engine and its DLLs, a default multilingual speech model, the editor integration package, and the Microsoft C++ runtime installer. Installation prepares those components automatically. End users do not install Node, npm packages, Git, FFmpeg, Python, whisper.cpp, or models separately, and the app downloads no voice files at first launch. Their chosen IDE and coding service remain separate products.
 
 This is an unsigned development installer. A clean Windows VM installation and real multi-device testing remain release checks; building the installer is not evidence those checks passed.
