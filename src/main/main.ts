@@ -450,6 +450,18 @@ else {
                           (options as { checkCommand?: unknown }).checkCommand,
                           500,
                         ),
+                  ...((options as { shareDependencies?: unknown })
+                    .shareDependencies === true
+                    ? { shareDependencies: true }
+                    : {}),
+                  ...((options as { baseRef?: unknown }).baseRef === undefined
+                    ? {}
+                    : {
+                        baseRef: text(
+                          (options as { baseRef?: unknown }).baseRef,
+                          200,
+                        ),
+                      }),
                 }
               : undefined,
           ),
@@ -490,6 +502,19 @@ else {
           );
         },
       );
+      handle("team-phone-notify", () => service.phoneNotify());
+      handle("team-set-phone-notify", (_, patch: unknown) =>
+        service.setPhoneNotify(
+          patch && typeof patch === "object"
+            ? (patch as {
+                enabled?: unknown;
+                server?: unknown;
+                regenerateTopic?: unknown;
+              })
+            : {},
+        ),
+      );
+      handle("team-test-phone-notify", () => service.testPhoneNotify());
       handle("team-open-terminal", (_, runId: unknown, taskId: unknown) => {
         // The folder comes from Cobble's own records, never from the renderer.
         const folder = service.teamTaskFolder(

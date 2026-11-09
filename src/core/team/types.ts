@@ -176,6 +176,10 @@ export interface TeamRun {
   briefVersion: number;
   /** Optional user command run on each task's changes, e.g. "npm ci && npm test". */
   checkCommand?: string;
+  /** Task worktrees link the workspace's ignored node_modules. */
+  shareDependencies?: boolean;
+  /** Branch name the run started from, when not the workspace's HEAD. */
+  baseRef?: string;
   createdAt: string;
   updatedAt: string;
 }

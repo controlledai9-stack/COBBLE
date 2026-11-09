@@ -42,6 +42,36 @@
   - Nothing is pushed or merged into `main`. That still goes through the existing unanimous proposal flow.
 - **Credentials:** Cobble does not read, store or forward provider credentials. The prompt goes on stdin. Command-line arguments are fixed constants, validated before use, so passing them through a Windows `.cmd` shim is safe. A test sends `& | % \` $( )` through the real spawn path and confirms they arrive unchanged.
 
+## Phone alerts and autopilot (10 November 2026)
+
+**Phone alerts (`src/core/team/notify.ts`)**
+
+- Uses ntfy, a free push service that needs no account. Cobble creates a random private topic, and the user subscribes to it in the ntfy app.
+- Off by default. Turn it on in Teams → Agent Team → Phone alerts, or with `cobble team notify on`.
+- Every Agent Team alert also goes to the phone: urgent priority for "needs you", high for paused, normal for finished.
+- Alerts are short status lines with no code. The same alert is not repeated within 10 minutes, and there are at most 30 per hour.
+- The server must use https (or be on localhost). A failure is logged and never blocks the team.
+- Alerts pass through the ntfy server, so a self-hosted server can be set with `cobble team notify server URL`.
+
+**Shared dependencies (`--share-deps`)**
+
+- Links the workspace's own node_modules into each task worktree with a junction, so checks such as `npm run typecheck && npm test` run without a fresh install. This is what lets Cobble develop itself.
+- Only folders Git ignores are linked, so the link can never be committed.
+- Links are removed before any worktree is deleted, so the real node_modules is never touched.
+- Workers are told never to install or remove packages. If they need a dependency, they report `needs_decision`.
+
+**Base branch (`--base BRANCH`):** a run can start from any branch, not just the workspace's HEAD.
+
+**Autopilot (`src/core/team/autopilot.ts`, `cobble team autopilot`)**
+
+- Works through a Markdown backlog (default `docs/BACKLOG.md`, lines like `- [ ] item`) one item per run.
+- All work accumulates on branch `cobble/autopilot`, in its own worktree. Each run starts from that branch, so later items build on earlier ones. A finished run is merged back and its line is ticked: `- [x] item (run abcd1234)`.
+- An item whose run made no changes, or whose merge conflicts, is marked `- [!] … needs attention` and skipped. Two such items in a row stop autopilot.
+- If a run pauses, stops, or waits for the user, autopilot stops until the user acts.
+- Every result goes to the phone.
+- `--max-runs` limits each session (default 3, at most 20).
+- Nothing is pushed and `main` is never touched. The user reviews `cobble/autopilot` and merges it when ready.
+
 ## Interfaces
 
 **Desktop API** (`window.cobble`, every field validated in main):

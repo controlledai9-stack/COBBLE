@@ -38,6 +38,10 @@ const api: DesktopApi = {
     ipcRenderer.invoke("cobble:team-command", runId, command, taskId, note),
   openTeamTerminal: (runId, taskId) =>
     ipcRenderer.invoke("cobble:team-open-terminal", runId, taskId),
+  phoneNotify: () => ipcRenderer.invoke("cobble:team-phone-notify"),
+  setPhoneNotify: (patch) =>
+    ipcRenderer.invoke("cobble:team-set-phone-notify", patch),
+  testPhoneNotify: () => ipcRenderer.invoke("cobble:team-test-phone-notify"),
   onTeam: (callback) => {
     const listener = (_: unknown, runId: string | null) => callback(runId);
     ipcRenderer.on("cobble:team", listener);

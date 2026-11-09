@@ -93,7 +93,13 @@ export class TeamOrchestrator extends EventEmitter {
     goal: string,
     budget: Partial<TeamBudget> = {},
     policy: Partial<ApprovalPolicy> = {},
-    extras: { checkCommand?: string } = {},
+    extras: {
+      checkCommand?: string;
+      /** Branch the run starts from (default: the workspace's HEAD). */
+      baseRef?: string;
+      /** Link the workspace's ignored node_modules into task worktrees. */
+      shareDependencies?: boolean;
+    } = {},
   ): Promise<TeamRun> {
     const checkCommand = validCheckCommand(extras.checkCommand);
     const team = this.options.team(teamId);
@@ -135,7 +141,7 @@ export class TeamOrchestrator extends EventEmitter {
       this.options.worktreeRoot,
       this.options.gitBinary?.(),
     );
-    const base = await wt.head();
+    const base = await wt.head(extras.baseRef || "HEAD");
     const prepared = await wt.prepareRun(id, base);
     const stamp = new Date(this.now()).toISOString();
     const run: TeamRun = {
@@ -156,6 +162,8 @@ export class TeamOrchestrator extends EventEmitter {
       workspace,
       briefVersion: 0,
       ...(checkCommand ? { checkCommand } : {}),
+      ...(extras.shareDependencies ? { shareDependencies: true } : {}),
+      ...(extras.baseRef ? { baseRef: extras.baseRef } : {}),
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -451,6 +459,7 @@ export class TeamOrchestrator extends EventEmitter {
     this.log(run, "run", `Paused: ${reason}`);
     this.emit("attention", {
       runId: run.id,
+      kind: "paused",
       message: `Agent team paused: ${reason}`,
     });
     this.changed(run.id);
@@ -612,7 +621,7 @@ export class TeamOrchestrator extends EventEmitter {
     run.gate = { kind, message };
     this.store.saveRun(run);
     this.log(run, "gate", message);
-    this.emit("attention", { runId: run.id, message });
+    this.emit("attention", { runId: run.id, kind: "needs_you", message });
     this.changed(run.id);
   }
 
@@ -666,7 +675,12 @@ export class TeamOrchestrator extends EventEmitter {
             kind: "approval",
             message: `Approve a production deploy: ${action.title}`,
           };
-          this.emit("attention", { runId: run.id, message: task.gate.message });
+          this.emit("attention", {
+            runId: run.id,
+            taskId: task.id,
+            kind: "needs_you",
+            message: task.gate.message,
+          });
         }
         this.store.saveTask(task);
         this.log(
@@ -790,6 +804,7 @@ export class TeamOrchestrator extends EventEmitter {
         this.log(run, "run", `Finished: ${action.summary.slice(0, 300)}`);
         this.emit("attention", {
           runId: run.id,
+          kind: "finished",
           message: `Agent team finished: ${action.summary.slice(0, 200)}`,
         });
         return;
@@ -827,6 +842,7 @@ export class TeamOrchestrator extends EventEmitter {
       let base: string | undefined;
       if (writing) {
         const prepared = await wt.prepareTask(run.id, task.id);
+        if (run.shareDependencies) await wt.linkDependencies(prepared.path);
         cwd = prepared.path;
         task.worktree = prepared.path;
         task.branch = prepared.branch;
@@ -948,7 +964,13 @@ export class TeamOrchestrator extends EventEmitter {
           gate: { kind: "login", message },
         });
         this.store.event(runId, "gate", message, taskId);
-        this.emit("attention", { runId, taskId, message, worktree: cwd });
+        this.emit("attention", {
+          runId,
+          taskId,
+          kind: "needs_you",
+          message,
+          worktree: cwd,
+        });
         return;
       }
       if (report?.status === "needs_decision" && report.question) {

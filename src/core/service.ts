@@ -29,6 +29,12 @@ import { buildReviewPacket } from "./review/packet";
 import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { TeamStore } from "./team/team-store";
+import { Autopilot } from "./team/autopilot";
+import {
+  PhoneNotifier,
+  type AttentionEvent,
+  type PhoneNotifyView,
+} from "./team/notify";
 import { TeamOrchestrator, type GateAnswer } from "./team/orchestrator";
 import { defaultAdapters, type AgentAdapter } from "./team/adapters";
 import {
@@ -69,6 +75,8 @@ export class CobbleService extends EventEmitter {
   readonly agentEvents: AgentEvents;
   readonly teamStore: TeamStore;
   readonly agentTeam: TeamOrchestrator;
+  readonly phone: PhoneNotifier;
+  readonly autopilot: Autopilot;
   private readonly teamAdapters: Record<TeamAgentId, AgentAdapter>;
   private agentTask?: Promise<void>;
   private agentTimer?: ReturnType<typeof setTimeout>;
@@ -106,6 +114,8 @@ export class CobbleService extends EventEmitter {
       teamAdapters?: Record<TeamAgentId, AgentAdapter>;
       /** Where run/task worktrees live (defaults beside the database). */
       teamWorktreeRoot?: string;
+      /** HTTP client for phone alerts; tests inject a fake. */
+      fetch?: typeof fetch;
     } = {},
   ) {
     super();
@@ -121,28 +131,43 @@ export class CobbleService extends EventEmitter {
     this.agentEvents = new AgentEvents(this.store);
     this.teamStore = new TeamStore(this.store);
     this.teamAdapters = options.teamAdapters ?? defaultAdapters();
+    const worktreeRoot =
+      options.teamWorktreeRoot ??
+      join(
+        file === ":memory:" ? tmpdir() : dirname(resolve(file)),
+        "team-worktrees",
+      );
+    const teamById = (id: string) => {
+      try {
+        return this.store.team(id);
+      } catch {
+        return null;
+      }
+    };
     this.agentTeam = new TeamOrchestrator({
       teamStore: this.teamStore,
       adapters: this.teamAdapters,
-      worktreeRoot:
-        options.teamWorktreeRoot ??
-        join(
-          file === ":memory:" ? tmpdir() : dirname(resolve(file)),
-          "team-worktrees",
-        ),
+      worktreeRoot,
       gitBinary: () => this.gitBinary,
-      team: (id) => {
-        try {
-          return this.store.team(id);
-        } catch {
-          return null;
-        }
-      },
+      team: teamById,
+    });
+    this.autopilot = new Autopilot({
+      orchestrator: this.agentTeam,
+      team: teamById,
+      worktreeRoot,
+      gitBinary: () => this.gitBinary,
     });
     this.agentTeam.on("update", (runId: string) => this.emit("team", runId));
-    this.agentTeam.on("attention", (event) =>
-      this.emit("team-attention", event),
+    this.phone = new PhoneNotifier(
+      this.store,
+      options.fetch ?? fetch,
+      Date.now,
+      (message) => this.emit("diagnostic", message),
     );
+    this.agentTeam.on("attention", (event: AttentionEvent) => {
+      this.emit("team-attention", event);
+      void this.phone.notify(event);
+    });
     this.agentTeam.on("diagnostic", (message) =>
       this.emit("diagnostic", message),
     );
@@ -1668,18 +1693,24 @@ export class CobbleService extends EventEmitter {
     goal: string,
     budget?: Partial<TeamBudget>,
     policy?: Partial<ApprovalPolicy>,
-    options?: { checkCommand?: string },
+    options?: {
+      checkCommand?: string;
+      baseRef?: string;
+      shareDependencies?: boolean;
+    },
   ) {
+    const o = options && typeof options === "object" ? options : {};
     return this.agentTeam.startRun(
       this.teamId(),
       String(goal ?? ""),
       sanitizeBudget(budget),
       sanitizePolicy(policy),
       {
-        checkCommand:
-          options && typeof options === "object"
-            ? (options.checkCommand as string | undefined)
-            : undefined,
+        checkCommand: o.checkCommand as string | undefined,
+        ...(typeof o.baseRef === "string" && o.baseRef
+          ? { baseRef: o.baseRef }
+          : {}),
+        ...(o.shareDependencies === true ? { shareDependencies: true } : {}),
       },
     );
   }
@@ -1727,6 +1758,27 @@ export class CobbleService extends EventEmitter {
         throw new Error("Unknown team command");
     }
     return this.teamRun(runId);
+  }
+  /** Phone alerts (ntfy): current settings and subscribe link. */
+  phoneNotify(): PhoneNotifyView {
+    return this.phone.view();
+  }
+  setPhoneNotify(patch: {
+    enabled?: unknown;
+    server?: unknown;
+    regenerateTopic?: unknown;
+  }): PhoneNotifyView {
+    return this.phone.update({
+      ...(typeof patch?.enabled === "boolean"
+        ? { enabled: patch.enabled }
+        : {}),
+      ...(typeof patch?.server === "string" ? { server: patch.server } : {}),
+      ...(patch?.regenerateTopic === true ? { regenerateTopic: true } : {}),
+    });
+  }
+  async testPhoneNotify() {
+    await this.phone.test();
+    return this.phone.view();
   }
   /** The folder a waiting task works in, for "Open terminal here". */
   teamTaskFolder(runId: string, taskId?: string) {

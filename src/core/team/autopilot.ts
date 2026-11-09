@@ -1,0 +1,262 @@
+/**
+ * Autopilot: work through a backlog file one item at a time, unattended.
+ *
+ * - The backlog is a Markdown checklist in the repository (default
+ *   docs/BACKLOG.md): "- [ ] item". The first unchecked item is next.
+ * - All autopilot work accumulates on one branch, `cobble/autopilot`, in its
+ *   own worktree. Each item becomes an ordinary Agent Team run that starts
+ *   from that branch; a finished run is merged back into it and the item is
+ *   ticked ("- [x] item (run abcd1234)") in the same branch.
+ * - Items that end without changes or with a merge conflict are marked
+ *   "- [!] item — needs attention: ..." and skipped, so autopilot never loops
+ *   on one item. Anything else (paused, stopped, waiting for the user) stops
+ *   autopilot until the user acts.
+ * - Nothing is pushed and `main` is never touched; the user reviews the
+ *   autopilot branch and merges it when they choose.
+ */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, normalize, isAbsolute } from "node:path";
+import type { Team } from "../../shared/types";
+import type { TeamOrchestrator } from "./orchestrator";
+import type { ApprovalPolicy, TeamBudget, TeamRun } from "./types";
+
+const exec = promisify(execFile);
+export const AUTOPILOT_BRANCH = "cobble/autopilot";
+const IDENTITY = [
+  "-c",
+  "user.name=Cobble Autopilot",
+  "-c",
+  "user.email=autopilot@cobble.invalid",
+  "-c",
+  "commit.gpgsign=false",
+];
+
+export interface BacklogItem {
+  /** 0-based line index in the backlog file. */
+  line: number;
+  text: string;
+}
+export type ItemOutcome =
+  | { status: "merged"; message: string }
+  | { status: "no_changes" | "conflict"; message: string }
+  | { status: "not_done"; message: string };
+
+const OPEN = /^(\s*)[-*] \[ \] (.+?)\s*$/;
+
+export function nextBacklogItem(content: string): BacklogItem | null {
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(OPEN);
+    if (match) return { line: i, text: match[2].slice(0, 1_000) };
+  }
+  return null;
+}
+
+/** Ticks ("x") or flags ("!") the item on its line, keeping the rest intact. */
+export function markBacklogItem(
+  content: string,
+  item: BacklogItem,
+  mark: "x" | "!",
+  note: string,
+): string {
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  const match = lines[item.line]?.match(OPEN);
+  if (!match || match[2].slice(0, 1_000) !== item.text)
+    throw new Error("The backlog changed; the item is no longer on its line");
+  const suffix = note.replace(/\s+/g, " ").trim().slice(0, 200);
+  lines[item.line] =
+    `${match[1]}- [${mark}] ${match[2]}${suffix ? ` ${suffix}` : ""}`;
+  return lines.join(newline);
+}
+
+export function validBacklogPath(path: string) {
+  const clean = normalize(path).replaceAll("\\", "/");
+  if (
+    !path ||
+    isAbsolute(path) ||
+    clean.startsWith("..") ||
+    clean.includes("/../")
+  )
+    throw new Error("The backlog path must be inside the repository");
+  if (!/\.md$/i.test(clean)) throw new Error("The backlog must be a .md file");
+  return clean;
+}
+
+export class Autopilot {
+  constructor(
+    private readonly deps: {
+      orchestrator: TeamOrchestrator;
+      team(teamId: string): Team | null;
+      worktreeRoot: string;
+      gitBinary?: () => string;
+    },
+  ) {}
+
+  private git(cwd: string, ...args: string[]) {
+    return exec(this.deps.gitBinary?.() ?? "git", ["-C", cwd, ...args], {
+      windowsHide: true,
+      timeout: 120_000,
+      maxBuffer: 4_000_000,
+    }).then((r) => r.stdout.trim());
+  }
+  private workspace(teamId: string) {
+    const team = this.deps.team(teamId);
+    if (!team?.workspace)
+      throw new Error("Choose a team with a workspace first");
+    return team.workspace;
+  }
+  path(teamId: string) {
+    return join(this.deps.worktreeRoot, `autopilot-${teamId.slice(0, 8)}`);
+  }
+
+  /** Creates the autopilot branch (from HEAD) and its worktree if needed. */
+  async prepare(teamId: string) {
+    const repo = this.workspace(teamId);
+    const path = this.path(teamId);
+    const exists = await this.git(
+      repo,
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${AUTOPILOT_BRANCH}`,
+    ).then(
+      () => true,
+      () => false,
+    );
+    const current = existsSync(path)
+      ? await this.git(path, "rev-parse", "--abbrev-ref", "HEAD").catch(
+          () => "",
+        )
+      : "";
+    if (current === AUTOPILOT_BRANCH)
+      return { branch: AUTOPILOT_BRANCH, path, created: false };
+    await mkdir(dirname(path), { recursive: true });
+    await this.git(repo, "worktree", "prune").catch(() => {});
+    if (exists) await this.git(repo, "worktree", "add", path, AUTOPILOT_BRANCH);
+    else
+      await this.git(
+        repo,
+        "worktree",
+        "add",
+        "-b",
+        AUTOPILOT_BRANCH,
+        path,
+        "HEAD",
+      );
+    return { branch: AUTOPILOT_BRANCH, path, created: !exists };
+  }
+
+  async next(teamId: string, backlogPath: string): Promise<BacklogItem | null> {
+    const file = join(this.path(teamId), validBacklogPath(backlogPath));
+    if (!existsSync(file))
+      throw new Error(
+        `${backlogPath} was not found on ${AUTOPILOT_BRANCH}. Create it with lines like "- [ ] Add X" and commit it.`,
+      );
+    return nextBacklogItem(await readFile(file, "utf8"));
+  }
+
+  /** Starts the Agent Team run for one item, building on the autopilot branch. */
+  start(
+    teamId: string,
+    item: BacklogItem,
+    backlogPath: string,
+    options: {
+      budget?: Partial<TeamBudget>;
+      policy?: Partial<ApprovalPolicy>;
+      checkCommand?: string;
+      shareDependencies?: boolean;
+    } = {},
+  ): Promise<TeamRun> {
+    const goal = `Backlog item: ${item.text}\n\nThis item comes from ${backlogPath}. Do only this item; other backlog items are handled by later runs. Do not edit ${backlogPath} yourself. Cobble ticks the item when this run is merged.`;
+    return this.deps.orchestrator.startRun(
+      teamId,
+      goal,
+      options.budget,
+      options.policy,
+      {
+        checkCommand: options.checkCommand,
+        shareDependencies: options.shareDependencies,
+        baseRef: AUTOPILOT_BRANCH,
+      },
+    );
+  }
+
+  /** Merges a finished run into the autopilot branch and updates the backlog. */
+  async complete(
+    teamId: string,
+    run: TeamRun,
+    item: BacklogItem,
+    backlogPath: string,
+  ): Promise<ItemOutcome> {
+    if (run.state !== "done")
+      return {
+        status: "not_done",
+        message: `Run ${run.id.slice(0, 8)} is ${run.state}${run.pausedReason ? ` (${run.pausedReason})` : ""}. Autopilot stopped; resume or stop the run, then start autopilot again.`,
+      };
+    const path = this.path(teamId);
+    const short = run.id.slice(0, 8);
+    const changed = Number(
+      await this.git(
+        path,
+        "rev-list",
+        "--count",
+        `${run.baseBranch}..${run.runBranch}`,
+      ),
+    );
+    let outcome: ItemOutcome;
+    if (!changed) {
+      outcome = {
+        status: "no_changes",
+        message: `Run ${short} finished without changes`,
+      };
+    } else {
+      try {
+        await this.git(
+          path,
+          ...IDENTITY,
+          "merge",
+          "--no-ff",
+          "--no-edit",
+          run.runBranch,
+        );
+        outcome = {
+          status: "merged",
+          message: `Run ${short} merged into ${AUTOPILOT_BRANCH}`,
+        };
+      } catch {
+        await this.git(path, "merge", "--abort").catch(() => {});
+        outcome = {
+          status: "conflict",
+          message: `Run ${short} conflicts with ${AUTOPILOT_BRANCH}; its branch ${run.runBranch} is kept`,
+        };
+      }
+    }
+    const file = join(path, validBacklogPath(backlogPath));
+    const content = await readFile(file, "utf8");
+    const updated =
+      outcome.status === "merged"
+        ? markBacklogItem(content, item, "x", `(run ${short})`)
+        : markBacklogItem(
+            content,
+            item,
+            "!",
+            `— needs attention: ${outcome.message}`,
+          );
+    await writeFile(file, updated, "utf8");
+    await this.git(path, "add", "--", validBacklogPath(backlogPath));
+    await this.git(
+      path,
+      ...IDENTITY,
+      "commit",
+      "--no-verify",
+      "-q",
+      "-m",
+      `autopilot: ${outcome.status === "merged" ? "done" : "flagged"}: ${item.text.slice(0, 120)}`,
+    );
+    return outcome;
+  }
+}

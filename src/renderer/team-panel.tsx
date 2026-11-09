@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentDetection,
+  PhoneNotifyView,
   DesktopApi,
   RunSnapshot,
   TeamAgentId,
@@ -307,6 +308,8 @@ function TeamPanelContent({
         </ul>
       </section>
 
+      <PhoneAlerts />
+
       <form
         className="agent-team-card"
         onSubmit={(event) => {
@@ -427,6 +430,105 @@ function TeamPanelContent({
             void perform(() => api.openTeamTerminal(snapshot.run.id, taskId))
           }
         />
+      )}
+    </section>
+  );
+}
+
+/** Phone alerts through ntfy: on/off, private channel, test. */
+function PhoneAlerts() {
+  const api = window.cobble;
+  const [view, setView] = useState<PhoneNotifyView>();
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void api
+      ?.phoneNotify?.()
+      .then(setView)
+      .catch((e) => setError(describeError(e)));
+  }, [api]);
+  if (!api?.phoneNotify || !api.setPhoneNotify || !api.testPhoneNotify)
+    return null;
+  async function run(action: () => Promise<PhoneNotifyView>, done = "") {
+    setBusy(true);
+    setError("");
+    setStatus("");
+    try {
+      setView(await action());
+      setStatus(done);
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="agent-team-card" aria-labelledby="agent-team-phone">
+      <h3 id="agent-team-phone">Phone alerts</h3>
+      <p className="small">
+        Get a push on your phone when the team needs you, pauses or finishes.
+        Install the free ntfy app, then subscribe to your private channel below.
+        Alerts are short status lines (no code) and pass through the ntfy
+        server.
+      </p>
+      {view && (
+        <>
+          <label className="agent-team-checkbox">
+            <input
+              type="checkbox"
+              checked={view.enabled}
+              disabled={busy}
+              onChange={(event) =>
+                void run(() =>
+                  api.setPhoneNotify!({ enabled: event.target.checked }),
+                )
+              }
+            />
+            Send alerts to my phone
+          </label>
+          <label className="agent-team-field">
+            Your private channel (subscribe to this in ntfy)
+            <input
+              readOnly
+              value={view.subscribeUrl}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </label>
+          <div className="agent-team-actions">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void run(
+                  () => api.testPhoneNotify!(),
+                  "Test alert sent. Check your phone.",
+                )
+              }
+            >
+              Send test
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy}
+              onClick={() =>
+                void run(
+                  () => api.setPhoneNotify!({ regenerateTopic: true }),
+                  "New channel created. Subscribe to it again in ntfy.",
+                )
+              }
+            >
+              New channel
+            </button>
+          </div>
+        </>
+      )}
+      {status && <p role="status">{status}</p>}
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
       )}
     </section>
   );

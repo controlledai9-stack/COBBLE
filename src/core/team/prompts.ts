@@ -214,7 +214,12 @@ The architecture brief below. Look for missing contracts, risky or costly choice
 - Follow the architecture brief exactly: file paths, names, interfaces and conventions. Other agents build against the same contracts.
 - Stay inside the team plan. Do not add features that are not asked for. Put ideas in "suggestions" instead.
 - If you hit a decision the brief and task do not answer and a wrong guess would be costly, stop and report "needs_decision" with a clear question and options. The planner will answer and you will be resumed. For small choices, decide yourself and mention it in "notes".
-- Never ask for, print or store passwords, API keys or tokens.${
+${
+  run.shareDependencies
+    ? `- node_modules here is SHARED with the user's own checkout. Never run npm/yarn/pnpm install, update, uninstall or ci, and never edit node_modules. If you need a new dependency, report "needs_decision".
+`
+    : ""
+}- Never ask for, print or store passwords, API keys or tokens.${
     deploy
       ? `
 - Deploy target: ${task.target ?? "preview"}. Use CLIs the user is already signed in to. If a sign-in is needed, stop and report needs_human with the exact command the user should run.`

@@ -1,3 +1,5 @@
+import type { PhoneNotifyView } from "../core/team/notify";
+export type { PhoneNotifyView } from "../core/team/notify";
 import type {
   AgentDetection,
   ApprovalPolicy,
@@ -548,8 +550,16 @@ export interface DesktopApi {
     goal: string,
     budget?: Partial<TeamBudget>,
     policy?: Partial<ApprovalPolicy>,
-    /** checkCommand: e.g. "npm ci && npm test", run on every task's changes. */
-    options?: { checkCommand?: string },
+    /**
+     * checkCommand: e.g. "npm ci && npm test", run on every task's changes.
+     * shareDependencies: link the workspace's ignored node_modules into tasks.
+     * baseRef: branch the run starts from (default: the workspace's HEAD).
+     */
+    options?: {
+      checkCommand?: string;
+      shareDependencies?: boolean;
+      baseRef?: string;
+    },
   ): Promise<TeamRun>;
   teamRuns?(): Promise<TeamRun[]>;
   teamRun?(runId: string): Promise<RunSnapshot>;
@@ -568,6 +578,14 @@ export interface DesktopApi {
     note?: string,
   ): Promise<RunSnapshot>;
   openTeamTerminal?(runId: string, taskId?: string): Promise<void>;
+  /** Phone alerts through ntfy. */
+  phoneNotify?(): Promise<PhoneNotifyView>;
+  setPhoneNotify?(patch: {
+    enabled?: boolean;
+    server?: string;
+    regenerateTopic?: boolean;
+  }): Promise<PhoneNotifyView>;
+  testPhoneNotify?(): Promise<PhoneNotifyView>;
   onTeam?(callback: (runId: string | null) => void): () => void;
   onTeamAttention?(
     callback: (event: {

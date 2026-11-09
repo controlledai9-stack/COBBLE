@@ -6,11 +6,23 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  rmdir,
+  symlink,
+  unlink,
+} from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Change } from "../../shared/types";
 
 const exec = promisify(execFile);
+/** Ignored dependency folders shared from the workspace into task worktrees. */
+export const DEPENDENCY_DIRS = ["node_modules"] as const;
 export const REPORT_DIR = ".cobble-task";
 export const REPORT_FILE = `${REPORT_DIR}/report.json`;
 const IDENTITY = [
@@ -51,19 +63,64 @@ export class Worktrees {
     return join(this.root, runId.slice(0, 8), taskId);
   }
 
-  /** Confirms the workspace is a Git repository and returns its HEAD commit. */
-  async head(): Promise<string> {
+  /**
+   * Confirms the workspace is a Git repository and returns the commit of
+   * `ref` (default HEAD), e.g. an autopilot branch that runs build on.
+   */
+  async head(ref = "HEAD"): Promise<string> {
+    if (!/^[\w][\w./-]{0,200}$/.test(ref) || ref.includes(".."))
+      throw new Error("Invalid base branch name");
     try {
       return await this.run(
         this.repo,
         "rev-parse",
         "--verify",
-        "HEAD^{commit}",
+        "--end-of-options",
+        `${ref}^{commit}`,
       );
     } catch {
       throw new Error(
-        "Agent Team needs the workspace to be a Git repository with at least one commit",
+        ref === "HEAD"
+          ? "Agent Team needs the workspace to be a Git repository with at least one commit"
+          : `Base branch ${ref} was not found`,
       );
+    }
+  }
+
+  /**
+   * Links the workspace's own ignored dependency folders (node_modules) into
+   * a task worktree, so checks run without a fresh install. Only folders Git
+   * ignores are linked, so they can never be committed. Returns linked names.
+   */
+  async linkDependencies(path: string): Promise<string[]> {
+    const linked: string[] = [];
+    for (const dir of DEPENDENCY_DIRS) {
+      const source = join(this.repo, dir);
+      const target = join(path, dir);
+      if (!existsSync(source) || existsSync(target)) continue;
+      const ignored = await this.run(this.repo, "check-ignore", "-q", dir).then(
+        () => true,
+        () => false,
+      );
+      if (!ignored) continue;
+      await symlink(source, target, "junction");
+      linked.push(dir);
+    }
+    return linked;
+  }
+
+  /** Removes dependency links (never their targets) before deleting a worktree. */
+  async unlinkDependencies(path: string) {
+    for (const dir of DEPENDENCY_DIRS) {
+      const target = join(path, dir);
+      let info;
+      try {
+        info = await lstat(target);
+      } catch {
+        continue;
+      }
+      if (!info.isSymbolicLink()) continue;
+      await unlink(target).catch(() => rmdir(target));
     }
   }
 
@@ -108,6 +165,7 @@ export class Worktrees {
       "HEAD",
     ).catch(() => "");
     if (current !== branch) {
+      await this.unlinkDependencies(path);
       await rm(path, { recursive: true, force: true });
       await this.run(this.repo, "worktree", "prune");
       await this.run(this.repo, "worktree", "add", "--force", path, branch);
@@ -208,6 +266,8 @@ export class Worktrees {
   }
 
   async removeTask(runId: string, taskId: string) {
+    // Unlink shared dependencies first so removal can never follow the link.
+    await this.unlinkDependencies(this.taskPath(runId, taskId));
     try {
       await this.run(
         this.repo,
@@ -233,11 +293,17 @@ export class Worktrees {
             .replaceAll("\\", "/")
             .toLowerCase()
             .startsWith(dir.replaceAll("\\", "/").toLowerCase())
-        )
+        ) {
+          await this.unlinkDependencies(wt);
           await this.run(this.repo, "worktree", "remove", "--force", wt).catch(
             () => {},
           );
+        }
       }
+    // Any folder left behind (e.g. a pruned worktree) loses its links first.
+    if (existsSync(dir))
+      for (const entry of await readdir(dir))
+        await this.unlinkDependencies(join(dir, entry));
     await rm(dir, { recursive: true, force: true });
     await this.run(this.repo, "worktree", "prune").catch(() => {});
   }

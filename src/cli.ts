@@ -19,6 +19,10 @@ async function main() {
       "max-tasks": { type: "string" },
       "max-turns": { type: "string" },
       check: { type: "string" },
+      base: { type: "string" },
+      backlog: { type: "string" },
+      "max-runs": { type: "string" },
+      "share-deps": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -37,6 +41,10 @@ async function main() {
   cobble team test AGENT             one-line headless round trip
   cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"]
   cobble team resume [RUN_ID] [--max-turns N]
+  cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
+  cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps]
+      works through "- [ ] item" lines one run at a time on branch cobble/autopilot
+  run/autopilot options: --base BRANCH (start from it), --share-deps (link node_modules)
   cobble team status [RUN_ID]
 
 Do not run "team run" while the desktop app is open on the same data.
@@ -177,6 +185,23 @@ async function teamCommand(
     if (!rest[0]) throw new Error("Usage: cobble team test AGENT");
     return print(await service.testTeamAgent(rest[0]));
   }
+  if (sub === "notify") {
+    const [action, value] = rest;
+    if (!action || action === "status") return print(service.phoneNotify());
+    if (action === "on" || action === "off")
+      return print(service.setPhoneNotify({ enabled: action === "on" }));
+    if (action === "new-topic")
+      return print(service.setPhoneNotify({ regenerateTopic: true }));
+    if (action === "server" && value)
+      return print(service.setPhoneNotify({ server: value }));
+    if (action === "test") {
+      const view = await service.testPhoneNotify();
+      return console.log(`Sent a test alert to ${view.subscribeUrl}`);
+    }
+    throw new Error(
+      "Usage: cobble team notify status|on|off|test|new-topic|server URL",
+    );
+  }
   if (sub === "status") {
     const id = rest[0] ?? service.teamRuns()[0]?.id;
     if (!id) return console.log("No team runs yet.");
@@ -214,71 +239,157 @@ async function teamCommand(
             : {}),
         },
         undefined,
-        {
-          checkCommand:
-            typeof values.check === "string" ? values.check : undefined,
-        },
+        runOptions(values),
       );
       console.log(`Run ${run.id} on branch ${run.runBranch}`);
     }
-    const prompt = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    let shown = 0;
-    try {
-      for (;;) {
-        await service.agentTeam.idle(run.id);
-        const snap = service.teamRun(run.id);
-        for (const event of snap.events.slice(shown))
-          console.log(`[${event.kind}] ${event.message}`);
-        shown = snap.events.length;
-        const waiting = snap.tasks.filter((t) => t.state === "needs_human");
-        if (snap.run.state === "needs_human" && snap.run.gate) {
-          const answer = await prompt.question(
-            `\nThe planner needs you (${snap.run.gate.kind}): ${snap.run.gate.message}\nType your answer, or "skip": `,
-          );
-          service.agentTeam.resolveGate(
-            run.id,
-            answer.trim() === "skip" ? "skip" : "done",
-            undefined,
-            answer,
-          );
-          continue;
-        }
-        if (waiting.length && snap.run.state === "running") {
-          const task = waiting[0];
-          const answer = await prompt.question(
-            `\n${task.id} needs you: ${task.gate?.message}\nFolder: ${task.worktree ?? snap.run.workspace}\nPress Enter when done${task.gate?.kind === "approval" ? " to approve" : ""}, or type "skip": `,
-          );
-          service.agentTeam.resolveGate(
-            run.id,
-            answer.trim() === "skip"
-              ? "skip"
-              : task.gate?.kind === "approval"
-                ? "approve"
-                : "done",
-            task.id,
-          );
-          continue;
-        }
-        if (snap.run.state === "paused" && snap.run.pausedReason)
-          console.log(`Paused: ${snap.run.pausedReason}`);
-        if (snap.run.summary) console.log(`\nSummary: ${snap.run.summary}`);
-        console.log(
-          `Run state: ${snap.run.state}. Work is on branch ${snap.run.runBranch}.`,
-        );
-        for (const d of snap.decisions)
-          console.log(`- decided: ${d.question} -> ${d.choice} (${d.why})`);
+    await followRun(service, run.id);
+    return;
+  }
+  if (sub === "autopilot") {
+    const number = (v: unknown) =>
+      typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
+    const teamId = service.activeTeam()?.id;
+    if (!teamId) throw new Error("Choose a team first");
+    const backlog =
+      typeof values.backlog === "string" ? values.backlog : "docs/BACKLOG.md";
+    const maxRuns = Math.min(number(values["max-runs"]) ?? 3, 20);
+    const prepared = await service.autopilot.prepare(teamId);
+    console.log(
+      `Autopilot on branch ${prepared.branch}${prepared.created ? " (new, from your current HEAD)" : ""}; worktree ${prepared.path}`,
+    );
+    let flagged = 0;
+    for (let n = 1; n <= maxRuns; n++) {
+      const item = await service.autopilot.next(teamId, backlog);
+      if (!item) {
+        console.log("Backlog is empty. Autopilot finished.");
+        await service.phone.notify({
+          runId: "autopilot",
+          kind: "finished",
+          message: `Autopilot finished: no open items left in ${backlog}.`,
+        });
         return;
       }
-    } finally {
-      prompt.close();
+      console.log(`\n=== Item ${n}/${maxRuns}: ${item.text}`);
+      const run = await service.autopilot.start(teamId, item, backlog, {
+        budget: {
+          ...(number(values["max-tasks"])
+            ? { maxTasks: number(values["max-tasks"]) }
+            : {}),
+          ...(number(values["max-turns"])
+            ? { maxPlannerTurns: number(values["max-turns"]) }
+            : {}),
+        },
+        checkCommand:
+          typeof values.check === "string" ? values.check : undefined,
+        shareDependencies: values["share-deps"] === true,
+      });
+      console.log(`Run ${run.id} on branch ${run.runBranch}`);
+      const final = await followRun(service, run.id);
+      const outcome = await service.autopilot.complete(
+        teamId,
+        final.run,
+        item,
+        backlog,
+      );
+      console.log(`Autopilot: ${outcome.message}`);
+      await service.phone.notify({
+        runId: run.id,
+        kind: outcome.status === "merged" ? "finished" : "needs_you",
+        message: `Autopilot ${outcome.status === "merged" ? "finished" : "flagged"} "${item.text.slice(0, 120)}": ${outcome.message}`,
+      });
+      if (outcome.status === "not_done") return;
+      flagged = outcome.status === "merged" ? 0 : flagged + 1;
+      if (flagged >= 2) {
+        console.log("Two items in a row needed attention. Autopilot stopped.");
+        await service.phone.notify({
+          runId: "autopilot",
+          kind: "paused",
+          message: "Autopilot stopped: two items in a row needed attention.",
+        });
+        return;
+      }
     }
+    console.log(`Reached --max-runs ${maxRuns}. Autopilot stopped.`);
+    await service.phone.notify({
+      runId: "autopilot",
+      kind: "paused",
+      message: `Autopilot stopped after ${maxRuns} runs (--max-runs). Review branch cobble/autopilot.`,
+    });
+    return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|autopilot|notify|status",
   );
+}
+
+function runOptions(values: Record<string, unknown>) {
+  return {
+    checkCommand: typeof values.check === "string" ? values.check : undefined,
+    ...(typeof values.base === "string" ? { baseRef: values.base } : {}),
+    ...(values["share-deps"] === true ? { shareDependencies: true } : {}),
+  };
+}
+
+/**
+ * Follows a run in the terminal until it finishes, pauses or stops, asking
+ * the user to answer gates as they come. Returns the final snapshot.
+ */
+async function followRun(service: CobbleService, runId: string) {
+  const prompt = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  let shown = 0;
+  try {
+    for (;;) {
+      await service.agentTeam.idle(runId);
+      const snap = service.teamRun(runId);
+      for (const event of snap.events.slice(shown))
+        console.log(`[${event.kind}] ${event.message}`);
+      shown = snap.events.length;
+      const waiting = snap.tasks.filter((t) => t.state === "needs_human");
+      if (snap.run.state === "needs_human" && snap.run.gate) {
+        const answer = await prompt.question(
+          `\nThe planner needs you (${snap.run.gate.kind}): ${snap.run.gate.message}\nType your answer, or "skip": `,
+        );
+        service.agentTeam.resolveGate(
+          runId,
+          answer.trim() === "skip" ? "skip" : "done",
+          undefined,
+          answer,
+        );
+        continue;
+      }
+      if (waiting.length && snap.run.state === "running") {
+        const task = waiting[0];
+        const answer = await prompt.question(
+          `\n${task.id} needs you: ${task.gate?.message}\nFolder: ${task.worktree ?? snap.run.workspace}\nPress Enter when done${task.gate?.kind === "approval" ? " to approve" : ""}, or type "skip": `,
+        );
+        service.agentTeam.resolveGate(
+          runId,
+          answer.trim() === "skip"
+            ? "skip"
+            : task.gate?.kind === "approval"
+              ? "approve"
+              : "done",
+          task.id,
+        );
+        continue;
+      }
+      if (snap.run.state === "paused" && snap.run.pausedReason)
+        console.log(`Paused: ${snap.run.pausedReason}`);
+      if (snap.run.summary) console.log(`\nSummary: ${snap.run.summary}`);
+      console.log(
+        `Run state: ${snap.run.state}. Work is on branch ${snap.run.runBranch}.`,
+      );
+      for (const d of snap.decisions)
+        console.log(`- decided: ${d.question} -> ${d.choice} (${d.why})`);
+      return snap;
+    }
+  } finally {
+    prompt.close();
+  }
 }
 void main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
