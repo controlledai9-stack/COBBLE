@@ -544,7 +544,16 @@ else {
           command: unknown,
           taskId: unknown,
           note: unknown,
+          answers: unknown,
         ) => {
+          if (
+            answers !== undefined &&
+            answers !== null &&
+            (!Array.isArray(answers) ||
+              answers.length > 12 ||
+              answers.some((a) => typeof a !== "string" || a.length > 1_000))
+          )
+            throw new Error("Invalid answers");
           const allowedCommands = [
             "pause",
             "resume",
@@ -565,8 +574,17 @@ else {
               ? undefined
               : text(taskId, 32),
             note === undefined || note === null ? undefined : text(note, 1_000),
+            Array.isArray(answers) ? answers : undefined,
           );
         },
+      );
+      handle("team-full-access", () => service.teamFullAccess());
+      handle("team-set-full-access", (_, roles: unknown) =>
+        service.setTeamFullAccess(roles),
+      );
+      handle("team-user-decisions", () => service.teamUserDecisions());
+      handle("team-forget-user-decisions", () =>
+        service.forgetTeamUserDecisions(),
       );
       handle("team-phone-notify", () => service.phoneNotify());
       handle("team-set-phone-notify", (_, patch: unknown) =>

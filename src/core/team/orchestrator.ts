@@ -29,6 +29,7 @@ import { TeamStore } from "./team-store";
 import {
   DEFAULT_BUDGET,
   DEFAULT_POLICY,
+  FULL_ACCESS_ROLES,
   TERMINAL_TASK_STATES,
   WRITING_ROLES,
   type ApprovalPolicy,
@@ -39,6 +40,7 @@ import {
   type TeamRole,
   type TeamRun,
   type TeamTask,
+  type UserQuestion,
 } from "./types";
 import { Worktrees } from "./worktrees";
 
@@ -99,6 +101,8 @@ export class TeamOrchestrator extends EventEmitter {
       baseRef?: string;
       /** Link the workspace's ignored node_modules into task worktrees. */
       shareDependencies?: boolean;
+      /** Override the team's saved full-access roles for this run. */
+      fullAccessRoles?: TeamRole[];
     } = {},
   ): Promise<TeamRun> {
     if (this.closed) throw new Error("Cobble is closing");
@@ -169,6 +173,9 @@ export class TeamOrchestrator extends EventEmitter {
       ...(checkCommand ? { checkCommand } : {}),
       ...(extras.shareDependencies ? { shareDependencies: true } : {}),
       ...(extras.baseRef ? { baseRef: extras.baseRef } : {}),
+      fullAccessRoles: (
+        extras.fullAccessRoles ?? this.store.fullAccessRoles(teamId)
+      ).filter((r) => FULL_ACCESS_ROLES.includes(r)),
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -234,7 +241,14 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   /** Answers a human gate on the run (taskId omitted) or on one task. */
-  resolveGate(runId: string, answer: GateAnswer, taskId?: string, note = "") {
+  resolveGate(
+    runId: string,
+    answer: GateAnswer,
+    taskId?: string,
+    note = "",
+    /** Answers to an intake ("questions") gate, in question order. */
+    answers: string[] = [],
+  ) {
     const run = this.require(runId);
     const extra = note.trim().slice(0, 1_000);
     if (taskId) {
@@ -265,6 +279,38 @@ export class TeamOrchestrator extends EventEmitter {
         (answer === "approve" || answer === "done")
       )
         run.approvals = [...new Set([...run.approvals, "production"])];
+      if (gate.kind === "questions" && gate.questions?.length) {
+        const declined = answer === "skip" || answer === "deny";
+        const given = gate.questions.map((q, i) => ({
+          question: q.question,
+          answer: declined
+            ? ""
+            : String(answers[i] ?? "")
+                .trim()
+                .slice(0, 1_000),
+          at: new Date(this.now()).toISOString(),
+        }));
+        // Saved per team: later runs and autopilot reuse these decisions.
+        this.store.addUserAnswers(run.teamId, given);
+        const lines = given.map(
+          (g) =>
+            `- ${g.question} → ${g.answer || "(no answer: decide yourself and record it)"}`,
+        );
+        run.pendingNotes.push(
+          `${declined ? "The user skipped your questions." : "The user answered your questions:"}\n${lines.join("\n")}${extra ? `\nThey added: ${extra}` : ""}`,
+        );
+        this.log(
+          run,
+          "gate",
+          `User answered ${given.filter((g) => g.answer).length}/${given.length} questions`,
+        );
+        run.gate = undefined;
+        run.state = "running";
+        run.wakeRequested = true;
+        this.store.saveRun(run);
+        this.schedule(runId);
+        return this.store.snapshot(runId)!;
+      }
       run.pendingNotes.push(
         answer === "skip" || answer === "deny"
           ? `The user declined your request (${gate.kind}): "${gate.message}".${extra ? ` They said: ${extra}` : ""} Continue without it or finish.`
@@ -487,9 +533,10 @@ export class TeamOrchestrator extends EventEmitter {
     if (!finished.length && !notes.length && !run.wakeRequested)
       notes.push("No work is in progress. Delegate the next step or finish.");
     const decisions = this.store.decisions(runId);
+    const userAnswers = this.store.decisionsFromUser(run.teamId);
     let prompt =
       run.plannerTurns === 0
-        ? plannerStartPrompt(team, run, roles)
+        ? plannerStartPrompt(team, run, roles, userAnswers)
         : plannerWakePrompt(
             team,
             run,
@@ -497,6 +544,7 @@ export class TeamOrchestrator extends EventEmitter {
             finished,
             decisions,
             notes.join("\n"),
+            userAnswers,
           );
     if (run.plannerTurns > 0 && !run.plannerSessionId)
       prompt = `${autonomyPolicy(run.policy)}\n\n${prompt}`;
@@ -621,9 +669,14 @@ export class TeamOrchestrator extends EventEmitter {
     return null;
   }
 
-  private gateRun(run: TeamRun, kind: HumanGateKind, message: string) {
+  private gateRun(
+    run: TeamRun,
+    kind: HumanGateKind,
+    message: string,
+    questions?: UserQuestion[],
+  ) {
     run.state = "needs_human";
-    run.gate = { kind, message };
+    run.gate = { kind, message, ...(questions ? { questions } : {}) };
     this.store.saveRun(run);
     this.log(run, "gate", message);
     this.emit("attention", { runId: run.id, kind: "needs_you", message });
@@ -777,6 +830,14 @@ export class TeamOrchestrator extends EventEmitter {
       }
       case "ask_human":
         return this.gateRun(run, action.kind, action.message);
+      case "ask_user":
+        return this.gateRun(
+          run,
+          "questions",
+          action.intro ||
+            `The planner has ${action.questions.length} question${action.questions.length === 1 ? "" : "s"} for you`,
+          action.questions,
+        );
       case "wait":
         this.log(
           run,
@@ -886,10 +947,13 @@ export class TeamOrchestrator extends EventEmitter {
             task,
             note,
             reviewTarget ? { task: reviewTarget } : undefined,
+            this.store.decisionsFromUser(run.teamId),
           ),
           resumeSessionId: resuming ? task.sessionId : undefined,
           readOnly: !writing,
           network: task.role === "deployer",
+          fullAccess:
+            writing && (run.fullAccessRoles ?? []).includes(task.role),
           timeoutMs: run.budget.taskTimeoutMs,
           signal: controller.signal,
         });

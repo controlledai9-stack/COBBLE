@@ -12,12 +12,15 @@ import type {
   TeamRole,
   TeamRun,
   TeamTask,
+  UserAnswer,
 } from "./types";
+import { FULL_ACCESS_ROLES } from "./types";
 
 export const TEAM_STORE_LIMITS = Object.freeze({
   runsPerTeam: 200,
   eventsPerRun: 2_000,
   retentionDays: 8,
+  userAnswers: 60,
 });
 
 export class TeamStore {
@@ -40,6 +43,54 @@ export class TeamStore {
       .all(teamId) as { role: TeamRole; agent: TeamAgentId }[];
     return Object.fromEntries(rows.map((r) => [r.role, r.agent]));
   }
+
+  /** Worker roles the user opted into full access (no agent sandbox). */
+  fullAccessRoles(teamId: string): TeamRole[] {
+    const saved = this.store.setting<unknown>(`teamFullAccess:${teamId}`, []);
+    return Array.isArray(saved)
+      ? saved.filter((r): r is TeamRole => FULL_ACCESS_ROLES.includes(r))
+      : [];
+  }
+  setFullAccessRoles(teamId: string, roles: readonly string[]) {
+    const clean = [...new Set(roles)].filter((r): r is TeamRole =>
+      FULL_ACCESS_ROLES.includes(r as TeamRole),
+    );
+    this.store.set(`teamFullAccess:${teamId}`, clean);
+    return clean;
+  }
+
+  /**
+   * Project decisions the user gave in intake interviews (where to deploy,
+   * must-use tech, ...). Every planner and worker prompt includes them, so
+   * later runs and autopilot do not ask again.
+   */
+  decisionsFromUser(teamId: string): UserAnswer[] {
+    const saved = this.store.setting<unknown>(`teamUserAnswers:${teamId}`, []);
+    return Array.isArray(saved) ? (saved as UserAnswer[]) : [];
+  }
+  addUserAnswers(teamId: string, answers: UserAnswer[]) {
+    const byQuestion = new Map(
+      this.decisionsFromUser(teamId).map((a) => [a.question.toLowerCase(), a]),
+    );
+    for (const a of answers)
+      if (a.answer.trim()) {
+        // Newest last: a re-answered question moves to the end, so trimming
+        // to the limit drops the oldest decisions first.
+        byQuestion.delete(a.question.toLowerCase());
+        byQuestion.set(a.question.toLowerCase(), {
+          question: a.question.slice(0, 500),
+          answer: a.answer.slice(0, 1_000),
+          at: a.at,
+        });
+      }
+    const all = [...byQuestion.values()].slice(-TEAM_STORE_LIMITS.userAnswers);
+    this.store.set(`teamUserAnswers:${teamId}`, all);
+    return all;
+  }
+  forgetUserAnswers(teamId: string) {
+    this.store.set(`teamUserAnswers:${teamId}`, []);
+  }
+
   setRole(teamId: string, role: TeamRole, agent: TeamAgentId | null) {
     if (agent === null)
       this.store.db

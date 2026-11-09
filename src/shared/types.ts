@@ -8,6 +8,7 @@ import type {
   TeamBudget,
   TeamRole,
   TeamRun,
+  UserAnswer,
 } from "../core/team/types";
 export type {
   AgentDetection,
@@ -20,6 +21,8 @@ export type {
   TeamTask,
   TeamDecision,
   TeamEvent,
+  UserAnswer,
+  UserQuestion,
 } from "../core/team/types";
 export type Availability = "available" | "focused" | "away";
 export type CompanionMode = "normal" | "idle" | "dragging";
@@ -598,7 +601,15 @@ export interface DesktopApi {
       | "deny",
     taskId?: string,
     note?: string,
+    /** Answers to an intake ("questions") gate, in question order. */
+    answers?: string[],
   ): Promise<RunSnapshot>;
+  /** Roles running with full access (no agent sandbox), user opt-in. */
+  teamFullAccess?(): Promise<TeamRole[]>;
+  setTeamFullAccess?(roles: TeamRole[]): Promise<TeamRole[]>;
+  /** Project decisions saved from intake interviews. */
+  teamUserDecisions?(): Promise<UserAnswer[]>;
+  forgetTeamUserDecisions?(): Promise<UserAnswer[]>;
   openTeamTerminal?(runId: string, taskId?: string): Promise<void>;
   /** Phone alerts through ntfy. */
   phoneNotify?(): Promise<PhoneNotifyView>;

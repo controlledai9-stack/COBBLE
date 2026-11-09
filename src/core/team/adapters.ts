@@ -22,6 +22,13 @@ export interface AdapterRunInput {
   readOnly: boolean;
   /** Network access for deploy tasks (only meaningful for sandboxed CLIs). */
   network: boolean;
+  /**
+   * User opt-in per role: run like the agent's normal interactive use on the
+   * user's PC, without its own sandbox or permission prompts, so it can use
+   * the user's installed tools (e.g. deploy CLIs). Codex's Windows sandbox
+   * refuses to start programs outside the project ("Access is denied").
+   */
+  fullAccess?: boolean;
   timeoutMs: number;
   signal?: AbortSignal;
 }
@@ -289,7 +296,11 @@ export const claudeSpec: CliSpec = {
     "--output-format",
     "json",
     "--permission-mode",
-    input.readOnly ? "plan" : "acceptEdits",
+    input.readOnly
+      ? "plan"
+      : input.fullAccess
+        ? "bypassPermissions"
+        : "acceptEdits",
     ...(input.resumeSessionId ? ["--resume", input.resumeSessionId] : []),
   ],
   parse(stdout) {
@@ -316,8 +327,8 @@ export const codexSpec: CliSpec = {
     // `codex exec resume` has no --sandbox flag (verified on codex-cli
     // 0.167.0), so the sandbox is set through config for both forms.
     "-c",
-    `sandbox_mode=${input.readOnly ? "read-only" : "workspace-write"}`,
-    ...(input.network && !input.readOnly
+    `sandbox_mode=${input.readOnly ? "read-only" : input.fullAccess ? "danger-full-access" : "workspace-write"}`,
+    ...(input.network && !input.readOnly && !input.fullAccess
       ? ["-c", "sandbox_workspace_write.network_access=true"]
       : []),
     "-",
@@ -356,7 +367,7 @@ export const geminiSpec: CliSpec = {
     "--skip-trust",
     // "plan" is Gemini's read-only mode (verified on gemini-cli 0.67.0).
     "--approval-mode",
-    input.readOnly ? "plan" : "auto_edit",
+    input.readOnly ? "plan" : input.fullAccess ? "yolo" : "auto_edit",
   ],
   parse(stdout) {
     const value = lastJson(stdout);

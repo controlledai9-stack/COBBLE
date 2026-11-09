@@ -4,6 +4,7 @@ import type {
   AutopilotOptions,
   AutopilotStatus,
   PhoneNotifyView,
+  UserAnswer,
   DesktopApi,
   RunSnapshot,
   TeamAgentId,
@@ -20,6 +21,8 @@ const roles: TeamRole[] = [
   "deployer",
 ];
 const agents: TeamAgentId[] = ["claude", "codex", "gemini"];
+/** Roles that may be given full access (planner/reviewer stay read-only). */
+const fullAccessRoles: TeamRole[] = ["coder", "generator", "deployer"];
 const names: Record<TeamAgentId, string> = {
   claude: "Claude",
   codex: "Codex",
@@ -125,6 +128,15 @@ function TeamPanelContent({
   const [requireApprovalForProduction, setRequireApproval] = useState(true);
   const [checkCommand, setCheckCommand] = useState("");
   const [shareDependencies, setShareDependencies] = useState(false);
+  const desktop = window.cobble;
+  const [fullAccess, setFullAccess] = useState<TeamRole[]>();
+  const refreshFullAccess = useCallback(async () => {
+    try {
+      setFullAccess(await desktop?.teamFullAccess?.());
+    } catch (error) {
+      setRoleError(describeError(error));
+    }
+  }, [desktop]);
   const [autopilot, setAutopilot] = useState<AutopilotStatus>();
 
   const refreshRuns = useCallback(async () => {
@@ -177,10 +189,14 @@ function TeamPanelContent({
 
   useEffect(() => {
     const off = api.onTeam((runId) => {
-      if (runId === null) void refreshRoles();
+      if (runId === null) {
+        void refreshRoles();
+        void refreshFullAccess();
+      }
       void refreshRuns();
     });
     void refreshRoles();
+    void refreshFullAccess();
     void refreshRuns();
     void detect();
     return () => {
@@ -188,7 +204,7 @@ function TeamPanelContent({
       ++runRequest.current;
       ++roleRequest.current;
     };
-  }, [api, detect, refreshRoles, refreshRuns]);
+  }, [api, detect, refreshFullAccess, refreshRoles, refreshRuns]);
 
   async function perform(action: () => Promise<void>) {
     if (busy.current) return;
@@ -250,6 +266,7 @@ function TeamPanelContent({
             <tr>
               <th scope="col">Role</th>
               <th scope="col">Agent</th>
+              <th scope="col">Full access</th>
             </tr>
           </thead>
           <tbody>
@@ -288,6 +305,37 @@ function TeamPanelContent({
                       </span>
                     )}
                 </td>
+                <td>
+                  {fullAccessRoles.includes(role) ? (
+                    <label className="agent-team-checkbox">
+                      <input
+                        type="checkbox"
+                        aria-label={`Full access for ${role}`}
+                        checked={!!fullAccess?.includes(role)}
+                        disabled={
+                          pending || !fullAccess || !desktop?.setTeamFullAccess
+                        }
+                        onChange={(event) => {
+                          const next = event.target.checked
+                            ? [...(fullAccess ?? []), role]
+                            : (fullAccess ?? []).filter((r) => r !== role);
+                          void perform(async () => {
+                            setFullAccess(
+                              await desktop!.setTeamFullAccess!(next),
+                            );
+                          });
+                        }}
+                      />
+                      <span className="small">
+                        {fullAccess?.includes(role)
+                          ? "No sandbox"
+                          : "Sandboxed"}
+                      </span>
+                    </label>
+                  ) : (
+                    <span className="small">Read-only</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -318,7 +366,17 @@ function TeamPanelContent({
             />
           ))}
         </ul>
+        {!!fullAccess?.length && (
+          <p className="small agent-team-text agent-team-warning">
+            Full access roles ({fullAccess.join(", ")}) run without their
+            agent's sandbox, like a normal session on your PC: they can use your
+            installed tools and signed-in CLIs, and could change files outside
+            the project. Production deploys still need your approval.
+          </p>
+        )}
       </section>
+
+      <ProjectDecisions />
 
       <PhoneAlerts />
 
@@ -463,9 +521,15 @@ function TeamPanelContent({
             key={snapshot.run.id}
             snapshot={snapshot}
             pending={pending}
-            command={(command, taskId, note) =>
+            command={(command, taskId, note, answers) =>
               void perform(async () => {
-                await api.teamCommand(snapshot.run.id, command, taskId, note);
+                await api.teamCommand(
+                  snapshot.run.id,
+                  command,
+                  taskId,
+                  note,
+                  answers,
+                );
                 await refreshRuns();
               })
             }
@@ -606,6 +670,71 @@ function AutopilotCard({
         </ul>
       )}
     </form>
+  );
+}
+
+/** Project decisions the user gave in intake interviews (saved per team). */
+function ProjectDecisions() {
+  const api = window.cobble;
+  const [answers, setAnswers] = useState<UserAnswer[]>();
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    try {
+      setAnswers(await api?.teamUserDecisions?.());
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }, [api]);
+  useEffect(() => {
+    void load();
+    return api?.onTeam?.(() => void load());
+  }, [api, load]);
+  if (!api?.teamUserDecisions) return null;
+  return (
+    <section className="agent-team-card" aria-labelledby="agent-team-decided">
+      <div className="agent-team-heading">
+        <h3 id="agent-team-decided">Project decisions</h3>
+        {!!answers?.length && api.forgetTeamUserDecisions && (
+          <button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              void api.forgetTeamUserDecisions!()
+                .then(setAnswers)
+                .catch((e) => setError(describeError(e)))
+            }
+          >
+            Forget all
+          </button>
+        )}
+      </div>
+      <p className="small">
+        What you told the planner in its questions (where to deploy, tools to
+        use or avoid, and so on). Every agent sees these; the planner will not
+        ask them again.
+      </p>
+      {answers?.length ? (
+        <dl className="agent-team-log">
+          {answers.map((a) => (
+            <div key={a.question}>
+              <dt className="agent-team-text">
+                <strong>{a.question}</strong>
+              </dt>
+              <dd className="agent-team-text">{a.answer}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="small">
+          None yet. The planner asks at the start of a project.
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -798,7 +927,12 @@ function RunView({
 }: {
   snapshot: RunSnapshot;
   pending: boolean;
-  command: (command: Command, taskId?: string, note?: string) => void;
+  command: (
+    command: Command,
+    taskId?: string,
+    note?: string,
+    answers?: string[],
+  ) => void;
   openTerminal: (taskId: string) => void;
 }) {
   const { run, tasks, decisions, events } = snapshot;
@@ -1010,9 +1144,97 @@ function RunGate({
 }: {
   gate: NonNullable<RunSnapshot["run"]["gate"]>;
   pending: boolean;
-  command: (command: "done" | "skip", taskId?: string, note?: string) => void;
+  command: (
+    command: "done" | "skip",
+    taskId?: string,
+    note?: string,
+    answers?: string[],
+  ) => void;
 }) {
   const [note, setNote] = useState("");
+  const questions = gate.kind === "questions" ? (gate.questions ?? []) : [];
+  const [answers, setAnswers] = useState<string[]>(() =>
+    questions.map(() => ""),
+  );
+  if (questions.length)
+    return (
+      <form
+        className="agent-team-card agent-team-gate"
+        onSubmit={(event) => {
+          event.preventDefault();
+          command("done", undefined, note, answers);
+        }}
+      >
+        <h3>The planner has questions for you</h3>
+        <p className="agent-team-text">{gate.message}</p>
+        <p className="small">
+          Answers are saved as this project's decisions, so later runs and
+          Autopilot will not ask again. Leave one empty to let the planner
+          decide. Never type passwords or keys here.
+        </p>
+        <ol className="agent-team-questions">
+          {questions.map((q, i) => (
+            <li key={i}>
+              <label className="agent-team-field">
+                <span className="agent-team-text">{q.question}</span>
+                {q.why && <span className="small">{q.why}</span>}
+                {q.options?.length ? (
+                  <select
+                    value={q.options.includes(answers[i]) ? answers[i] : ""}
+                    onChange={(event) =>
+                      setAnswers(
+                        answers.map((a, j) =>
+                          j === i ? event.target.value : a,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="">Choose, or type your own below</option>
+                    {q.options.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                <textarea
+                  rows={2}
+                  maxLength={1000}
+                  value={answers[i]}
+                  aria-label={`Answer ${i + 1}`}
+                  onChange={(event) =>
+                    setAnswers(
+                      answers.map((a, j) => (j === i ? event.target.value : a)),
+                    )
+                  }
+                />
+              </label>
+            </li>
+          ))}
+        </ol>
+        <label className="agent-team-field">
+          Anything else the planner should know (optional)
+          <input
+            value={note}
+            maxLength={1000}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </label>
+        <div className="agent-team-actions">
+          <button type="submit" disabled={pending}>
+            Send answers
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={pending}
+            onClick={() => command("skip", undefined, note)}
+          >
+            Skip, let the planner decide
+          </button>
+        </div>
+      </form>
+    );
   return (
     <section className="agent-team-card agent-team-gate">
       <h3>Run needs you</h3>

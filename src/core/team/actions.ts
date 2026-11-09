@@ -1,5 +1,10 @@
 /** Strict parsing of planner output (```cobble-actions JSON blocks). */
-import { TEAM_ROLES, type HumanGateKind, type TeamRole } from "./types";
+import {
+  TEAM_ROLES,
+  type HumanGateKind,
+  type TeamRole,
+  type UserQuestion,
+} from "./types";
 
 export type PlannerAction =
   | {
@@ -18,6 +23,8 @@ export type PlannerAction =
   | { type: "answer"; taskId: string; answer: string }
   | { type: "merge_task"; taskId: string }
   | { type: "ask_human"; kind: HumanGateKind; message: string }
+  /** Intake interview: several questions for the user, answered together. */
+  | { type: "ask_user"; intro: string; questions: UserQuestion[] }
   | { type: "wait"; reason: string }
   | { type: "finish"; summary: string };
 
@@ -43,6 +50,7 @@ export const ACTION_LIMITS = Object.freeze({
   acceptance: 10,
   brief: 12_000,
   answer: 4_000,
+  questions: 12,
 });
 
 const GATES: readonly HumanGateKind[] = [
@@ -285,6 +293,46 @@ export function parsePlannerReply(
         if (!knownTaskIds.has(taskId))
           throw new Error(`${at} merges unknown or unfinished task ${taskId}`);
         actions.push({ type: "merge_task", taskId });
+        break;
+      }
+      case "ask_user": {
+        const raw = a.questions;
+        if (
+          !Array.isArray(raw) ||
+          raw.length === 0 ||
+          raw.length > ACTION_LIMITS.questions
+        )
+          throw new Error(
+            `${at}.questions must list 1-${ACTION_LIMITS.questions} questions`,
+          );
+        actions.push({
+          type: "ask_user",
+          intro:
+            typeof a.intro === "string" ? a.intro.trim().slice(0, 1_000) : "",
+          questions: raw.map((q, j) => {
+            const item = (
+              typeof q === "string" ? { question: q } : (q ?? {})
+            ) as Record<string, unknown>;
+            return {
+              question: text(
+                item.question,
+                `${at}.questions[${j}].question`,
+                500,
+              ),
+              ...(typeof item.why === "string" && item.why.trim()
+                ? { why: item.why.trim().slice(0, 300) }
+                : {}),
+              ...(Array.isArray(item.options)
+                ? {
+                    options: item.options
+                      .filter((o): o is string => typeof o === "string")
+                      .slice(0, 8)
+                      .map((o) => o.slice(0, 200)),
+                  }
+                : {}),
+            };
+          }),
+        });
         break;
       }
       case "ask_human": {

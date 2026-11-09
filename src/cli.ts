@@ -46,6 +46,8 @@ async function main() {
       works through "- [ ] item" lines one run at a time on branch cobble/autopilot
   run/autopilot options: --base BRANCH (start from it), --share-deps (link node_modules)
   cobble team stop [RUN_ID]
+  cobble team access [ROLE...|none]   roles with FULL ACCESS (no agent sandbox), e.g. access deployer
+  cobble team decisions [forget]      project decisions saved from intake interviews
   cobble team status [RUN_ID]
 
 Do not run "team run" while the desktop app is open on the same data.
@@ -185,6 +187,15 @@ async function teamCommand(
   if (sub === "test") {
     if (!rest[0]) throw new Error("Usage: cobble team test AGENT");
     return print(await service.testTeamAgent(rest[0]));
+  }
+  if (sub === "access") {
+    // `team access deployer coder` | `team access none` | `team access`
+    if (!rest.length) return print(service.teamFullAccess());
+    return print(service.setTeamFullAccess(rest[0] === "none" ? [] : rest));
+  }
+  if (sub === "decisions") {
+    if (rest[0] === "forget") return print(service.forgetTeamUserDecisions());
+    return print(service.teamUserDecisions());
   }
   if (sub === "notify") {
     const [action, value] = rest;
@@ -326,7 +337,7 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|stop|autopilot|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|stop|access|decisions|autopilot|notify|status",
   );
 }
 
@@ -356,6 +367,29 @@ async function followRun(service: CobbleService, runId: string) {
         console.log(`[${event.kind}] ${event.message}`);
       shown = snap.events.length;
       const waiting = snap.tasks.filter((t) => t.state === "needs_human");
+      if (
+        snap.run.state === "needs_human" &&
+        snap.run.gate?.kind === "questions" &&
+        snap.run.gate.questions?.length
+      ) {
+        const questions = snap.run.gate.questions;
+        console.log(
+          `\nThe planner has questions for you: ${snap.run.gate.message}\n(Type a number to pick an option, your own answer, or press Enter to let the planner decide.)`,
+        );
+        const answers: string[] = [];
+        for (const [i, q] of questions.entries()) {
+          console.log(`\n${i + 1}/${questions.length}. ${q.question}`);
+          if (q.why) console.log(`   Why: ${q.why}`);
+          q.options?.forEach((o, j) => console.log(`   ${j + 1}) ${o}`));
+          const raw = (await prompt.question("   > ")).trim();
+          const pick = /^\d+$/.test(raw)
+            ? q.options?.[Number(raw) - 1]
+            : undefined;
+          answers.push(pick ?? raw);
+        }
+        service.agentTeam.resolveGate(runId, "done", undefined, "", answers);
+        continue;
+      }
       if (snap.run.state === "needs_human" && snap.run.gate) {
         const answer = await prompt.question(
           `\nThe planner needs you (${snap.run.gate.kind}): ${snap.run.gate.message}\nType your answer, or "skip": `,

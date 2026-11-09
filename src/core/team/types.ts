@@ -20,6 +20,25 @@ export const WRITING_ROLES: ReadonlySet<TeamRole> = new Set([
   "generator",
   "deployer",
 ]);
+/** Roles the user may opt into full access (planner/reviewer stay read-only). */
+export const FULL_ACCESS_ROLES: readonly TeamRole[] = [
+  "coder",
+  "generator",
+  "deployer",
+];
+
+/** A project decision the user gave in an intake interview. */
+export interface UserAnswer {
+  question: string;
+  answer: string;
+  at: string;
+}
+/** One question the planner asks the user (ask_user). */
+export interface UserQuestion {
+  question: string;
+  why?: string;
+  options?: string[];
+}
 
 export type RunState =
   "running" | "paused" | "needs_human" | "done" | "failed" | "stopped";
@@ -40,7 +59,13 @@ export const TERMINAL_TASK_STATES: ReadonlySet<TaskState> = new Set([
 ]);
 
 export type HumanGateKind =
-  "login" | "payment" | "secret" | "approval" | "clarify";
+  | "login"
+  | "payment"
+  | "secret"
+  | "approval"
+  | "clarify"
+  /** Intake interview: several questions answered together. */
+  | "questions";
 
 export interface TeamBudget {
   maxTasks: number;
@@ -156,7 +181,14 @@ export interface TeamRun {
   policy: ApprovalPolicy;
   baseBranch: string;
   runBranch: string;
-  gate?: { kind: HumanGateKind; message: string };
+  gate?: {
+    kind: HumanGateKind;
+    message: string;
+    /** For kind "questions": the planner's questions, answered in order. */
+    questions?: UserQuestion[];
+  };
+  /** Worker roles running with full access in this run (user opt-in). */
+  fullAccessRoles?: TeamRole[];
   summary?: string;
   /** Approvals the user granted, e.g. "production". */
   approvals: string[];

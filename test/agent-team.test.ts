@@ -1452,3 +1452,286 @@ test("live-run regression: an explicit preview deploy that says 'NO --prod' is n
     await f.cleanup();
   }
 });
+
+test("full access is a per-role user opt-in: only chosen writing roles drop the sandbox", async () => {
+  const base = {
+    cwd: ".",
+    prompt: "x",
+    readOnly: false,
+    network: true,
+    timeoutMs: 1,
+  };
+  assert.ok(claudeSpec.args(base).includes("acceptEdits"));
+  assert.ok(
+    claudeSpec
+      .args({ ...base, fullAccess: true })
+      .includes("bypassPermissions"),
+  );
+  assert.ok(
+    claudeSpec
+      .args({ ...base, readOnly: true, fullAccess: true })
+      .includes("plan"),
+    "read-only wins",
+  );
+  assert.ok(codexSpec.args(base).includes("sandbox_mode=workspace-write"));
+  const codexFull = codexSpec.args({ ...base, fullAccess: true });
+  assert.ok(codexFull.includes("sandbox_mode=danger-full-access"));
+  assert.ok(!codexFull.includes("sandbox_workspace_write.network_access=true"));
+  assert.ok(geminiSpec.args({ ...base, fullAccess: true }).includes("yolo"));
+  assert.ok(geminiSpec.args(base).includes("auto_edit"));
+
+  const f = setup(
+    (_input, call) =>
+      call === 1
+        ? {
+            finalText: actions({
+              actions: [
+                {
+                  type: "delegate",
+                  id: "D1",
+                  role: "deployer",
+                  title: "Preview",
+                  instructions: "deploy a preview",
+                  target: "preview",
+                },
+                {
+                  type: "delegate",
+                  id: "C1",
+                  role: "coder",
+                  title: "Code",
+                  instructions: "write code",
+                },
+                {
+                  type: "delegate",
+                  id: "R1",
+                  role: "reviewer",
+                  title: "Review",
+                  instructions: "review",
+                },
+              ],
+            }),
+          }
+        : {
+            finalText: actions({
+              actions: [{ type: "finish", summary: "ok" }],
+            }),
+          },
+    {
+      codex: (input) => {
+        writeReport(input.cwd, { status: "done", summary: "ok" });
+        return {};
+      },
+      gemini: () => ({
+        finalText:
+          '```cobble-report\n{"status":"done","summary":"ok","verdict":"approve"}\n```',
+      }),
+    },
+    {
+      planner: "claude",
+      coder: "codex",
+      deployer: "codex",
+      reviewer: "gemini",
+    },
+  );
+  try {
+    assert.deepEqual(
+      f.teamStore.setFullAccessRoles(f.team.id, [
+        "deployer",
+        "planner",
+        "reviewer",
+        "bogus",
+      ]),
+      ["deployer"],
+      "only writing roles can be opted in",
+    );
+    const run = await f.orchestrator.startRun(f.team.id, "Ship");
+    assert.deepEqual(run.fullAccessRoles, ["deployer"]);
+    await f.orchestrator.idle(run.id);
+    const deploy = f.codexCalls.find((c) => /deploy a preview/.test(c.prompt))!;
+    const code = f.codexCalls.find((c) => /write code/.test(c.prompt))!;
+    assert.equal(deploy.fullAccess, true);
+    assert.match(deploy.prompt, /FULL ACCESS to the user's computer/);
+    assert.equal(code.fullAccess, false, "the coder stays sandboxed");
+    assert.doesNotMatch(code.prompt, /FULL ACCESS/);
+    assert.equal(
+      f.geminiCalls[0].fullAccess,
+      false,
+      "reviewers never get full access",
+    );
+    assert.match(f.plannerCalls[0].prompt, /deployer: codex \(full access/);
+    assert.match(f.plannerCalls[0].prompt, /coder: codex \(sandboxed/);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("intake interview: planner asks several questions, answers are saved as project decisions and reused by later runs", async () => {
+  const roles = new Set<TeamRole>(["planner", "deployer"]);
+  assert.throws(
+    () =>
+      parsePlannerReply(
+        actions({ actions: [{ type: "ask_user", questions: [] }] }),
+        new Set(),
+        roles,
+      ),
+    /1-12 questions/,
+  );
+  assert.throws(() =>
+    parsePlannerReply(
+      actions({
+        actions: [{ type: "ask_user", questions: Array(13).fill("q") }],
+      }),
+      new Set(),
+      roles,
+    ),
+  );
+  const ok = parsePlannerReply(
+    actions({
+      actions: [
+        {
+          type: "ask_user",
+          intro: "Hi",
+          questions: [
+            "Plain string?",
+            {
+              question: "Where?",
+              options: ["Netlify", "Vercel"],
+              why: "deploy",
+            },
+          ],
+        },
+      ],
+    }),
+    new Set(),
+    roles,
+  );
+  assert.deepEqual((ok.actions[0] as { questions: unknown[] }).questions[0], {
+    question: "Plain string?",
+  });
+
+  const f = setup(
+    (input, call) => {
+      if (call === 1) {
+        assert.match(input.prompt, /INTAKE FIRST/);
+        assert.match(
+          input.prompt,
+          /Project decisions from the user[^\n]*\n\(none yet\)/,
+        );
+        return {
+          sessionId: "p1",
+          finalText: actions({
+            actions: [
+              {
+                type: "ask_user",
+                intro: "Before I design this, a few questions.",
+                questions: [
+                  {
+                    question: "Where should the site be deployed?",
+                    options: ["Netlify", "Vercel", "GitHub Pages"],
+                  },
+                  { question: "Any must-avoid technology?" },
+                  { question: "Custom domain?" },
+                ],
+              },
+            ],
+          }),
+        };
+      }
+      if (call === 2) {
+        assert.match(
+          input.prompt,
+          /Where should the site be deployed\? → Netlify/,
+        );
+        assert.match(input.prompt, /must-avoid technology\? → No React/);
+        assert.match(
+          input.prompt,
+          /Custom domain\? → \(no answer: decide yourself/,
+        );
+        assert.match(input.prompt, /They added: use the free plan/);
+        return {
+          finalText: actions({
+            actions: [
+              {
+                type: "delegate",
+                id: "D1",
+                role: "deployer",
+                title: "Preview",
+                instructions: "deploy",
+                target: "preview",
+              },
+            ],
+          }),
+        };
+      }
+      return {
+        finalText: actions({ actions: [{ type: "finish", summary: "ok" }] }),
+      };
+    },
+    {
+      codex: (input) => {
+        assert.match(
+          input.prompt,
+          /Where should the site be deployed\? → Netlify/,
+          "workers see the decisions",
+        );
+        writeReport(input.cwd, { status: "done", summary: "ok" });
+        return {};
+      },
+    },
+    { planner: "claude", deployer: "codex" },
+  );
+  try {
+    const run = await f.orchestrator.startRun(f.team.id, "Publish the site");
+    await f.orchestrator.idle(run.id);
+    let snap = f.orchestrator.snapshot(run.id)!;
+    assert.equal(snap.run.state, "needs_human");
+    assert.equal(snap.run.gate?.kind, "questions");
+    assert.equal(snap.run.gate?.questions?.length, 3);
+    assert.ok(
+      f.attention.some((m) => /a few questions/.test(m)),
+      "the phone hears about the questions",
+    );
+    f.orchestrator.resolveGate(run.id, "done", undefined, "use the free plan", [
+      "Netlify",
+      "No React",
+      "",
+    ]);
+    await f.orchestrator.idle(run.id);
+    snap = f.orchestrator.snapshot(run.id)!;
+    assert.equal(
+      snap.run.state,
+      "done",
+      JSON.stringify(snap.events.map((e) => e.message)),
+    );
+    const saved = f.teamStore.decisionsFromUser(f.team.id);
+    assert.deepEqual(
+      saved.map((a) => a.answer),
+      ["Netlify", "No React"],
+      "empty answers are not saved",
+    );
+    // A later run starts with the saved decisions; the planner is told not to ask again.
+    f.plannerCalls.length = 0;
+    const second = await f.orchestrator.startRun(f.team.id, "Another change");
+    await f.orchestrator.idle(second.id);
+    assert.match(
+      f.plannerCalls[0].prompt,
+      /saved from earlier interviews; do not ask again\)\n- Where should the site be deployed\? → Netlify/,
+    );
+    // Answering the same question again replaces the old answer.
+    f.teamStore.addUserAnswers(f.team.id, [
+      {
+        question: "where should the site be deployed?",
+        answer: "Vercel",
+        at: "x",
+      },
+    ]);
+    assert.deepEqual(
+      f.teamStore.decisionsFromUser(f.team.id).map((a) => a.answer),
+      ["No React", "Vercel"],
+    );
+    f.teamStore.forgetUserAnswers(f.team.id);
+    assert.deepEqual(f.teamStore.decisionsFromUser(f.team.id), []);
+  } finally {
+    await f.cleanup();
+  }
+});

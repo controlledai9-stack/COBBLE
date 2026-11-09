@@ -38,8 +38,21 @@ const api: DesktopApi = {
   autopilotStatus: () => ipcRenderer.invoke("cobble:team-autopilot-status"),
   teamRuns: () => ipcRenderer.invoke("cobble:team-runs"),
   teamRun: (runId) => ipcRenderer.invoke("cobble:team-run", runId),
-  teamCommand: (runId, command, taskId, note) =>
-    ipcRenderer.invoke("cobble:team-command", runId, command, taskId, note),
+  teamCommand: (runId, command, taskId, note, answers) =>
+    ipcRenderer.invoke(
+      "cobble:team-command",
+      runId,
+      command,
+      taskId,
+      note,
+      answers,
+    ),
+  teamFullAccess: () => ipcRenderer.invoke("cobble:team-full-access"),
+  setTeamFullAccess: (roles) =>
+    ipcRenderer.invoke("cobble:team-set-full-access", roles),
+  teamUserDecisions: () => ipcRenderer.invoke("cobble:team-user-decisions"),
+  forgetTeamUserDecisions: () =>
+    ipcRenderer.invoke("cobble:team-forget-user-decisions"),
   openTeamTerminal: (runId, taskId) =>
     ipcRenderer.invoke("cobble:team-open-terminal", runId, taskId),
   phoneNotify: () => ipcRenderer.invoke("cobble:team-phone-notify"),

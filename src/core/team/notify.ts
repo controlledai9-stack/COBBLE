@@ -11,7 +11,8 @@
 import { randomBytes } from "node:crypto";
 import type { Store } from "../store";
 
-export type AttentionKind = "needs_you" | "paused" | "finished" | "info";
+export type AttentionKind =
+  "needs_you" | "paused" | "finished" | "info" | "test";
 export interface AttentionEvent {
   runId: string;
   taskId?: string;
@@ -40,6 +41,7 @@ const TITLES: Record<AttentionKind, string> = {
   paused: "Cobble: team paused",
   finished: "Cobble: team finished",
   info: "Cobble",
+  test: "Cobble: test alert",
 };
 // ntfy priorities: 5 urgent, 4 high, 3 default, 2 low.
 const PRIORITY: Record<AttentionKind, string> = {
@@ -47,12 +49,14 @@ const PRIORITY: Record<AttentionKind, string> = {
   paused: "4",
   finished: "3",
   info: "2",
+  test: "3",
 };
 const TAGS: Record<AttentionKind, string> = {
   needs_you: "raising_hand",
   paused: "pause_button",
   finished: "white_check_mark",
   info: "robot",
+  test: "bell",
 };
 
 export function newTopic() {
@@ -132,7 +136,9 @@ export class PhoneNotifier {
     await this.send(
       {
         runId: "test",
-        kind: "info",
+        // Default priority: ntfy shows low-priority ("info") alerts silently,
+        // so the user never saw the first test alert.
+        kind: "test",
         message: "Test from Cobble. Phone alerts work.",
       },
       true,

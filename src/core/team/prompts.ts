@@ -8,6 +8,7 @@ import type {
   TeamRole,
   TeamRun,
   TeamTask,
+  UserAnswer,
 } from "./types";
 
 export const PROMPT_LIMITS = Object.freeze({
@@ -15,6 +16,7 @@ export const PROMPT_LIMITS = Object.freeze({
   brief: 8_000,
   wake: 20_000,
   taskResult: 3_000,
+  userDecisions: 4_000,
 });
 
 const clip = (s: string, n: number) =>
@@ -25,6 +27,7 @@ export function autonomyPolicy(policy: ApprovalPolicy) {
 Do not edit files yourself. You decide; workers do the work. Workers never talk to each other: everything they need must be in the architecture brief or their task instructions.
 
 How to work:
+0. INTAKE FIRST. Before designing, check what you still need from the user that only they can decide: where and how to deploy or publish (which service and account, preview vs production, domain), who the users are, must-use or must-avoid technologies, design/branding wishes, paid services and budget, data they must keep private, deadlines. Ask everything you need at once with "ask_user" (up to 12 questions per round; several rounds are fine). Offer concrete options where you can. Do NOT ask what the team plan or "Project decisions from the user" already answer, and never ask for passwords, keys or tokens. If nothing important is missing, skip intake.
 1. DESIGN FIRST. Before delegating any coding work, publish an architecture brief with "set_brief": stack and versions, folder layout, the contracts between tasks (file paths, exported functions/components, API routes, data shapes), conventions (naming, styling, tests), and what is out of scope. Keep it consistent with the team plan. Every worker receives the latest brief.
 2. If a reviewer role exists, delegate one reviewer task (no "reviews" field) to critique the brief before coding. Then decide which suggestions to accept, record each in "decisions", and publish the revised brief with "set_brief".
 3. Split work into tasks that touch different files where possible. Use "dependsOn" when a task needs another task's files; Cobble merges finished dependencies into the run branch automatically before the dependent task starts.
@@ -33,7 +36,8 @@ How to work:
 
 Autonomy rules:
 - Do not ask the user about technical choices. Pick the option that best balances cost (prefer free tiers and tools already in the project), simplicity and fit to the plan. Record every such choice in "decisions" with a one-line reason.
-- Use "ask_human" only for: signing in, payment, secrets, a genuinely ambiguous goal, or an approval the policy below requires.
+- Outside intake, use "ask_human"/"ask_user" only for: signing in, payment, secrets, a genuinely ambiguous goal, or an approval the policy below requires.
+- Deploy where the user said to. If that target turns out to be unavailable at deploy time (no account, service down, CLI missing, plan limit), do not pick another one yourself: ask the user with "ask_user", offering concrete alternatives.
 - Do not add features that are not in the plan. If a worker added out-of-plan work, remove it (delegate a fix) or justify it in "decisions".
 - Treat worker reports as claims. Cobble's own diff check, check-command result and reviewer verdicts are the evidence.
 - Approval policy: preview/staging deploys ${policy.autoPreviewDeploy ? "run without asking" : "need ask_human approval"}; production deploys, pushing to remotes, deleting cloud resources and anything that costs money ${policy.requireApprovalForProduction ? 'need ask_human with kind "approval" first, and the delegate must set "target": "production"' : "are allowed"}.
@@ -48,6 +52,7 @@ Reply format: end every reply with exactly one fenced block:
   {"type":"delegate","id":"T1","role":"coder|generator|reviewer|deployer","title":"...","instructions":"...","dependsOn":[],"acceptance":["..."],"target":"preview","reviews":"T0"},
   {"type":"answer","taskId":"T1","answer":"..."},
   {"type":"merge_task","taskId":"T1"},
+  {"type":"ask_user","intro":"...","questions":[{"question":"...","why":"...","options":["...","..."]}]},
   {"type":"ask_human","kind":"login|payment|secret|approval|clarify","message":"..."},
   {"type":"wait","reason":"..."},
   {"type":"finish","summary":"..."}]}
@@ -58,12 +63,27 @@ Task ids are short (T1, T2, …) and unique for the whole run. At most 8 delegat
 function planText(team: Team) {
   return clip(team.plan, PROMPT_LIMITS.plan);
 }
-function roleList(roles: Partial<Record<TeamRole, TeamAgentId>>) {
+function roleList(
+  roles: Partial<Record<TeamRole, TeamAgentId>>,
+  fullAccess: readonly TeamRole[] = [],
+) {
   return (
     Object.entries(roles)
       .filter(([role]) => role !== "planner")
-      .map(([role, agent]) => `- ${role}: ${agent}`)
+      .map(
+        ([role, agent]) =>
+          `- ${role}: ${agent}${fullAccess.includes(role as TeamRole) ? " (full access: can use the user's installed tools and CLIs)" : " (sandboxed: only project files and its own tools)"}`,
+      )
       .join("\n") || "- (no worker roles assigned)"
+  );
+}
+
+/** Saved answers from the user's intake interviews, newest last. */
+export function userDecisionsText(answers: readonly UserAnswer[]) {
+  if (!answers.length) return "(none yet)";
+  return clip(
+    answers.map((a) => `- ${a.question} → ${a.answer}`).join("\n"),
+    PROMPT_LIMITS.userDecisions,
   );
 }
 
@@ -71,14 +91,18 @@ export function plannerStartPrompt(
   team: Team,
   run: TeamRun,
   roles: Partial<Record<TeamRole, TeamAgentId>>,
+  answers: readonly UserAnswer[] = [],
 ) {
   return `${autonomyPolicy(run.policy)}
 
 ## Team plan (version ${team.version})
 ${planText(team)}
 
+## Project decisions from the user (saved from earlier interviews; do not ask again)
+${userDecisionsText(answers)}
+
 ## Available worker roles
-${roleList(roles)}
+${roleList(roles, run.fullAccessRoles)}
 
 ## Budget
 ${run.budget.maxTasks} tasks, ${run.budget.maxPlannerTurns} planner turns.${run.checkCommand ? `\nCobble runs \`${run.checkCommand}\` on every task's changes and reports pass/fail to you.` : ""}
@@ -86,7 +110,7 @@ ${run.budget.maxTasks} tasks, ${run.budget.maxPlannerTurns} planner turns.${run.
 ## Goal from the user
 ${clip(run.goal, 4_000)}
 
-You are in a read-only checkout of the run branch \`${run.runBranch}\`. Look at the existing code as needed. Your first reply should publish the architecture brief.`;
+You are in a read-only checkout of the run branch \`${run.runBranch}\`. Look at the existing code as needed. Your first reply should either ask the user what only they can decide ("ask_user"), or, if nothing important is missing, publish the architecture brief.`;
 }
 
 function taskLine(t: TeamTask) {
@@ -129,6 +153,7 @@ export function plannerWakePrompt(
   newlyFinished: TeamTask[],
   decisions: TeamDecision[],
   note?: string,
+  answers: readonly UserAnswer[] = [],
 ) {
   const remainingTasks = run.budget.maxTasks - tasks.length;
   const remainingTurns = run.budget.maxPlannerTurns - run.plannerTurns;
@@ -139,6 +164,9 @@ export function plannerWakePrompt(
 ${note ? `\nNote: ${note}\n` : ""}
 ## Goal
 ${clip(run.goal, 1_500)}
+
+## Project decisions from the user
+${userDecisionsText(answers)}
 
 ## Architecture brief
 ${run.brief ? `Version ${run.briefVersion} is published (you wrote it; workers receive it).` : "NOT PUBLISHED YET — publish it with set_brief before delegating coding work."}
@@ -185,7 +213,9 @@ export function workerPrompt(
   task: TeamTask,
   note?: string,
   review?: { task: TeamTask },
+  answers: readonly UserAnswer[] = [],
 ) {
+  const fullAccess = (run.fullAccessRoles ?? []).includes(task.role);
   const deploy = task.role === "deployer";
   const reviewer = task.role === "reviewer";
   const reviewing = review?.task;
@@ -219,7 +249,12 @@ ${
     ? `- node_modules here is SHARED with the user's own checkout. Never run npm/yarn/pnpm install, update, uninstall or ci, and never edit node_modules. If you need a new dependency, report "needs_decision".
 `
     : ""
-}- Never ask for, print or store passwords, API keys or tokens.${
+}${
+    fullAccess
+      ? `- You have FULL ACCESS to the user's computer (no sandbox), like a normal interactive session, so you can use their installed tools and signed-in CLIs. Keep file changes inside this worktree, never touch the user's other projects or personal files, and never run destructive commands (deleting data, force-pushing, resetting accounts).
+`
+      : ""
+  }- Never ask for, print or store passwords, API keys or tokens.${
     deploy
       ? `
 - Deploy target: ${task.target ?? "preview"}.${task.target === "production" ? "" : " This is NOT approved for production: never run a production deploy or use production flags such as --prod or --production. If production seems necessary, report needs_decision instead."} Use CLIs the user is already signed in to. If a sign-in is needed, stop and report needs_human with the exact command the user should run.`
@@ -229,6 +264,9 @@ ${
   {"status":"done|failed|needs_decision|needs_human","summary":"...","files":["..."],"notes":"...",
    "question":"(needs_decision only)","options":["..."],"suggestions":["..."],${reviewer ? '"verdict":"approve|changes",' : ""}
    "needsHuman":{"service":"...","hint":"command to run"},"outputs":{"url":"..."}}
+
+## Project decisions from the user
+${userDecisionsText(answers)}
 
 ## Architecture brief${run.brief ? ` (version ${run.briefVersion})` : ""}
 ${run.brief ? clip(run.brief, PROMPT_LIMITS.brief) : "(none yet — follow the task instructions and the plan)"}

@@ -1930,8 +1930,12 @@ export class CobbleService extends EventEmitter {
     command: "pause" | "resume" | "stop" | "cleanup" | GateAnswer,
     taskId?: string,
     note?: string,
+    answers?: unknown,
   ) {
     this.teamRun(runId); // ownership check
+    const answerList = Array.isArray(answers)
+      ? answers.slice(0, 12).map((a) => String(a ?? "").slice(0, 1_000))
+      : [];
     switch (command) {
       case "pause":
         this.agentTeam.pause(runId);
@@ -1954,12 +1958,33 @@ export class CobbleService extends EventEmitter {
           command,
           taskId ? String(taskId) : undefined,
           typeof note === "string" ? note : "",
+          answerList,
         );
         break;
       default:
         throw new Error("Unknown team command");
     }
     return this.teamRun(runId);
+  }
+  /** Worker roles the user opted into full access for the active team. */
+  teamFullAccess(): TeamRole[] {
+    return this.teamStore.fullAccessRoles(this.teamId());
+  }
+  setTeamFullAccess(roles: unknown): TeamRole[] {
+    if (!Array.isArray(roles) || roles.some((r) => typeof r !== "string"))
+      throw new Error("Full access roles must be a list of role names");
+    const clean = this.teamStore.setFullAccessRoles(this.teamId(), roles);
+    this.emit("team", null);
+    return clean;
+  }
+  /** Saved answers from intake interviews (project decisions). */
+  teamUserDecisions() {
+    return this.teamStore.decisionsFromUser(this.teamId());
+  }
+  forgetTeamUserDecisions() {
+    this.teamStore.forgetUserAnswers(this.teamId());
+    this.emit("team", null);
+    return [];
   }
   /** Phone alerts (ntfy): current settings and subscribe link. */
   phoneNotify(): PhoneNotifyView {
