@@ -109,6 +109,18 @@ export class TeamOrchestrator extends EventEmitter {
       throw new Error(
         "Assign at least one worker role (coder, generator, reviewer or deployer)",
       );
+    // Fail now, not halfway through a run, when an assigned CLI is missing.
+    for (const agent of new Set(Object.values(roles))) {
+      const detection = await this.options.adapters[agent].detect();
+      if (!detection.installed) {
+        const held = Object.entries(roles)
+          .filter(([, a]) => a === agent)
+          .map(([role]) => role);
+        throw new Error(
+          `${agent} is assigned to ${held.join(", ")} but is not installed. Install it or assign those roles to another agent.`,
+        );
+      }
+    }
     const active = this.store
       .runsInState(["running", "needs_human", "paused"])
       .filter((r) => r.teamId === teamId);

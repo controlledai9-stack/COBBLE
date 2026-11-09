@@ -197,19 +197,27 @@ function TeamPanelContent({
   const readyRoles =
     !!assignments?.planner &&
     roles.some((role) => role !== "planner" && assignments[role]);
+  const missingAgents = agents.filter(
+    (agent) =>
+      roles.some((role) => assignments?.[role] === agent) &&
+      detected?.find((item) => item.agent === agent)?.installed === false,
+  );
   const startDisabled =
     pending ||
     !!activeRun ||
     snapshot === undefined ||
     !hasWorkspace ||
-    !readyRoles;
+    !readyRoles ||
+    missingAgents.length > 0;
   const startHint = !hasWorkspace
     ? "Choose a workspace folder before starting a run."
     : !readyRoles
       ? "Assign a planner and at least one worker role to start."
-      : activeRun
-        ? "Finish or stop the current run before starting another."
-        : "";
+      : missingAgents.length
+        ? `Install ${missingAgents.map((agent) => names[agent]).join(" and ")} or assign its roles to another agent, then press Detect again.`
+        : activeRun
+          ? "Finish or stop the current run before starting another."
+          : "";
 
   return (
     <section className="panel agent-team" aria-labelledby="agent-team-heading">
@@ -259,6 +267,13 @@ function TeamPanelContent({
                       </option>
                     ))}
                   </select>
+                  {assignments?.[role] &&
+                    detected?.find((item) => item.agent === assignments[role])
+                      ?.installed === false && (
+                      <span className="agent-team-badge agent-team-warning">
+                        {names[assignments[role]!]} is not installed
+                      </span>
+                    )}
                 </td>
               </tr>
             ))}

@@ -18,6 +18,8 @@
 .agent-team-column {
   min-width: 0;
   display: grid;
+  /* One shrinkable track, so wide <pre> blocks scroll instead of widening the card. */
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 0.65rem;
   padding: 0.85rem;
@@ -148,10 +150,11 @@
   gap: 0.35rem;
 }
 
+/* Drift alerts, failed checks and missing agents are problems, not info. */
 .agent-team-warning {
-  color: var(--notice-color);
-  background: var(--notice-bg);
-  border-color: var(--notice-border);
+  color: var(--danger);
+  background: var(--danger-surface);
+  border-color: var(--danger-border);
 }
 
 .agent-team-gate,
@@ -170,6 +173,10 @@
 }
 
 .agent-team pre {
+  /* Diff stats and test output keep their columns; scroll instead of wrapping. */
+  white-space: pre;
+  overflow-wrap: normal;
+  font-size: 0.75rem;
   max-height: 14rem;
   overflow: auto;
   padding: 0.5rem;

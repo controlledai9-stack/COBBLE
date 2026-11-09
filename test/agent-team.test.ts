@@ -713,6 +713,17 @@ test("runs require a planner, a worker role and a git workspace", async () => {
     f.teamStore.setRole(f.team.id, "planner", null);
     await assert.rejects(f.orchestrator.startRun(f.team.id, "x"), /planner/);
     f.teamStore.setRole(f.team.id, "planner", "claude");
+    // An assigned agent that is not installed stops the run before it starts.
+    const codexDetect = (f.orchestrator as any).options.adapters.codex.detect;
+    (f.orchestrator as any).options.adapters.codex.detect = async () => ({
+      agent: "codex",
+      installed: false,
+    });
+    await assert.rejects(
+      f.orchestrator.startRun(f.team.id, "x"),
+      /codex is assigned to coder but is not installed/,
+    );
+    (f.orchestrator as any).options.adapters.codex.detect = codexDetect;
     rmSync(join(f.work, ".git"), { recursive: true, force: true });
     await assert.rejects(
       f.orchestrator.startRun(f.team.id, "x"),
@@ -752,32 +763,70 @@ process.stdin.on("end", () => {
     assert.equal(detected.installed, true);
     assert.match(detected.version ?? "", /9\.9\.9/);
     const tricky = 'Build "it" & echo pwned | del *.* %PATH% `whoami` $(id)';
-    const ok = await adapter.run({ cwd: dir, prompt: tricky, readOnly: true, network: false, timeoutMs: 20_000 });
+    const ok = await adapter.run({
+      cwd: dir,
+      prompt: tricky,
+      readOnly: true,
+      network: false,
+      timeoutMs: 20_000,
+    });
     assert.equal(ok.exitCode, 0);
     assert.equal(ok.finalText.trim(), `echo:${tricky}`);
     assert.equal(ok.sessionId, "sess-42");
-    const login = await adapter.run({ cwd: dir, prompt: "LOGIN", readOnly: true, network: false, timeoutMs: 20_000 });
+    const login = await adapter.run({
+      cwd: dir,
+      prompt: "LOGIN",
+      readOnly: true,
+      network: false,
+      timeoutMs: 20_000,
+    });
     assert.equal(login.exitCode, 1);
     assert.ok(login.authRequired);
     const started = Date.now();
-    const slow = await adapter.run({ cwd: dir, prompt: "SLEEP", readOnly: true, network: false, timeoutMs: 1_500 });
+    const slow = await adapter.run({
+      cwd: dir,
+      prompt: "SLEEP",
+      readOnly: true,
+      network: false,
+      timeoutMs: 1_500,
+    });
     assert.ok(slow.timedOut);
     assert.ok(Date.now() - started < 15_000);
     await assert.rejects(
-      adapter.run({ cwd: dir, prompt: "x", resumeSessionId: "bad id; rm", readOnly: true, network: false, timeoutMs: 1_000 }),
+      adapter.run({
+        cwd: dir,
+        prompt: "x",
+        resumeSessionId: "bad id; rm",
+        readOnly: true,
+        network: false,
+        timeoutMs: 1_000,
+      }),
       /session id/,
     );
-    const missing = new CliAdapter({ ...claudeSpec, command: "definitely-not-installed-xyz" });
+    const missing = new CliAdapter({
+      ...claudeSpec,
+      command: "definitely-not-installed-xyz",
+    });
     assert.equal((await missing.detect()).installed, false);
 
     // Service-level API with roles validated and runs scoped to the active team.
-    const service = new CobbleService(":memory:", undefined, { teamWorktreeRoot: join(dir, "trees") });
+    const service = new CobbleService(":memory:", undefined, {
+      teamWorktreeRoot: join(dir, "trees"),
+    });
     try {
       service.store.saveProfile("Owner", "");
       service.store.createTeam("T", "Build things", dir);
-      assert.throws(() => service.setTeamRole("boss", "claude"), /Unknown role/);
-      assert.throws(() => service.setTeamRole("planner", "cursor"), /Unsupported agent/);
-      assert.deepEqual(service.setTeamRole("planner", "claude"), { planner: "claude" });
+      assert.throws(
+        () => service.setTeamRole("boss", "claude"),
+        /Unknown role/,
+      );
+      assert.throws(
+        () => service.setTeamRole("planner", "cursor"),
+        /Unsupported agent/,
+      );
+      assert.deepEqual(service.setTeamRole("planner", "claude"), {
+        planner: "claude",
+      });
       assert.throws(() => service.teamRun("nope"), /Unknown team run/);
       await assert.rejects(service.startTeamRun("x"), /worker role/);
     } finally {
@@ -785,7 +834,11 @@ process.stdin.on("end", () => {
     }
   } finally {
     process.env.PATH = savedPath;
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows locks */ }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* Windows locks */
+    }
   }
 });
 
@@ -798,8 +851,18 @@ test("architecture first: brief + design review, workers ask the planner (not th
           sessionId: "arch",
           finalText: actions({
             actions: [
-              { type: "set_brief", content: "# Architecture\nStore: Postgres. Server in server.js uses lib/db.js." },
-              { type: "delegate", id: "R0", role: "reviewer", title: "Critique the brief", instructions: "Review the architecture brief" },
+              {
+                type: "set_brief",
+                content:
+                  "# Architecture\nStore: Postgres. Server in server.js uses lib/db.js.",
+              },
+              {
+                type: "delegate",
+                id: "R0",
+                role: "reviewer",
+                title: "Critique the brief",
+                instructions: "Review the architecture brief",
+              },
             ],
           }),
         };
@@ -810,11 +873,34 @@ test("architecture first: brief + design review, workers ask the planner (not th
         assert.match(input.prompt, /Version 1 is published/);
         return {
           finalText: actions({
-            decisions: [{ question: "Database", choice: "SQLite", why: "reviewer: free, no server" }],
+            decisions: [
+              {
+                question: "Database",
+                choice: "SQLite",
+                why: "reviewer: free, no server",
+              },
+            ],
             actions: [
-              { type: "set_brief", content: "# Architecture v2\nStore: SQLite via lib/db.js. server.js imports it." },
-              { type: "delegate", id: "T1", role: "coder", title: "DB layer", instructions: "Create lib/db.js" },
-              { type: "delegate", id: "T2", role: "coder", title: "Server", instructions: "Create server.js using lib/db.js", dependsOn: ["T1"] },
+              {
+                type: "set_brief",
+                content:
+                  "# Architecture v2\nStore: SQLite via lib/db.js. server.js imports it.",
+              },
+              {
+                type: "delegate",
+                id: "T1",
+                role: "coder",
+                title: "DB layer",
+                instructions: "Create lib/db.js",
+              },
+              {
+                type: "delegate",
+                id: "T2",
+                role: "coder",
+                title: "Server",
+                instructions: "Create server.js using lib/db.js",
+                dependsOn: ["T1"],
+              },
             ],
           }),
         };
@@ -822,39 +908,73 @@ test("architecture first: brief + design review, workers ask the planner (not th
       if (call === 3) {
         assert.match(input.prompt, /T2 \(coder\/codex\) asks: Which port\?/);
         assert.match(input.prompt, /Options: 3000 \| 8080/);
-        assert.match(input.prompt, /Check `node check\.cjs`: FAILED/, "T1's failed check is shown");
-        return { finalText: actions({ actions: [{ type: "answer", taskId: "T2", answer: "Use 3000." }] }) };
+        assert.match(
+          input.prompt,
+          /Check `node check\.cjs`: FAILED/,
+          "T1's failed check is shown",
+        );
+        return {
+          finalText: actions({
+            actions: [{ type: "answer", taskId: "T2", answer: "Use 3000." }],
+          }),
+        };
       }
       if (call === 4) {
         assert.match(input.prompt, /Check `node check\.cjs`: PASSED/);
-        return { finalText: actions({ actions: [{ type: "finish", summary: "API ready" }] }) };
+        return {
+          finalText: actions({
+            actions: [{ type: "finish", summary: "API ready" }],
+          }),
+        };
       }
       throw new Error(`unexpected planner call ${call}`);
     },
     {
       gemini: (input) => {
         assert.ok(input.readOnly, "reviewers are read-only");
-        assert.match(input.prompt, /Store: Postgres/, "reviewer sees the brief");
+        assert.match(
+          input.prompt,
+          /Store: Postgres/,
+          "reviewer sees the brief",
+        );
         return {
           finalText:
             'Looks mostly fine.\n```cobble-report\n{"status":"done","summary":"One change","verdict":"changes","suggestions":["use SQLite, it is free"]}\n```',
         };
       },
       codex: (input) => {
-        assert.match(input.prompt, /Architecture v2/, "workers get the latest brief");
+        assert.match(
+          input.prompt,
+          /Architecture v2/,
+          "workers get the latest brief",
+        );
         if (/Create lib\/db\.js/.test(input.prompt)) {
           mkdirSync(join(input.cwd, "lib"), { recursive: true });
-          writeFileSync(join(input.cwd, "lib", "db.js"), "export const db = 1;");
+          writeFileSync(
+            join(input.cwd, "lib", "db.js"),
+            "export const db = 1;",
+          );
           writeReport(input.cwd, { status: "done", summary: "db" });
           return {};
         }
-        assert.ok(existsSync(join(input.cwd, "lib", "db.js")), "dependency was merged before T2 started");
+        assert.ok(
+          existsSync(join(input.cwd, "lib", "db.js")),
+          "dependency was merged before T2 started",
+        );
         if (!input.resumeSessionId) {
-          writeReport(input.cwd, { status: "needs_decision", summary: "blocked", question: "Which port?", options: ["3000", "8080"] });
+          writeReport(input.cwd, {
+            status: "needs_decision",
+            summary: "blocked",
+            question: "Which port?",
+            options: ["3000", "8080"],
+          });
           return { sessionId: "t2s" };
         }
         assert.equal(input.resumeSessionId, "t2s");
-        assert.match(input.prompt, /The planner answered your question \("Which port\?"\): Use 3000\./);
+        assert.match(
+          input.prompt,
+          /The planner answered your question \("Which port\?"\): Use 3000\./,
+        );
         writeFileSync(join(input.cwd, "server.js"), "listen(3000)");
         writeReport(input.cwd, { status: "done", summary: "server" });
         return {};
@@ -868,11 +988,30 @@ test("architecture first: brief + design review, workers ask the planner (not th
       'const ok = require("fs").existsSync("server.js"); if (!ok) console.log("server.js missing"); process.exit(ok ? 0 : 1);',
     );
     git(f.work, "add", ".");
-    git(f.work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "check");
-    const run = await f.orchestrator.startRun(f.team.id, "Build the API", {}, {}, { checkCommand: "node check.cjs" });
+    git(
+      f.work,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-qm",
+      "check",
+    );
+    const run = await f.orchestrator.startRun(
+      f.team.id,
+      "Build the API",
+      {},
+      {},
+      { checkCommand: "node check.cjs" },
+    );
     await f.orchestrator.idle(run.id);
     const snap = f.orchestrator.snapshot(run.id)!;
-    assert.equal(snap.run.state, "done", JSON.stringify(snap.events.map((e) => e.message)));
+    assert.equal(
+      snap.run.state,
+      "done",
+      JSON.stringify(snap.events.map((e) => e.message)),
+    );
     assert.equal(snap.run.briefVersion, 2);
     const t1 = snap.tasks.find((t) => t.id === "T1")!;
     const t2 = snap.tasks.find((t) => t.id === "T2")!;
@@ -882,13 +1021,32 @@ test("architecture first: brief + design review, workers ask the planner (not th
     assert.equal(t2.questions, 1);
     assert.equal(t2.attempt, 1, "a question is not a retry");
     assert.match(t2.diffStat ?? "", /server\.js/);
-    assert.equal(snap.tasks.find((t) => t.id === "R0")!.report?.verdict, "changes");
-    assert.ok(t1.merged && t2.merged, "finish merges finished work automatically");
-    const files = git(f.work, "ls-tree", "-r", "--name-only", snap.run.runBranch);
+    assert.equal(
+      snap.tasks.find((t) => t.id === "R0")!.report?.verdict,
+      "changes",
+    );
+    assert.ok(
+      t1.merged && t2.merged,
+      "finish merges finished work automatically",
+    );
+    const files = git(
+      f.work,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      snap.run.runBranch,
+    );
     assert.match(files, /lib\/db\.js/);
     assert.match(files, /server\.js/);
-    assert.ok(snap.decisions.some((d) => /Which port/.test(d.question) && /3000/.test(d.choice)));
-    assert.ok(!f.attention.some((m) => /needs you/.test(m)), "the user was never asked");
+    assert.ok(
+      snap.decisions.some(
+        (d) => /Which port/.test(d.question) && /3000/.test(d.choice),
+      ),
+    );
+    assert.ok(
+      !f.attention.some((m) => /needs you/.test(m)),
+      "the user was never asked",
+    );
     assert.equal(f.plannerCalls.length, 4);
     assert.equal(f.codexCalls.length, 3);
   } finally {
@@ -899,28 +1057,119 @@ test("architecture first: brief + design review, workers ask the planner (not th
 test("targeted reviews, question limits and validation of new actions", async () => {
   const roles = new Set<TeamRole>(["planner", "coder", "reviewer"]);
   assert.throws(
-    () => parsePlannerReply(actions({ actions: [{ type: "delegate", id: "R", role: "coder", title: "a", instructions: "b", reviews: "T1" }] }), new Set(["T1"]), roles),
+    () =>
+      parsePlannerReply(
+        actions({
+          actions: [
+            {
+              type: "delegate",
+              id: "R",
+              role: "coder",
+              title: "a",
+              instructions: "b",
+              reviews: "T1",
+            },
+          ],
+        }),
+        new Set(["T1"]),
+        roles,
+      ),
     /only for reviewer/,
   );
   assert.throws(
-    () => parsePlannerReply(actions({ actions: [{ type: "delegate", id: "R", role: "reviewer", title: "a", instructions: "b", reviews: "T9" }] }), new Set(["T1"]), roles),
+    () =>
+      parsePlannerReply(
+        actions({
+          actions: [
+            {
+              type: "delegate",
+              id: "R",
+              role: "reviewer",
+              title: "a",
+              instructions: "b",
+              reviews: "T9",
+            },
+          ],
+        }),
+        new Set(["T1"]),
+        roles,
+      ),
     /unknown task/,
   );
-  assert.throws(() => parsePlannerReply(actions({ actions: [{ type: "answer", taskId: "T9", answer: "x" }] }), new Set(["T1"]), roles));
-  assert.throws(() => parsePlannerReply(actions({ actions: [{ type: "set_brief", content: "x".repeat(12_001) }] }), new Set(), roles));
+  assert.throws(() =>
+    parsePlannerReply(
+      actions({ actions: [{ type: "answer", taskId: "T9", answer: "x" }] }),
+      new Set(["T1"]),
+      roles,
+    ),
+  );
+  assert.throws(() =>
+    parsePlannerReply(
+      actions({
+        actions: [{ type: "set_brief", content: "x".repeat(12_001) }],
+      }),
+      new Set(),
+      roles,
+    ),
+  );
 
   let asked = 0;
   const f = setup(
     (input, call) => {
       if (call === 1)
-        return { finalText: actions({ actions: [{ type: "delegate", id: "T1", role: "coder", title: "Page", instructions: "Write page.html" }] }) };
+        return {
+          finalText: actions({
+            actions: [
+              {
+                type: "delegate",
+                id: "T1",
+                role: "coder",
+                title: "Page",
+                instructions: "Write page.html",
+              },
+            ],
+          }),
+        };
       if (/asks:/.test(input.prompt))
-        return { finalText: actions({ actions: [{ type: "answer", taskId: "T2", answer: "Decide yourself." }] }) };
+        return {
+          finalText: actions({
+            actions: [
+              { type: "answer", taskId: "T2", answer: "Decide yourself." },
+            ],
+          }),
+        };
       if (/T1 — done/.test(input.prompt) && !/R1/.test(input.prompt))
-        return { finalText: actions({ actions: [{ type: "delegate", id: "R1", role: "reviewer", title: "Review T1", instructions: "Check it", reviews: "T1" }] }) };
+        return {
+          finalText: actions({
+            actions: [
+              {
+                type: "delegate",
+                id: "R1",
+                role: "reviewer",
+                title: "Review T1",
+                instructions: "Check it",
+                reviews: "T1",
+              },
+            ],
+          }),
+        };
       if (/R1 — done/.test(input.prompt) && !/- T2 /.test(input.prompt))
-        return { finalText: actions({ actions: [{ type: "delegate", id: "T2", role: "coder", title: "Indecisive", instructions: "Keep asking" }] }) };
-      return { finalText: actions({ actions: [{ type: "finish", summary: "ok" }] }) };
+        return {
+          finalText: actions({
+            actions: [
+              {
+                type: "delegate",
+                id: "T2",
+                role: "coder",
+                title: "Indecisive",
+                instructions: "Keep asking",
+              },
+            ],
+          }),
+        };
+      return {
+        finalText: actions({ actions: [{ type: "finish", summary: "ok" }] }),
+      };
     },
     {
       codex: (input) => {
@@ -930,13 +1179,24 @@ test("targeted reviews, question limits and validation of new actions", async ()
           return {};
         }
         asked++;
-        writeReport(input.cwd, { status: "needs_decision", summary: "?", question: `Question ${asked}?` });
+        writeReport(input.cwd, {
+          status: "needs_decision",
+          summary: "?",
+          question: `Question ${asked}?`,
+        });
         return { sessionId: "s" };
       },
       gemini: (input) => {
-        assert.match(input.prompt, /git diff [0-9a-f]+\.\.team-task\/[0-9a-f]+\/T1/, "reviewer is pointed at T1's diff");
+        assert.match(
+          input.prompt,
+          /git diff [0-9a-f]+\.\.team-task\/[0-9a-f]+\/T1/,
+          "reviewer is pointed at T1's diff",
+        );
         assert.match(input.prompt, /page\.html/);
-        return { finalText: '```cobble-report\n{"status":"done","summary":"fine","verdict":"approve"}\n```' };
+        return {
+          finalText:
+            '```cobble-report\n{"status":"done","summary":"fine","verdict":"approve"}\n```',
+        };
       },
     },
     { planner: "claude", coder: "codex", reviewer: "gemini" },
@@ -946,10 +1206,17 @@ test("targeted reviews, question limits and validation of new actions", async ()
     await f.orchestrator.idle(run.id);
     const snap = f.orchestrator.snapshot(run.id)!;
     const t2 = snap.tasks.find((t) => t.id === "T2")!;
-    assert.equal(t2.state, "failed", JSON.stringify(snap.events.map((e) => e.message)));
+    assert.equal(
+      t2.state,
+      "failed",
+      JSON.stringify(snap.events.map((e) => e.message)),
+    );
     assert.match(t2.error!, /more than 3 questions/);
     assert.equal(asked, 4);
-    assert.equal(snap.tasks.find((t) => t.id === "R1")!.report?.verdict, "approve");
+    assert.equal(
+      snap.tasks.find((t) => t.id === "R1")!.report?.verdict,
+      "approve",
+    );
     assert.equal(snap.run.state, "done");
   } finally {
     await f.cleanup();
