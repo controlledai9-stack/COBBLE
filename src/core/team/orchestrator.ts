@@ -10,7 +10,9 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { Team } from "../../shared/types";
 import { assess } from "../engine";
+import { runCheck, validCheckCommand } from "./checks";
 import {
+  reportFromReply,
   parsePlannerReply,
   parseTaskReport,
   type PlannerAction,
@@ -51,6 +53,8 @@ export interface OrchestratorOptions {
 }
 
 export type GateAnswer = "done" | "approve" | "skip" | "deny";
+/** A task may ask the planner this many questions before it fails. */
+export const TASK_QUESTION_LIMIT = 3;
 
 export class TeamOrchestrator extends EventEmitter {
   private readonly ticks = new Map<string, Promise<void>>();
@@ -89,7 +93,9 @@ export class TeamOrchestrator extends EventEmitter {
     goal: string,
     budget: Partial<TeamBudget> = {},
     policy: Partial<ApprovalPolicy> = {},
+    extras: { checkCommand?: string } = {},
   ): Promise<TeamRun> {
+    const checkCommand = validCheckCommand(extras.checkCommand);
     const team = this.options.team(teamId);
     if (!team) throw new Error("Choose a team first");
     if (!team.workspace) throw new Error("Choose a workspace folder first");
@@ -136,6 +142,8 @@ export class TeamOrchestrator extends EventEmitter {
       pendingNotes: [],
       wakeRequested: true,
       workspace,
+      briefVersion: 0,
+      ...(checkCommand ? { checkCommand } : {}),
       createdAt: stamp,
       updatedAt: stamp,
     };
@@ -358,6 +366,16 @@ export class TeamOrchestrator extends EventEmitter {
           (dep) => tasks.find((t) => t.id === dep)?.state === "done",
         );
         if (!ready) continue;
+        // Dependents must see their dependencies' files: merge them first.
+        const blocked = await this.mergeDependencies(run, task, tasks);
+        if (blocked) {
+          task.state = "cancelled";
+          task.error = blocked;
+          task.finishedAt = new Date(this.now()).toISOString();
+          this.store.saveTask(task);
+          this.log(run, "merge", `${task.id} not started: ${blocked}`, task.id);
+          continue;
+        }
         active++;
         task.state = "running";
         task.startedAt = new Date(this.now()).toISOString();
@@ -373,13 +391,19 @@ export class TeamOrchestrator extends EventEmitter {
     );
     const startable = fresh.some((t) => t.state === "queued");
     const waitingOnUser = fresh.some((t) => t.state === "needs_human");
+    // A worker's question blocks it, so the planner answers right away.
+    const newQuestions = fresh.some(
+      (t) =>
+        t.state === "needs_decision" && t.question && !t.question.delivered,
+    );
     if (
       run.state === "running" &&
       !this.plannerBusy.has(runId) &&
-      !runningNow &&
-      (run.wakeRequested ||
-        undelivered.length > 0 ||
-        (!startable && !waitingOnUser))
+      (newQuestions ||
+        (!runningNow &&
+          (run.wakeRequested ||
+            undelivered.length > 0 ||
+            (!startable && !waitingOnUser))))
     ) {
       this.plannerBusy.add(runId);
       void this.track(
@@ -503,6 +527,15 @@ export class TeamOrchestrator extends EventEmitter {
       task.delivered = true;
       this.store.saveTask(task);
     }
+    for (const task of this.store.tasks(runId))
+      if (
+        task.state === "needs_decision" &&
+        task.question &&
+        !task.question.delivered
+      ) {
+        task.question.delivered = true;
+        this.store.saveTask(task);
+      }
     run.pendingNotes = run.pendingNotes.filter((n) => !notes.includes(n));
     run.wakeRequested = false;
     this.store.saveRun(run);
@@ -514,6 +547,30 @@ export class TeamOrchestrator extends EventEmitter {
       await this.apply(run, action, roles);
     }
     this.changed(runId);
+  }
+
+  /** Merges finished, unmerged dependencies; returns a reason when blocked. */
+  private async mergeDependencies(
+    run: TeamRun,
+    task: TeamTask,
+    tasks: TeamTask[],
+  ): Promise<string | null> {
+    for (const depId of task.dependsOn) {
+      const dep = tasks.find((t) => t.id === depId);
+      if (!dep || dep.merged || !WRITING_ROLES.has(dep.role)) continue;
+      const result = await this.worktrees(run).merge(run.id, dep.id);
+      if (!result.ok)
+        return `could not merge dependency ${dep.id} into the run branch (conflict)`;
+      dep.merged = true;
+      this.store.saveTask(dep);
+      this.log(
+        run,
+        "merge",
+        `${dep.id} merged automatically for ${task.id}`,
+        dep.id,
+      );
+    }
+    return null;
   }
 
   private gateRun(run: TeamRun, kind: HumanGateKind, message: string) {
@@ -552,6 +609,7 @@ export class TeamOrchestrator extends EventEmitter {
           acceptance: action.acceptance,
           dependsOn: action.dependsOn,
           ...(action.target ? { target: action.target } : {}),
+          ...(action.reviews ? { reviews: action.reviews } : {}),
           state: "queued",
           attempt: 0,
           createdAt: new Date(this.now()).toISOString(),
@@ -619,6 +677,46 @@ export class TeamOrchestrator extends EventEmitter {
         this.log(run, "merge", note, action.taskId);
         return;
       }
+      case "set_brief": {
+        run.brief = action.content;
+        run.briefVersion = (run.briefVersion ?? 0) + 1;
+        this.store.saveRun(run);
+        this.log(
+          run,
+          "brief",
+          `Architecture brief v${run.briefVersion} published`,
+        );
+        return;
+      }
+      case "answer": {
+        const task = this.store
+          .tasks(run.id)
+          .find((t) => t.id === action.taskId);
+        if (!task || task.state !== "needs_decision") {
+          run.pendingNotes.push(
+            `${action.taskId} has no open question to answer.`,
+          );
+          this.store.saveRun(run);
+          return;
+        }
+        const asked = task.question?.text ?? "";
+        task.state = "queued";
+        task.question = undefined;
+        task.resumeNote = `The planner answered your question ("${asked.slice(0, 300)}"): ${action.answer} Continue the task with this decision.`;
+        this.store.saveTask(task);
+        this.store.addDecision(run.id, {
+          question: `${task.id}: ${asked.slice(0, 900)}`,
+          choice: action.answer.slice(0, 1_000),
+          why: "Planner's answer to a worker question",
+        });
+        this.log(
+          run,
+          "answer",
+          `${task.id}: ${action.answer.slice(0, 200)}`,
+          task.id,
+        );
+        return;
+      }
       case "ask_human":
         return this.gateRun(run, action.kind, action.message);
       case "wait":
@@ -636,8 +734,24 @@ export class TeamOrchestrator extends EventEmitter {
           task.error = "Run finished";
           this.store.saveTask(task);
         }
+        // Finished work lands on the run branch even if the planner forgot to merge.
+        const conflicts: string[] = [];
+        for (const task of this.store.tasks(run.id))
+          if (
+            task.state === "done" &&
+            WRITING_ROLES.has(task.role) &&
+            !task.merged
+          ) {
+            const merged = await this.worktrees(run).merge(run.id, task.id);
+            if (merged.ok) {
+              task.merged = true;
+              this.store.saveTask(task);
+            } else conflicts.push(task.id);
+          }
         run.state = "done";
-        run.summary = action.summary;
+        run.summary = conflicts.length
+          ? `${action.summary}\n\nNot merged because of conflicts: ${conflicts.join(", ")} (their branches are kept).`
+          : action.summary;
         this.store.saveRun(run);
         this.log(run, "run", `Finished: ${action.summary.slice(0, 300)}`);
         this.emit("attention", {
@@ -697,11 +811,22 @@ export class TeamOrchestrator extends EventEmitter {
         `${task.id} started on ${task.agent}${resuming ? " (resumed)" : ""}`,
         task.id,
       );
+      const reviewTarget = task.reviews
+        ? this.store.tasks(runId).find((t) => t.id === task.reviews)
+        : undefined;
+      // Re-read the run so workers always get the latest architecture brief.
+      const current = this.require(runId);
       let result: AdapterResult;
       try {
         result = await this.options.adapters[task.agent].run({
           cwd,
-          prompt: workerPrompt(team, run, task, note),
+          prompt: workerPrompt(
+            team,
+            current,
+            task,
+            note,
+            reviewTarget ? { task: reviewTarget } : undefined,
+          ),
           resumeSessionId: resuming ? task.sessionId : undefined,
           readOnly: !writing,
           network: task.role === "deployer",
@@ -715,10 +840,10 @@ export class TeamOrchestrator extends EventEmitter {
         });
       }
       if (controller.signal.aborted) return;
+      // Report file (writers) or a ```cobble-report block in the reply (anyone).
       const report =
-        writing || task.role === "reviewer"
-          ? parseTaskReport((await wt.readReport(cwd)) ?? "")
-          : null;
+        (writing ? parseTaskReport((await wt.readReport(cwd)) ?? "") : null) ??
+        parseTaskReport(reportFromReply(result.finalText) ?? "");
       const patch: Partial<TeamTask> = {
         ...(result.sessionId ? { sessionId: result.sessionId } : {}),
         ...(report
@@ -753,6 +878,28 @@ export class TeamOrchestrator extends EventEmitter {
             `${task.id}: ${assessment.explanation}`,
             task.id,
           );
+        patch.diffStat = await wt.diffStat(cwd, base);
+        if (run.checkCommand && changes.length && !controller.signal.aborted) {
+          this.log(
+            run,
+            "check",
+            `${task.id}: running \`${run.checkCommand}\``,
+            task.id,
+          );
+          const check = await runCheck(
+            run.checkCommand,
+            cwd,
+            undefined,
+            controller.signal,
+          );
+          patch.check = { command: run.checkCommand, ...check };
+          this.log(
+            run,
+            "check",
+            `${task.id}: check ${check.passed ? "passed" : "failed"}`,
+            task.id,
+          );
+        }
       }
       const needs =
         result.authRequired ??
@@ -768,6 +915,33 @@ export class TeamOrchestrator extends EventEmitter {
         });
         this.store.event(runId, "gate", message, taskId);
         this.emit("attention", { runId, taskId, message, worktree: cwd });
+        return;
+      }
+      if (report?.status === "needs_decision" && report.question) {
+        const questions = (task.questions ?? 0) + 1;
+        if (questions > TASK_QUESTION_LIMIT)
+          return finish({
+            ...patch,
+            questions,
+            state: "failed",
+            error: `Asked more than ${TASK_QUESTION_LIMIT} questions; the task needs clearer instructions.`,
+          });
+        finish({
+          ...patch,
+          questions,
+          state: "needs_decision",
+          question: {
+            text: report.question,
+            options: report.options ?? [],
+            delivered: false,
+          },
+        });
+        this.log(
+          run,
+          "question",
+          `${task.id} asks the planner: ${report.question.slice(0, 200)}`,
+          task.id,
+        );
         return;
       }
       if (result.rateLimited)

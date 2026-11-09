@@ -85,10 +85,29 @@ export class Worktrees {
       "rev-parse",
       Worktrees.runBranch(runId),
     );
-    try {
+    const exists = await this.run(
+      this.repo,
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${branch}`,
+    ).then(
+      () => true,
+      () => false,
+    );
+    if (!exists) {
       await this.run(this.repo, "worktree", "add", "-b", branch, path, base);
-    } catch {
-      // A retry reuses the existing branch and worktree.
+      return { branch, path, base };
+    }
+    // Resume or retry: keep the existing worktree (its work is committed by
+    // capture()), or re-attach the branch if the folder was removed.
+    const current = await this.run(
+      path,
+      "rev-parse",
+      "--abbrev-ref",
+      "HEAD",
+    ).catch(() => "");
+    if (current !== branch) {
       await rm(path, { recursive: true, force: true });
       await this.run(this.repo, "worktree", "prune");
       await this.run(this.repo, "worktree", "add", "--force", path, branch);
@@ -146,6 +165,17 @@ export class Worktrees {
         };
       })
       .filter((c) => !c.path.startsWith(`${REPORT_DIR}/`));
+  }
+
+  /** A short `git diff --stat` for the planner. */
+  async diffStat(path: string, base: string): Promise<string> {
+    const stat = await this.run(
+      path,
+      "diff",
+      "--stat=100",
+      `${base}..HEAD`,
+    ).catch(() => "");
+    return stat.length > 1_500 ? `${stat.slice(0, 1_480)}\n…` : stat;
   }
 
   /** Merges a task branch into the run branch; refuses and aborts on conflict. */

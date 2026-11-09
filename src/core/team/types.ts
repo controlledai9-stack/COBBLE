@@ -30,7 +30,9 @@ export type TaskState =
   | "done"
   | "failed"
   | "cancelled"
-  | "interrupted";
+  | "interrupted"
+  /** The worker asked the planner a question; the user is not involved. */
+  | "needs_decision";
 export const TERMINAL_TASK_STATES: ReadonlySet<TaskState> = new Set([
   "done",
   "failed",
@@ -69,7 +71,14 @@ export const DEFAULT_POLICY: ApprovalPolicy = Object.freeze({
 });
 
 export interface TaskReport {
-  status: "done" | "failed" | "needs_human";
+  status: "done" | "failed" | "needs_human" | "needs_decision";
+  /** needs_decision: what the worker wants the planner to decide. */
+  question?: string;
+  options?: string[];
+  /** Improvements the worker proposes; the planner accepts or rejects them. */
+  suggestions?: string[];
+  /** Reviewer verdict on the reviewed task. */
+  verdict?: "approve" | "changes";
   summary: string;
   files: string[];
   notes?: string;
@@ -111,6 +120,16 @@ export interface TeamTask {
   delivered?: boolean;
   /** Set when the user cleared this task's gate; sent to the resumed agent. */
   resumeNote?: string;
+  /** Reviewer tasks: the task whose changes are reviewed. */
+  reviews?: string;
+  /** Open question for the planner (state needs_decision). */
+  question?: { text: string; options: string[]; delivered: boolean };
+  /** Number of questions this task has asked (bounded). */
+  questions?: number;
+  /** `git diff --stat` of the task's changes, bounded. */
+  diffStat?: string;
+  /** Result of the run's check command on this task's worktree. */
+  check?: { command: string; passed: boolean; output: string };
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -149,6 +168,14 @@ export interface TeamRun {
   wakeRequested: boolean;
   /** Workspace the run was started for; worktrees branch from its repo. */
   workspace: string;
+  /**
+   * Architecture brief written by the planner (set_brief): stack, layout,
+   * contracts between tasks, conventions. Every worker receives it.
+   */
+  brief?: string;
+  briefVersion: number;
+  /** Optional user command run on each task's changes, e.g. "npm ci && npm test". */
+  checkCommand?: string;
   createdAt: string;
   updatedAt: string;
 }

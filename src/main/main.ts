@@ -425,7 +425,13 @@ else {
       );
       handle(
         "team-start-run",
-        (_, goal: unknown, budget: unknown, policy: unknown) =>
+        (
+          _,
+          goal: unknown,
+          budget: unknown,
+          policy: unknown,
+          options: unknown,
+        ) =>
           service.startTeamRun(
             text(goal, 4_000),
             budget && typeof budget === "object"
@@ -433,6 +439,18 @@ else {
               : undefined,
             policy && typeof policy === "object"
               ? (policy as object)
+              : undefined,
+            options && typeof options === "object"
+              ? {
+                  checkCommand:
+                    (options as { checkCommand?: unknown }).checkCommand ===
+                    undefined
+                      ? undefined
+                      : text(
+                          (options as { checkCommand?: unknown }).checkCommand,
+                          500,
+                        ),
+                }
               : undefined,
           ),
       );

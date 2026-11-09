@@ -30,8 +30,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("cobble:team-set-role", role, agent),
   detectTeamAgents: () => ipcRenderer.invoke("cobble:team-detect-agents"),
   testTeamAgent: (agent) => ipcRenderer.invoke("cobble:team-test-agent", agent),
-  startTeamRun: (goal, budget, policy) =>
-    ipcRenderer.invoke("cobble:team-start-run", goal, budget, policy),
+  startTeamRun: (goal, budget, policy, options) =>
+    ipcRenderer.invoke("cobble:team-start-run", goal, budget, policy, options),
   teamRuns: () => ipcRenderer.invoke("cobble:team-runs"),
   teamRun: (runId) => ipcRenderer.invoke("cobble:team-run", runId),
   teamCommand: (runId, command, taskId, note) =>

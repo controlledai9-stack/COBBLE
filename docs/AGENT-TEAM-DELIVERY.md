@@ -11,7 +11,23 @@
   3. When a worker finishes, Cobble reads its `.cobble-task/report.json`, commits the worktree, and runs the **existing plan check (`assess`)** on the changed paths.
   4. Cobble wakes the planner with the results, including drift alerts.
   5. This repeats until the planner sends `finish`, a budget runs out, or the user pauses or stops the run.
-- **Planner actions:** `delegate`, `merge_task` (clean merge into the run branch; on conflict Cobble aborts the merge and tells the planner), `ask_human`, `wait` and `finish`. The planner's decisions are stored in a decision log.
+- **Planner actions:** `set_brief`, `delegate`, `answer`, `merge_task` (clean merge into the run branch; on conflict Cobble aborts the merge and tells the planner), `ask_human`, `wait` and `finish`. The planner's decisions are stored in a decision log.
+- **Architecture first:**
+  - The planner is told to publish an **architecture brief** (`set_brief`) before any coding. The brief covers stack, folder layout, contracts between tasks (paths, exports, routes, data shapes), conventions and what is out of scope.
+  - Every worker receives the latest brief. Workers never talk to each other, so the brief is their shared contract.
+  - If a reviewer role exists, the planner first has the reviewer critique the brief. It then accepts or rejects each suggestion in the decision log and republishes the brief. The brief version is tracked on the run.
+- **Workers ask the planner, not the user:**
+  - A worker that hits a costly decision reports `needs_decision` with a question and options.
+  - The planner is woken immediately, even while other tasks are running. It replies with `answer`, and the worker's own session resumes with the decision.
+  - The answer is logged as a decision. A question does not count as a retry. More than 3 questions from one task fails that task, so it can't loop.
+- **Suggestions:** workers can propose improvements (`suggestions`). The planner sees them and decides on each one, as in the original idea where Claude is the one who decides.
+- **Dependencies see each other's work:** before a dependent task starts, Cobble merges its finished dependencies into the run branch. If that merge conflicts, the dependent task is cancelled and the planner is told.
+- **Finish:** when the run finishes, every finished, unmerged task is merged. Conflicts are listed in the summary, and their branches are kept.
+- **Targeted reviews:** a reviewer delegated with `"reviews": "T3"` is given the exact `git diff base..branch` and the file list of T3. It returns `verdict: approve|changes` in a `cobble-report` block. Reviewers are read-only, so they report in their reply instead of writing a file.
+- **Objective evidence for the planner:**
+  - An optional **check command** per run (for example `npm ci && npm test`) runs in every task's worktree after the task finishes. Pass/fail and the output tail go to the planner.
+  - The planner also gets a `git diff --stat` for each task, along with the drift check and reviewer verdicts. Worker reports are labelled as claims.
+  - The check command is configured by the user only. A note for the UI: worktrees have no `node_modules`, so the command must install dependencies itself.
 - **Human gates:**
   - A worker that reports `needs_human`, or whose CLI output looks like a sign-in failure, pauses **only that task**. Other work continues.
   - The desktop shows a notification, and `openTeamTerminal` opens PowerShell in that task's folder.
@@ -32,7 +48,10 @@
 
 - `teamRoles()`, `setTeamRole(role, agent|null)`
 - `detectTeamAgents()`, `testTeamAgent(agent)`
-- `startTeamRun(goal, budget?, policy?)`, `teamRuns()`, `teamRun(runId)`
+- `startTeamRun(goal, budget?, policy?, { checkCommand? })`, `teamRuns()`, `teamRun(runId)`
+- Run snapshot fields for the UI:
+  - on the run: `run.brief`, `run.briefVersion` and `run.checkCommand`
+  - on each task: `task.question` (state `needs_decision`), `task.check`, `task.diffStat`, `task.reviews`, `task.report.verdict` and `task.report.suggestions`
 - `teamCommand(runId, "pause"|"resume"|"stop"|"cleanup"|"done"|"approve"|"skip"|"deny", taskId?, note?)`
 - `openTeamTerminal(runId, taskId?)`
 - `onTeam(cb)`, `onTeamAttention(cb)`
@@ -41,7 +60,7 @@
 
 ```
 cobble team detect | roles | role ROLE AGENT|none | test AGENT
-cobble team run "GOAL" [--max-tasks N] [--max-turns N]
+cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm ci && npm test"]
 cobble team status [RUN_ID]
 ```
 
@@ -63,7 +82,7 @@ Known gaps to check live:
 
 ## Tests
 
-`test/agent-team.test.ts` has 9 tests:
+`test/agent-team.test.ts` has 11 tests:
 
 - planner-output validation
 - report and CLI parsing
@@ -74,8 +93,10 @@ Known gaps to check live:
 - dependency cancellation, bounded retry, stop and restart without relaunch
 - start preconditions
 - the real `CliAdapter` against a fake `.cmd` agent on PATH (stdin, session id, sign-in detection, timeout kill, unsafe session id rejected), plus service-level role validation
+- architecture-first flow: brief, design review, revised brief, a worker question answered by the planner and resumed, dependency auto-merge, check command fail and pass, merge on finish, and the user never asked
+- targeted review of a specific task's diff, the question limit, and validation of the new actions
 
-Full suite: **225 passed, 0 failed**. `tsc --noEmit` is clean and `scripts/build.mjs` succeeds. The desktop smoke test was not run in this environment because the Electron binary was not installed.
+Full suite: **227 passed, 0 failed**. `tsc --noEmit` is clean and `scripts/build.mjs` succeeds. The desktop smoke test was not run in this environment because the Electron binary was not installed.
 
 ## Live verification checklist (record versions and results here)
 

@@ -548,6 +548,8 @@ export interface DesktopApi {
     goal: string,
     budget?: Partial<TeamBudget>,
     policy?: Partial<ApprovalPolicy>,
+    /** checkCommand: e.g. "npm ci && npm test", run on every task's changes. */
+    options?: { checkCommand?: string },
   ): Promise<TeamRun>;
   teamRuns?(): Promise<TeamRun[]>;
   teamRun?(runId: string): Promise<RunSnapshot>;

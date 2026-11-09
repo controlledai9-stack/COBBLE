@@ -11,7 +11,11 @@ export type PlannerAction =
       dependsOn: string[];
       acceptance: string[];
       target?: "preview" | "production";
+      /** Reviewer tasks: which task's changes to review. */
+      reviews?: string;
     }
+  | { type: "set_brief"; content: string }
+  | { type: "answer"; taskId: string; answer: string }
   | { type: "merge_task"; taskId: string }
   | { type: "ask_human"; kind: HumanGateKind; message: string }
   | { type: "wait"; reason: string }
@@ -37,6 +41,8 @@ export const ACTION_LIMITS = Object.freeze({
   summary: 4_000,
   decisionField: 1_000,
   acceptance: 10,
+  brief: 12_000,
+  answer: 4_000,
 });
 
 const GATES: readonly HumanGateKind[] = [
@@ -150,6 +156,14 @@ export function parsePlannerReply(
               : (() => {
                   throw new Error(`${at}.target must be preview or production`);
                 })();
+        let reviews: string | undefined;
+        if (a.reviews !== undefined) {
+          if (role !== "reviewer")
+            throw new Error(`${at}.reviews is only for reviewer tasks`);
+          reviews = text(a.reviews, `${at}.reviews`, 32);
+          if (!seen.has(reviews))
+            throw new Error(`${at} reviews unknown task ${reviews}`);
+        }
         seen.add(id);
         actions.push({
           type: "delegate",
@@ -168,6 +182,24 @@ export function parsePlannerReply(
             ACTION_LIMITS.acceptance,
           ),
           ...(target ? { target } : {}),
+          ...(reviews ? { reviews } : {}),
+        });
+        break;
+      }
+      case "set_brief":
+        actions.push({
+          type: "set_brief",
+          content: text(a.content, `${at}.content`, ACTION_LIMITS.brief),
+        });
+        break;
+      case "answer": {
+        const taskId = text(a.taskId, `${at}.taskId`, 32);
+        if (!knownTaskIds.has(taskId))
+          throw new Error(`${at} answers unknown task ${taskId}`);
+        actions.push({
+          type: "answer",
+          taskId,
+          answer: text(a.answer, `${at}.answer`, ACTION_LIMITS.answer),
         });
         break;
       }
@@ -208,14 +240,31 @@ export function parsePlannerReply(
   return { decisions, actions };
 }
 
+/** Extracts a worker report from a ```cobble-report block in its reply. */
+export function reportFromReply(reply: string): string | null {
+  const blocks = [...reply.matchAll(/```cobble-report\s*\n([\s\S]*?)```/g)];
+  return blocks.length ? blocks[blocks.length - 1][1] : null;
+}
+
 /** Parses a worker's .cobble-task/report.json; returns null when unusable. */
 export function parseTaskReport(
   raw: string,
 ): import("./types").TaskReport | null {
   try {
     const value = JSON.parse(raw) as Record<string, unknown>;
-    if (!["done", "failed", "needs_human"].includes(value.status as string))
+    if (
+      !["done", "failed", "needs_human", "needs_decision"].includes(
+        value.status as string,
+      )
+    )
       return null;
+    const strings = (v: unknown, n: number, len: number) =>
+      Array.isArray(v)
+        ? v
+            .filter((s): s is string => typeof s === "string" && !!s.trim())
+            .slice(0, n)
+            .map((s) => s.slice(0, len))
+        : [];
     const files = Array.isArray(value.files)
       ? value.files
           .filter((f): f is string => typeof f === "string")
@@ -227,7 +276,19 @@ export function parseTaskReport(
       for (const [k, v] of Object.entries(value.outputs).slice(0, 16))
         if (typeof v === "string") outputs[k.slice(0, 64)] = v.slice(0, 2_000);
     return {
-      status: value.status as "done" | "failed" | "needs_human",
+      status: value.status as import("./types").TaskReport["status"],
+      ...(typeof value.question === "string" && value.question.trim()
+        ? { question: value.question.slice(0, 2_000) }
+        : {}),
+      ...(Array.isArray(value.options)
+        ? { options: strings(value.options, 6, 300) }
+        : {}),
+      ...(Array.isArray(value.suggestions)
+        ? { suggestions: strings(value.suggestions, 8, 500) }
+        : {}),
+      ...(value.verdict === "approve" || value.verdict === "changes"
+        ? { verdict: value.verdict }
+        : {}),
       summary: String(value.summary ?? "").slice(0, 4_000),
       files: files.map((f) => f.slice(0, 500)),
       ...(typeof value.notes === "string"

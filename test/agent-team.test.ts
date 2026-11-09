@@ -788,3 +788,170 @@ process.stdin.on("end", () => {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows locks */ }
   }
 });
+
+test("architecture first: brief + design review, workers ask the planner (not the user), deps auto-merge, check command", async () => {
+  const f = setup(
+    (input, call) => {
+      if (call === 1) {
+        assert.match(input.prompt, /DESIGN FIRST/);
+        return {
+          sessionId: "arch",
+          finalText: actions({
+            actions: [
+              { type: "set_brief", content: "# Architecture\nStore: Postgres. Server in server.js uses lib/db.js." },
+              { type: "delegate", id: "R0", role: "reviewer", title: "Critique the brief", instructions: "Review the architecture brief" },
+            ],
+          }),
+        };
+      }
+      if (call === 2) {
+        assert.match(input.prompt, /verdict: changes/);
+        assert.match(input.prompt, /use SQLite, it is free/);
+        assert.match(input.prompt, /Version 1 is published/);
+        return {
+          finalText: actions({
+            decisions: [{ question: "Database", choice: "SQLite", why: "reviewer: free, no server" }],
+            actions: [
+              { type: "set_brief", content: "# Architecture v2\nStore: SQLite via lib/db.js. server.js imports it." },
+              { type: "delegate", id: "T1", role: "coder", title: "DB layer", instructions: "Create lib/db.js" },
+              { type: "delegate", id: "T2", role: "coder", title: "Server", instructions: "Create server.js using lib/db.js", dependsOn: ["T1"] },
+            ],
+          }),
+        };
+      }
+      if (call === 3) {
+        assert.match(input.prompt, /T2 \(coder\/codex\) asks: Which port\?/);
+        assert.match(input.prompt, /Options: 3000 \| 8080/);
+        assert.match(input.prompt, /Check `node check\.cjs`: FAILED/, "T1's failed check is shown");
+        return { finalText: actions({ actions: [{ type: "answer", taskId: "T2", answer: "Use 3000." }] }) };
+      }
+      if (call === 4) {
+        assert.match(input.prompt, /Check `node check\.cjs`: PASSED/);
+        return { finalText: actions({ actions: [{ type: "finish", summary: "API ready" }] }) };
+      }
+      throw new Error(`unexpected planner call ${call}`);
+    },
+    {
+      gemini: (input) => {
+        assert.ok(input.readOnly, "reviewers are read-only");
+        assert.match(input.prompt, /Store: Postgres/, "reviewer sees the brief");
+        return {
+          finalText:
+            'Looks mostly fine.\n```cobble-report\n{"status":"done","summary":"One change","verdict":"changes","suggestions":["use SQLite, it is free"]}\n```',
+        };
+      },
+      codex: (input) => {
+        assert.match(input.prompt, /Architecture v2/, "workers get the latest brief");
+        if (/Create lib\/db\.js/.test(input.prompt)) {
+          mkdirSync(join(input.cwd, "lib"), { recursive: true });
+          writeFileSync(join(input.cwd, "lib", "db.js"), "export const db = 1;");
+          writeReport(input.cwd, { status: "done", summary: "db" });
+          return {};
+        }
+        assert.ok(existsSync(join(input.cwd, "lib", "db.js")), "dependency was merged before T2 started");
+        if (!input.resumeSessionId) {
+          writeReport(input.cwd, { status: "needs_decision", summary: "blocked", question: "Which port?", options: ["3000", "8080"] });
+          return { sessionId: "t2s" };
+        }
+        assert.equal(input.resumeSessionId, "t2s");
+        assert.match(input.prompt, /The planner answered your question \("Which port\?"\): Use 3000\./);
+        writeFileSync(join(input.cwd, "server.js"), "listen(3000)");
+        writeReport(input.cwd, { status: "done", summary: "server" });
+        return {};
+      },
+    },
+    { planner: "claude", coder: "codex", reviewer: "gemini" },
+  );
+  try {
+    writeFileSync(
+      join(f.work, "check.cjs"),
+      'const ok = require("fs").existsSync("server.js"); if (!ok) console.log("server.js missing"); process.exit(ok ? 0 : 1);',
+    );
+    git(f.work, "add", ".");
+    git(f.work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "check");
+    const run = await f.orchestrator.startRun(f.team.id, "Build the API", {}, {}, { checkCommand: "node check.cjs" });
+    await f.orchestrator.idle(run.id);
+    const snap = f.orchestrator.snapshot(run.id)!;
+    assert.equal(snap.run.state, "done", JSON.stringify(snap.events.map((e) => e.message)));
+    assert.equal(snap.run.briefVersion, 2);
+    const t1 = snap.tasks.find((t) => t.id === "T1")!;
+    const t2 = snap.tasks.find((t) => t.id === "T2")!;
+    assert.equal(t1.check?.passed, false);
+    assert.match(t1.check!.output, /server\.js missing/);
+    assert.equal(t2.check?.passed, true);
+    assert.equal(t2.questions, 1);
+    assert.equal(t2.attempt, 1, "a question is not a retry");
+    assert.match(t2.diffStat ?? "", /server\.js/);
+    assert.equal(snap.tasks.find((t) => t.id === "R0")!.report?.verdict, "changes");
+    assert.ok(t1.merged && t2.merged, "finish merges finished work automatically");
+    const files = git(f.work, "ls-tree", "-r", "--name-only", snap.run.runBranch);
+    assert.match(files, /lib\/db\.js/);
+    assert.match(files, /server\.js/);
+    assert.ok(snap.decisions.some((d) => /Which port/.test(d.question) && /3000/.test(d.choice)));
+    assert.ok(!f.attention.some((m) => /needs you/.test(m)), "the user was never asked");
+    assert.equal(f.plannerCalls.length, 4);
+    assert.equal(f.codexCalls.length, 3);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("targeted reviews, question limits and validation of new actions", async () => {
+  const roles = new Set<TeamRole>(["planner", "coder", "reviewer"]);
+  assert.throws(
+    () => parsePlannerReply(actions({ actions: [{ type: "delegate", id: "R", role: "coder", title: "a", instructions: "b", reviews: "T1" }] }), new Set(["T1"]), roles),
+    /only for reviewer/,
+  );
+  assert.throws(
+    () => parsePlannerReply(actions({ actions: [{ type: "delegate", id: "R", role: "reviewer", title: "a", instructions: "b", reviews: "T9" }] }), new Set(["T1"]), roles),
+    /unknown task/,
+  );
+  assert.throws(() => parsePlannerReply(actions({ actions: [{ type: "answer", taskId: "T9", answer: "x" }] }), new Set(["T1"]), roles));
+  assert.throws(() => parsePlannerReply(actions({ actions: [{ type: "set_brief", content: "x".repeat(12_001) }] }), new Set(), roles));
+
+  let asked = 0;
+  const f = setup(
+    (input, call) => {
+      if (call === 1)
+        return { finalText: actions({ actions: [{ type: "delegate", id: "T1", role: "coder", title: "Page", instructions: "Write page.html" }] }) };
+      if (/asks:/.test(input.prompt))
+        return { finalText: actions({ actions: [{ type: "answer", taskId: "T2", answer: "Decide yourself." }] }) };
+      if (/T1 — done/.test(input.prompt) && !/R1/.test(input.prompt))
+        return { finalText: actions({ actions: [{ type: "delegate", id: "R1", role: "reviewer", title: "Review T1", instructions: "Check it", reviews: "T1" }] }) };
+      if (/R1 — done/.test(input.prompt) && !/- T2 /.test(input.prompt))
+        return { finalText: actions({ actions: [{ type: "delegate", id: "T2", role: "coder", title: "Indecisive", instructions: "Keep asking" }] }) };
+      return { finalText: actions({ actions: [{ type: "finish", summary: "ok" }] }) };
+    },
+    {
+      codex: (input) => {
+        if (/Write page\.html/.test(input.prompt)) {
+          writeFileSync(join(input.cwd, "page.html"), "<p>");
+          writeReport(input.cwd, { status: "done", summary: "page" });
+          return {};
+        }
+        asked++;
+        writeReport(input.cwd, { status: "needs_decision", summary: "?", question: `Question ${asked}?` });
+        return { sessionId: "s" };
+      },
+      gemini: (input) => {
+        assert.match(input.prompt, /git diff [0-9a-f]+\.\.team-task\/[0-9a-f]+\/T1/, "reviewer is pointed at T1's diff");
+        assert.match(input.prompt, /page\.html/);
+        return { finalText: '```cobble-report\n{"status":"done","summary":"fine","verdict":"approve"}\n```' };
+      },
+    },
+    { planner: "claude", coder: "codex", reviewer: "gemini" },
+  );
+  try {
+    const run = await f.orchestrator.startRun(f.team.id, "x");
+    await f.orchestrator.idle(run.id);
+    const snap = f.orchestrator.snapshot(run.id)!;
+    const t2 = snap.tasks.find((t) => t.id === "T2")!;
+    assert.equal(t2.state, "failed", JSON.stringify(snap.events.map((e) => e.message)));
+    assert.match(t2.error!, /more than 3 questions/);
+    assert.equal(asked, 4);
+    assert.equal(snap.tasks.find((t) => t.id === "R1")!.report?.verdict, "approve");
+    assert.equal(snap.run.state, "done");
+  } finally {
+    await f.cleanup();
+  }
+});

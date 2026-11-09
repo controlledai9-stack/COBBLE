@@ -18,6 +18,7 @@ async function main() {
       "from-transcript": { type: "boolean" },
       "max-tasks": { type: "string" },
       "max-turns": { type: "string" },
+      check: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -34,7 +35,7 @@ async function main() {
   cobble team roles                  show role assignments
   cobble team role ROLE AGENT|none   e.g. team role planner claude
   cobble team test AGENT             one-line headless round trip
-  cobble team run "GOAL" [--max-tasks N] [--max-turns N]
+  cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"]
   cobble team status [RUN_ID]
 
 Do not run "team run" while the desktop app is open on the same data.
@@ -185,14 +186,22 @@ async function teamCommand(
     if (!goal) throw new Error('Usage: cobble team run "GOAL"');
     const number = (v: unknown) =>
       typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
-    const run = await service.startTeamRun(goal, {
-      ...(number(values["max-tasks"])
-        ? { maxTasks: number(values["max-tasks"]) }
-        : {}),
-      ...(number(values["max-turns"])
-        ? { maxPlannerTurns: number(values["max-turns"]) }
-        : {}),
-    });
+    const run = await service.startTeamRun(
+      goal,
+      {
+        ...(number(values["max-tasks"])
+          ? { maxTasks: number(values["max-tasks"]) }
+          : {}),
+        ...(number(values["max-turns"])
+          ? { maxPlannerTurns: number(values["max-turns"]) }
+          : {}),
+      },
+      undefined,
+      {
+        checkCommand:
+          typeof values.check === "string" ? values.check : undefined,
+      },
+    );
     console.log(`Run ${run.id} on branch ${run.runBranch}`);
     const prompt = createInterface({
       input: process.stdin,

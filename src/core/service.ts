@@ -1668,12 +1668,19 @@ export class CobbleService extends EventEmitter {
     goal: string,
     budget?: Partial<TeamBudget>,
     policy?: Partial<ApprovalPolicy>,
+    options?: { checkCommand?: string },
   ) {
     return this.agentTeam.startRun(
       this.teamId(),
       String(goal ?? ""),
       sanitizeBudget(budget),
       sanitizePolicy(policy),
+      {
+        checkCommand:
+          options && typeof options === "object"
+            ? (options.checkCommand as string | undefined)
+            : undefined,
+      },
     );
   }
   teamRuns() {
