@@ -134,10 +134,23 @@ export function CollaborationPanel({
                 Choose completed work
               </option>
               {team.items
-                .filter((i) => i.kind !== "constraint")
+                .filter((i) => {
+                  if (i.kind === "constraint") return false;
+                  const t = i.title.trim();
+                  if (!/[a-zA-Z0-9]/.test(t)) return false;
+                  if (/^[│|─┌┐└┘▼▲\s]+$/.test(t)) return false;
+                  if (
+                    /^(what are we building\?|which features do we need\?|what should stay out of scope\?|folder boundaries:?|strict boundary:?)/i.test(
+                      t,
+                    )
+                  )
+                    return false;
+                  if (t.length < 3 && !/^[A-Z0-9]{2,}$/.test(t)) return false;
+                  return true;
+                })
                 .map((i) => (
                   <option value={i.id} key={i.id}>
-                    {i.title}
+                    {i.title.length > 85 ? `${i.title.slice(0, 82)}...` : i.title}
                   </option>
                 ))}
             </select>

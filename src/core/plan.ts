@@ -19,29 +19,55 @@ export function splitPlan(source: string): PlanItem[] {
   let offset = 0;
   for (const line of source.split(/(?<=\n)/)) {
     const text = line.trim();
-    if (text) {
-      const start = offset + line.indexOf(text);
-      const title = text.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/, "");
-      const kind =
-        /\b(must not|do not|never|exclude|out of scope|no\s+\w+)\b/i.test(title)
-          ? "constraint"
-          : /\b(milestone|phase|by\s+\d)\b/i.test(title)
-            ? "milestone"
-            : /^#/.test(text)
-              ? "goal"
-              : "feature";
-      items.push({
-        id: createHash("sha256")
-          .update(`${start}:${text}`)
-          .digest("hex")
-          .slice(0, 16),
-        kind,
-        title,
-        text,
-        start,
-        end: start + text.length,
-      });
+    if (!text) {
+      offset += line.length;
+      continue;
     }
+
+    // Skip pure ASCII art borders, diagram connectors, and markdown dividers (no alphanumeric content)
+    if (!/[a-zA-Z0-9]/.test(text)) {
+      offset += line.length;
+      continue;
+    }
+
+    // Skip questionnaire template prompt headers
+    if (
+      /^(what are we building\?|which features do we need\?|what should stay out of scope\?|folder boundaries:?)$/i.test(
+        text,
+      )
+    ) {
+      offset += line.length;
+      continue;
+    }
+
+    // Strip diagram box border pipes if line was extracted from an ASCII diagram box
+    const cleanText = text.replace(/^[│|]\s*/, "").replace(/\s*[│|]$/, "").trim();
+    if (!cleanText || !/[a-zA-Z0-9]/.test(cleanText)) {
+      offset += line.length;
+      continue;
+    }
+
+    const start = offset + line.indexOf(text);
+    const title = cleanText.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/, "");
+    const kind =
+      /\b(must not|do not|never|exclude|out of scope|no\s+\w+)\b/i.test(title)
+        ? "constraint"
+        : /\b(milestone|phase|by\s+\d)\b/i.test(title)
+          ? "milestone"
+          : /^#/.test(cleanText)
+            ? "goal"
+            : "feature";
+    items.push({
+      id: createHash("sha256")
+        .update(`${start}:${cleanText}`)
+        .digest("hex")
+        .slice(0, 16),
+      kind,
+      title,
+      text: cleanText,
+      start,
+      end: start + cleanText.length,
+    });
     offset += line.length;
   }
   return items;
