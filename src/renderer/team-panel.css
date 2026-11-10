@@ -1,0 +1,209 @@
+.agent-team {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-team h2,
+.agent-team h3,
+.agent-team h4,
+.agent-team h5,
+.agent-team h6,
+.agent-team p {
+  margin: 0;
+}
+
+.agent-team-card,
+.agent-team-column {
+  min-width: 0;
+  display: grid;
+  /* One shrinkable track, so wide <pre> blocks scroll instead of widening the card. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface-elevated);
+}
+
+.agent-team-heading,
+.agent-team-actions,
+.agent-team-checkbox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.agent-team-heading {
+  justify-content: space-between;
+}
+
+.agent-team-roles {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.agent-team-roles :is(th, td) {
+  padding: 0.35rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.agent-team-role {
+  text-transform: capitalize;
+}
+
+.agent-team-agents,
+.agent-team-budget,
+.agent-team-board,
+.agent-team-run-layout {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.agent-team-agents,
+.agent-team-budget {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+
+.agent-team-agents {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.agent-team-run-layout {
+  grid-template-columns: minmax(0, 2fr) minmax(12rem, 1fr);
+  align-items: start;
+}
+
+.agent-team-board {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+}
+
+.agent-team-field,
+.agent-team-task-area,
+.agent-team-run,
+.agent-team-task-gate,
+.agent-team-output {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.agent-team-field :is(input, textarea, progress),
+.agent-team-output input,
+.agent-team-roles select {
+  width: 100%;
+  min-width: 0;
+}
+
+.agent-team progress {
+  accent-color: var(--accent);
+}
+
+.agent-team fieldset {
+  min-width: 0;
+  display: grid;
+  gap: 0.75rem;
+  margin: 0.5rem 0 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.agent-team button {
+  justify-self: start;
+}
+
+.agent-team details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.agent-team :is(button, summary, a, select, input, textarea):focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.agent-team-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-hover);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.agent-team-column {
+  background: var(--surface-hover);
+}
+
+.agent-team-column h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+/* Drift alerts, failed checks and missing agents are problems, not info. */
+.agent-team-warning {
+  color: var(--danger);
+  background: var(--danger-surface);
+  border-color: var(--danger-border);
+}
+
+.agent-team-gate,
+.agent-team-task-gate {
+  border-inline-start: 3px solid var(--notice-border);
+}
+
+.agent-team-task-gate {
+  padding-inline-start: 0.55rem;
+}
+
+.agent-team-text,
+.agent-team pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-team pre {
+  /* Diff stats and test output keep their columns; scroll instead of wrapping. */
+  white-space: pre;
+  overflow-wrap: normal;
+  font-size: 0.75rem;
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.5rem;
+  margin: 0.45rem 0;
+  border-radius: 0.4rem;
+  background: var(--surface-hover);
+}
+
+.agent-team-log {
+  display: grid;
+  gap: 0.65rem;
+  padding-inline-start: 1.35rem;
+  margin: 0;
+}
+
+.agent-team-log li {
+  padding-block-end: 0.45rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.agent-team-output a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+@media (max-width: 800px) {
+  .agent-team-run-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

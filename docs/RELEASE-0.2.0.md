@@ -6,6 +6,8 @@ Built and checked on 24 October 2026 by ChatGPT/Codex.
 
 Installer: `release/Cobble-Setup-0.2.0-x64.exe` (231,211,290 bytes).
 
+Hosted download: [Windows x64 installer](https://github.com/controlledai9-stack/COBBLE/releases/download/v0.2.0/Cobble-Setup-0.2.0-x64.exe), [checksum](https://github.com/controlledai9-stack/COBBLE/releases/download/v0.2.0/Cobble-Setup-0.2.0-x64.exe.sha256), and [GitHub release](https://github.com/controlledai9-stack/COBBLE/releases/tag/v0.2.0). The release is tied to build-source commit `ea9169c`; the later merged window adapter and robot sketches are not active in this installer.
+
 SHA-256: `8a8fb6ea3d8c7fd9ef1b503e4d5b503f6e3a4b1ef8f714631c8e3ed1b1087471`.
 
 This development installer is unsigned. It includes Electron/Node, app libraries, portable Git, the offline speech engine/model, editor VSIX and hook relay, licenses, and the Windows C++ runtime installer. No separate developer tools or model downloads are required for the installed app. A user's IDE and coding service are independently installed products.

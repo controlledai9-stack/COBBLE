@@ -20,6 +20,7 @@ import {
 import { AlertTriagePanel } from "./alert-triage";
 import { ProposalVoteView } from "./proposal-vote";
 import { OwnershipMapView } from "./ownership-map";
+import { TeamPanel } from "./team-panel";
 import { RevertDialog } from "./revert-dialog";
 import {
   IconHome,
@@ -43,7 +44,7 @@ import {
   IconMinimize,
   IconTrash,
 } from "./icons";
-import { PebbleAnimation } from "./pebble-animation";
+import { Pebble, PebbleMotionSettings } from "./cinematic-pebble";
 import { HostingPanel } from "./hosting-panel";
 import { ModalShell } from "./modal-shell";
 import { createBrowserMockApi } from "./browser-mock";
@@ -170,6 +171,12 @@ function App() {
     new URLSearchParams(location.search).get("view") === "companion";
   const isMiniChat =
     new URLSearchParams(location.search).get("view") === "mini-chat";
+  useEffect(() => {
+    if (companion || isMiniChat) return;
+    return window.cobble?.onTeamAttention?.((event) => {
+      setNotice(`Agent Team needs you: ${event.message}`);
+    });
+  }, [companion, isMiniChat]);
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const [workspaceModalMode, setWorkspaceModalMode] = useState<
     "create" | "join"
@@ -890,6 +897,8 @@ function App() {
                     Controls dock softly to the screen edge when idle. All
                     activity processing remains strictly local.
                   </p>
+                  <h3>Pebble animation</h3>
+                  <PebbleMotionSettings />
                   <h3>Local voice</h3>
                   <p className="small">
                     Cobble includes its own offline voice engine and speech
@@ -1806,6 +1815,7 @@ function Teams({
                 onError={onError}
                 notice={notice}
               />
+              <TeamPanel teamId={team.id} hasWorkspace={!!team.workspace} />
             </>
           )}
 
@@ -2244,33 +2254,17 @@ function Companion({
   onToggleTheme?: () => void;
 }) {
   const [mode, setMode] = useState<CompanionMode>("normal");
-  const [dragDirection, setDragDirection] = useState<"left" | "right">("right");
   const [menu, setMenu] = useState(false);
-  const [quietMode, setQuietMode] = useState(() => {
-    try {
-      return localStorage.getItem("cobble-pebble-quiet") === "true";
-    } catch {
-      return false;
-    }
-  });
-
-  const toggleQuietMode = () => {
-    setQuietMode((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("cobble-pebble-quiet", String(next));
-      } catch {}
-      return next;
-    });
-  };
-  const [art, setArt] = useState<Partial<Record<CompanionMode, string>>>({});
+  const [direction, setDirection] = useState<"left" | "right">("right");
+  const [greeting, setGreeting] = useState(0);
   const [bubbleText, setBubbleText] = useState<string | null>(null);
   const lastNoticeId = useRef<string | null>(null);
   const drag = useRef(false);
   const pointerId = useRef<number | null>(null);
   const origin = useRef({ x: 0, y: 0 });
+  const lastPoint = useRef({ x: 0, y: 0 });
   const grabAnchor = useRef<{
-    svg: SVGGraphicsElement;
+    element: HTMLElement;
     x: number;
     y: number;
   } | null>(null);
@@ -2278,10 +2272,12 @@ function Companion({
   const dragGeneration = useRef(0);
   const grabOffset = () => {
     const anchor = grabAnchor.current;
-    const matrix = anchor?.svg.getScreenCTM();
-    if (!anchor || !matrix) return undefined;
-    const point = new DOMPoint(anchor.x, anchor.y).matrixTransform(matrix);
-    return { x: point.x, y: point.y };
+    if (!anchor) return undefined;
+    const rect = anchor.element.getBoundingClientRect();
+    return {
+      x: rect.left + anchor.x * rect.width,
+      y: rect.top + anchor.y * rect.height,
+    };
   };
   const finishDrag = (sampleFinalPosition = false) => {
     if (pointerId.current === null) return;
@@ -2345,7 +2341,6 @@ function Companion({
   }, [state.notifications, quietMode]);
 
   useEffect(() => {
-    void window.cobble.artwork().then(setArt);
     return window.cobble.onCompanion((pose) => {
       setMode(pose);
       if (pose === "idle") setMenu(false);
@@ -2412,6 +2407,7 @@ function Companion({
             <option value="focused">Mark focused</option>
             <option value="away">Mark away</option>
           </select>
+          <PebbleMotionSettings />
           <button
             type="button"
             onClick={toggleQuietMode}
@@ -2446,9 +2442,13 @@ function Companion({
         </div>
       )}
       <button
-        className="companion-placeholder"
+        className="companion-placeholder companion-cinematic"
         aria-label={`Pebble companion avatar, ${mode}`}
-        onMouseEnter={() => void window.cobble.companion("pointer-on")}
+        aria-expanded={menu}
+        onMouseEnter={() => {
+          void window.cobble.companion("pointer-on");
+          if (mode === "idle") void window.cobble.companion("interact");
+        }}
         onMouseLeave={() => {
           if (!drag.current) void window.cobble.companion("pointer-off");
         }}
@@ -2458,18 +2458,14 @@ function Companion({
           dragGeneration.current++;
           e.currentTarget.setPointerCapture(e.pointerId);
           origin.current = { x: e.screenX, y: e.screenY };
+          lastPoint.current = origin.current;
           drag.current = false;
-          const svg =
-            e.currentTarget.querySelector<SVGGraphicsElement>(
-              ".pebble-main-pod",
-            ) ?? e.currentTarget.querySelector("svg");
-          const matrix = svg?.getScreenCTM();
-          if (svg && matrix) {
-            const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(
-              matrix.inverse(),
-            );
-            grabAnchor.current = { svg, x: point.x, y: point.y };
-          }
+          const rect = e.currentTarget.getBoundingClientRect();
+          grabAnchor.current = {
+            element: e.currentTarget,
+            x: (e.clientX - rect.left) / rect.width,
+            y: (e.clientY - rect.top) / rect.height,
+          };
           void window.cobble.companion("drag-start", {
             x: e.clientX,
             y: e.clientY,
@@ -2489,16 +2485,16 @@ function Companion({
           }
           const dx = e.screenX - origin.current.x;
           const dy = e.screenY - origin.current.y;
-          if (dx > 8) setDragDirection("right");
-          else if (dx < -8) setDragDirection("left");
           if (!drag.current && Math.hypot(dx, dy) > 3) {
             drag.current = true;
             setMode("dragging");
           }
           if (drag.current) {
+            const delta = e.screenX - lastPoint.current.x;
+            if (Math.abs(delta) > 2) setDirection(delta < 0 ? "left" : "right");
+            lastPoint.current = { x: e.screenX, y: e.screenY };
             // Native main-process coordinates are stable while the window moves.
-            // Keep the exact grabbed artwork point under the native cursor,
-            // including the existing normal-to-hanging pose transform.
+            // Keep the grabbed point on the fixed video canvas under the cursor.
             sampleDrag();
           }
         }}
@@ -2510,6 +2506,7 @@ function Companion({
             e.currentTarget.releasePointerCapture(e.pointerId);
           if (!wasDragging) {
             setMenu((open) => !open);
+            setGreeting((value) => value + 1);
             void window.cobble.companion("interact");
           }
           const rect = e.currentTarget.getBoundingClientRect();
@@ -2536,15 +2533,12 @@ function Companion({
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             setMenu(!menu);
+            setGreeting((value) => value + 1);
             void window.cobble.companion("interact");
           }
         }}
       >
-        <PebbleAnimation
-          mode={quietMode && mode !== "dragging" ? "idle" : mode}
-          direction={dragDirection}
-          attention={quietMode ? undefined : state.notifications?.[0]?.id}
-        />
+        <Pebble mode={mode} direction={direction} greeting={greeting} />
       </button>
     </div>
   );

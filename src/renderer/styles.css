@@ -2687,8 +2687,25 @@ footer span:last-child {
   }
 }
 
+.companion-cinematic {
+  width: 100px;
+  height: 100px;
+  flex: 0 0 100px;
+}
+
+.pebble-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
 .companion-menu {
   width: 240px;
+  max-height: calc(100vh - 12px);
+  overflow-y: auto;
   background: var(--surface-elevated);
   backdrop-filter: blur(40px) saturate(200%);
   -webkit-backdrop-filter: blur(40px) saturate(200%);

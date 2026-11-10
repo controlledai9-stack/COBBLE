@@ -25,6 +25,29 @@ const api: DesktopApi = {
   applyRevert: (id, token) =>
     ipcRenderer.invoke("cobble:apply-revert", id, token),
   integrateMain: (id) => ipcRenderer.invoke("cobble:integrate-main", id),
+  teamRoles: () => ipcRenderer.invoke("cobble:team-roles"),
+  setTeamRole: (role, agent) =>
+    ipcRenderer.invoke("cobble:team-set-role", role, agent),
+  detectTeamAgents: () => ipcRenderer.invoke("cobble:team-detect-agents"),
+  testTeamAgent: (agent) => ipcRenderer.invoke("cobble:team-test-agent", agent),
+  startTeamRun: (goal, budget, policy, options) =>
+    ipcRenderer.invoke("cobble:team-start-run", goal, budget, policy, options),
+  teamRuns: () => ipcRenderer.invoke("cobble:team-runs"),
+  teamRun: (runId) => ipcRenderer.invoke("cobble:team-run", runId),
+  teamCommand: (runId, command, taskId, note) =>
+    ipcRenderer.invoke("cobble:team-command", runId, command, taskId, note),
+  openTeamTerminal: (runId, taskId) =>
+    ipcRenderer.invoke("cobble:team-open-terminal", runId, taskId),
+  onTeam: (callback) => {
+    const listener = (_: unknown, runId: string | null) => callback(runId);
+    ipcRenderer.on("cobble:team", listener);
+    return () => ipcRenderer.removeListener("cobble:team", listener);
+  },
+  onTeamAttention: (callback) => {
+    const listener = (_: unknown, event: any) => callback(event);
+    ipcRenderer.on("cobble:team-attention", listener);
+    return () => ipcRenderer.removeListener("cobble:team-attention", listener);
+  },
   transcribe: (audio) => ipcRenderer.invoke("cobble:transcribe", audio),
   open: (tab, voice) => ipcRenderer.invoke("cobble:open", tab, voice),
   companion: (command, point) =>
