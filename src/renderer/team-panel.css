@@ -14,18 +14,29 @@
   margin: 0;
 }
 
-.agent-team-card,
+.agent-team-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
 .agent-team-column {
   min-width: 0;
   display: grid;
-  /* One shrinkable track, so wide <pre> blocks scroll instead of widening the card. */
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 0.65rem;
   padding: 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
 }
 
 .agent-team-heading,
@@ -110,13 +121,15 @@
   display: grid;
   gap: 0.75rem;
   margin: 0.5rem 0 0;
-  padding: 0.75rem;
+  padding: 0.85rem;
   border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
 }
 
 .agent-team button {
   justify-self: start;
+  transition: all 0.16s var(--ease-apple);
 }
 
 .agent-team details > summary {
@@ -125,22 +138,20 @@
 }
 
 .agent-team :is(button, summary, a, select, input, textarea):focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .agent-team-badge {
   display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-hover);
-  font-size: 0.8rem;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--secondary-bg);
+  color: var(--text-muted);
+  font-size: 11px;
   font-weight: 600;
-}
-
-.agent-team-column {
-  background: var(--surface-hover);
 }
 
 .agent-team-column h4 {
@@ -176,13 +187,17 @@
   /* Diff stats and test output keep their columns; scroll instead of wrapping. */
   white-space: pre;
   overflow-wrap: normal;
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
   max-height: 14rem;
   overflow: auto;
-  padding: 0.5rem;
+  padding: 10px 12px;
   margin: 0.45rem 0;
-  border-radius: 0.4rem;
-  background: var(--surface-hover);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  color: var(--code-text);
 }
 
 .agent-team-log {

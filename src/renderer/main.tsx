@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { version as appVersion } from "../../package.json";
 import type {
@@ -43,10 +43,13 @@ import {
   IconSettings,
   IconMinimize,
   IconTrash,
+  IconSearch,
 } from "./icons";
 import { Pebble, PebbleMotionSettings } from "./cinematic-pebble";
 import { HostingPanel } from "./hosting-panel";
 import { ModalShell } from "./modal-shell";
+import { CommandPalette } from "./command-palette";
+import { HudToast } from "./hud-toast";
 import { createBrowserMockApi } from "./browser-mock";
 import "./styles.css";
 import "./hosting-panel.css";
@@ -123,6 +126,62 @@ function App() {
   const [floatingChat, setFloatingChat] = useState(false);
   const [floatingChatMinimized, setFloatingChatMinimized] = useState(false);
   const [nativeChatOpen, setNativeChatOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [activityFilter, setActivityFilter] = useState<"all" | "alerts" | "saves">("all");
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isInput =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement;
+
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        toggleTheme();
+        return;
+      }
+
+      if (e.key === "Escape" && commandPaletteOpen) {
+        e.preventDefault();
+        setCommandPaletteOpen(false);
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && !isInput) {
+        if (e.key === "1") {
+          e.preventDefault();
+          setTab("Home");
+          setError("");
+        } else if (e.key === "2") {
+          e.preventDefault();
+          setTab("Chats");
+          setError("");
+        } else if (e.key === "3") {
+          e.preventDefault();
+          setTab("Teams");
+          setError("");
+        } else if (e.key === "4") {
+          e.preventDefault();
+          setTab("Invites");
+          setError("");
+        } else if (e.key === ",") {
+          e.preventDefault();
+          setTab("Profile");
+          setError("");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [commandPaletteOpen, toggleTheme]);
 
   useEffect(() => {
     const off = window.cobble?.onChatWindowState?.((value) => {
@@ -167,6 +226,12 @@ function App() {
   };
 
   const team = state?.teams.find((t) => t.id === state.activeTeamId);
+  const filteredActivities = useMemo(() => {
+    if (!state) return [];
+    if (activityFilter === "alerts") return state.activities.filter((a) => a.alert);
+    if (activityFilter === "saves") return state.activities.filter((a) => !a.alert);
+    return state.activities;
+  }, [state?.activities, activityFilter]);
   const companion =
     new URLSearchParams(location.search).get("view") === "companion";
   const isMiniChat =
@@ -383,6 +448,21 @@ function App() {
         <header className="topbar">
           <span>{team?.name ?? "No active workspace"}</span>
           <div className="topbar-actions">
+            <button
+              type="button"
+              className="quick-command-btn"
+              onClick={() => setCommandPaletteOpen(true)}
+              title="Open Spotlight Command Palette (Ctrl+K or ⌘K)"
+              aria-label="Open Command Palette"
+            >
+              <IconSearch />
+              <span className="quick-command-label">Search or Jump to…</span>
+              <kbd className="quick-command-kbd">
+                {typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
+                  ? "⌘K"
+                  : "Ctrl+K"}
+              </kbd>
+            </button>
             <button
               type="button"
               className="theme-toggle-btn"
@@ -644,7 +724,37 @@ function App() {
                     </div>
                   ) : (
                     <div>
-                      {state.activities.map((a) => (
+                      {state.activities.length > 1 && (
+                        <div className="activity-filter-bar">
+                          <button
+                            type="button"
+                            className={`activity-filter-chip ${activityFilter === "all" ? "selected" : ""}`}
+                            onClick={() => setActivityFilter("all")}
+                          >
+                            All ({state.activities.length})
+                          </button>
+                          <button
+                            type="button"
+                            className={`activity-filter-chip ${activityFilter === "alerts" ? "selected" : ""}`}
+                            onClick={() => setActivityFilter("alerts")}
+                          >
+                            Needs Review ({state.activities.filter((a) => a.alert).length})
+                          </button>
+                          <button
+                            type="button"
+                            className={`activity-filter-chip ${activityFilter === "saves" ? "selected" : ""}`}
+                            onClick={() => setActivityFilter("saves")}
+                          >
+                            Recorded ({state.activities.filter((a) => !a.alert).length})
+                          </button>
+                        </div>
+                      )}
+                      {filteredActivities.length === 0 ? (
+                        <div className="empty" style={{ padding: "28px 0" }}>
+                          <p className="small muted">No activity matches the selected filter.</p>
+                        </div>
+                      ) : (
+                        filteredActivities.map((a) => (
                         <article
                           className={`activity ${a.alert ? "needs-review" : ""}`}
                           key={a.id}
@@ -731,7 +841,7 @@ function App() {
                             )}
                           </div>
                         </article>
-                      ))}
+                      )))}
                     </div>
                   )}
                 </section>
@@ -943,6 +1053,46 @@ function App() {
           onPopOut={() => void openMiniChatWindow()}
         />
       )}
+
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        state={state}
+        currentTab={tab}
+        onSelectTab={(nextTab) => {
+          setTab(nextTab);
+          setError("");
+        }}
+        onSelectTeam={(teamId) => {
+          void act({ type: "selectTeam", teamId });
+        }}
+        onToggleTheme={toggleTheme}
+        theme={theme}
+        onScanWorkspace={() => void act({ type: "observe" })}
+        onTogglePause={() => void act({ type: "pause", paused: !state.paused })}
+        onSummonPebble={() => void window.cobble?.companion("show")}
+        onOpenWorkspaceModal={() => {
+          setWorkspaceModalMode("create");
+          setWorkspaceModalOpen(true);
+        }}
+        onOpenMiniChat={() => void openMiniChatWindow()}
+        onExportReport={async () => {
+          try {
+            const text = await window.cobble.report();
+            download("cobble-session.md", text);
+            setNotice("Session report exported successfully");
+          } catch (e) {
+            setError(message(e));
+          }
+        }}
+      />
+
+      <HudToast
+        error={error}
+        notice={notice}
+        onClearError={() => setError("")}
+        onClearNotice={() => setNotice("")}
+      />
     </div>
   );
 }
@@ -1790,7 +1940,21 @@ function Teams({
                   </form>
                 ) : (
                   <div className="plan-items">
-                    {team.items.map((item, index) => (
+                    {team.items
+                      .filter((item) => {
+                        const t = item.title.trim();
+                        if (!/[a-zA-Z0-9]/.test(t)) return false;
+                        if (/^[│|─┌┐└┘▼▲\s]+$/.test(t)) return false;
+                        if (
+                          /^(what are we building\?|which features do we need\?|what should stay out of scope\?|folder boundaries:?|strict boundary:?)/i.test(
+                            t,
+                          )
+                        )
+                          return false;
+                        if (t.length < 3 && !/^[A-Z0-9]{2,}$/.test(t)) return false;
+                        return true;
+                      })
+                      .map((item, index) => (
                       <div key={item.id}>
                         <span className="item-number">
                           {String(index + 1).padStart(2, "0")}
@@ -2257,6 +2421,23 @@ function Companion({
   const [menu, setMenu] = useState(false);
   const [direction, setDirection] = useState<"left" | "right">("right");
   const [greeting, setGreeting] = useState(0);
+  const [quietMode, setQuietMode] = useState(() => {
+    try {
+      return localStorage.getItem("cobble-pebble-quiet") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleQuietMode = () => {
+    setQuietMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("cobble-pebble-quiet", String(next));
+      } catch {}
+      return next;
+    });
+  };
   const [bubbleText, setBubbleText] = useState<string | null>(null);
   const lastNoticeId = useRef<string | null>(null);
   const drag = useRef(false);
