@@ -903,6 +903,10 @@ function App() {
                 onClearModal={() => setTeamModal(null)}
                 activeSubTab={teamSubTab}
                 onSubTabChange={setTeamSubTab}
+                onOpenWorkspaceModal={(mode) => {
+                  setWorkspaceModalMode(mode);
+                  setWorkspaceModalOpen(true);
+                }}
               />
             )}
             {tab === "Invites" && (
@@ -1382,6 +1386,7 @@ function Teams({
   onClearModal,
   activeSubTab,
   onSubTabChange,
+  onOpenWorkspaceModal,
 }: {
   state: AppState;
   act: (a: Action) => Promise<boolean>;
@@ -1392,6 +1397,7 @@ function Teams({
   onClearModal?: () => void;
   activeSubTab?: "plan" | "ownership" | "proposals" | "alerts";
   onSubTabChange?: (tab: "plan" | "ownership" | "proposals" | "alerts") => void;
+  onOpenWorkspaceModal?: (mode: "create" | "join") => void;
 }) {
   const team = state.teams.find((t) => t.id === state.activeTeamId);
   const [localModal, setLocalModal] = useState<
@@ -1445,7 +1451,12 @@ function Teams({
         <>
           <div className="inline section-actions">
             <button
+              type="button"
+              className={create ? "active" : ""}
               onClick={() => {
+                if (onOpenWorkspaceModal) {
+                  onOpenWorkspaceModal("create");
+                }
                 setCreate(true);
                 setJoin(false);
               }}
@@ -1454,8 +1465,12 @@ function Teams({
               <span>Create workspace</span>
             </button>
             <button
-              className="secondary"
+              type="button"
+              className={join ? "secondary active" : "secondary"}
               onClick={() => {
+                if (onOpenWorkspaceModal) {
+                  onOpenWorkspaceModal("join");
+                }
                 setJoin(true);
                 setCreate(false);
               }}
@@ -1463,7 +1478,6 @@ function Teams({
               Join existing team
             </button>
           </div>
-          <IdeConnections state={state} notice={notice} />
           {create && (
             <section className="panel">
               <h2>Create a shared workspace</h2>
@@ -1562,6 +1576,7 @@ function Teams({
               <p className="small">{state.network.state}</p>
             </section>
           )}
+          <IdeConnections state={state} notice={notice} />
         </>
       )}
 
