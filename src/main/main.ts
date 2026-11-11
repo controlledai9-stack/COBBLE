@@ -536,6 +536,13 @@ else {
       handle("team-run", (_, runId: unknown) =>
         service.teamRun(text(runId, 64)),
       );
+      handle("agent-room", () => service.agentRoom());
+      handle("agent-room-chat", (_, runId: unknown) =>
+        service.agentRoomChat(text(runId, 100)),
+      );
+      handle("agent-room-say", (_, runId: unknown, message: unknown) =>
+        service.sayInAgentRoom(text(runId, 100), text(message, 4_000)),
+      );
       handle("team-chat", (_, runId: unknown) =>
         service.teamChat(text(runId, 64)),
       );

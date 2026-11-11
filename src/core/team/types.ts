@@ -281,6 +281,8 @@ export interface TeamChatMessage {
   taskId?: string;
   /** For a user message: who it was addressed to, e.g. "planner" or "T2". */
   to?: string;
+  /** Shared rooms: the person who wrote a "user" message (owner or teammate). */
+  memberName?: string;
   kind:
     | "message"
     | "delegate"

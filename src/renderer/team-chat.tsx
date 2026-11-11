@@ -28,14 +28,14 @@ function describeError(error: unknown) {
   );
 }
 
-function author(message: TeamChatMessage) {
-  if (message.author === "user") return "You";
+export function author(message: TeamChatMessage) {
+  if (message.author === "user") return message.memberName ?? "You";
   if (message.author === "cobble") return "Cobble";
   const name = message.agent ? agentNames[message.agent] : "Agent";
   return `${name} · ${message.role ?? "agent"}${message.taskId && message.role !== "planner" ? ` · ${message.taskId}` : ""}`;
 }
 
-function tone(message: TeamChatMessage) {
+export function tone(message: TeamChatMessage) {
   if (message.author === "user") return "user";
   if (message.author === "agent") return "agent";
   if (message.kind === "drift") return "warn";

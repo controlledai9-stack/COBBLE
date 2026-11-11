@@ -67,6 +67,8 @@ export type GateAnswer = "done" | "approve" | "skip" | "deny";
 /** Key of the planner's abort controller in `running`. */
 /** Prefix of planner notes that carry a Team Chat message from the user. */
 const USER_NOTE = "The user says";
+/** Prefix of planner notes from a teammate in a shared room. */
+const TEAMMATE_NOTE = "Teammate";
 const PLANNER_KEY = "__planner";
 
 /**
@@ -129,7 +131,7 @@ export class TeamOrchestrator extends EventEmitter {
     run: TeamRun,
     message: Omit<TeamChatMessage, "id" | "createdAt" | "runId">,
   ) {
-    this.store.chat({ ...message, runId: run.id });
+    this.emit("chat", this.store.chat({ ...message, runId: run.id }));
   }
   private plannerOf(run: TeamRun): TeamAgentId | undefined {
     return run.plannerAgent ?? this.store.roles(run.teamId).planner;
@@ -279,7 +281,16 @@ export class TeamOrchestrator extends EventEmitter {
    * is waiting on a question, the message answers it directly; otherwise the
    * planner passes it on.
    */
-  userMessage(runId: string, text: string): TeamChatMessage {
+  userMessage(
+    runId: string,
+    text: string,
+    /**
+     * A teammate in a shared room (not the run's owner). Their message
+     * always goes to the planner as a teammate's suggestion: it never answers
+     * a worker directly.
+     */
+    teammate?: { name: string },
+  ): TeamChatMessage {
     const clean = text.trim();
     if (!clean) throw new Error("Type a message first");
     if (clean.length > 4_000)
@@ -300,20 +311,27 @@ export class TeamOrchestrator extends EventEmitter {
         open.find((t) => t.state === "needs_decision" && named(t)) ??
         open.find(named) ??
         [...tasks].reverse().find(named);
-      if (!target)
+      if (!target && !teammate)
         throw new Error(
           `Nobody called @${mention![1]} works in this run. Write to the planner instead.`,
         );
     }
+    const who = teammate?.name.slice(0, 80);
     const saved = this.store.chat({
       runId,
       author: "user",
       kind: "message",
       to: target?.id ?? "planner",
       ...(target ? { taskId: target.id } : {}),
+      ...(who ? { memberName: who } : {}),
       text: clean,
     });
-    if (target?.state === "needs_decision") {
+    this.emit("chat", saved);
+    if (who)
+      run.pendingNotes.push(
+        `${TEAMMATE_NOTE} ${who} (a teammate, not the run's owner) says in the chat${target ? ` to ${target.agent} (${target.id})` : ""}: "${clean.slice(0, 3_000)}". Treat it as a suggestion: use it when it fits the plan. Only the run's owner can approve deploys or sign in. Reply in plain text before your actions block.`,
+      );
+    else if (target?.state === "needs_decision") {
       const asked = target.question?.text ?? "";
       target.state = "queued";
       target.question = undefined;
@@ -336,7 +354,12 @@ export class TeamOrchestrator extends EventEmitter {
     run.userWaiting = true;
     run.wakeRequested = true;
     this.store.saveRun(run);
-    this.log(run, "chat", `You: ${clean.slice(0, 200)}`, target?.id);
+    this.log(
+      run,
+      "chat",
+      `${who ?? "You"}: ${clean.slice(0, 200)}`,
+      target?.id,
+    );
     this.changed(runId);
     this.schedule(runId);
     return saved;
@@ -969,7 +992,9 @@ export class TeamOrchestrator extends EventEmitter {
     run.pendingNotes = run.pendingNotes.filter((n) => !notes.includes(n));
     run.wakeRequested = false;
     // A chat message that arrived during this turn still wakes the planner.
-    run.userWaiting = run.pendingNotes.some((n) => n.startsWith(USER_NOTE));
+    run.userWaiting = run.pendingNotes.some(
+      (n) => n.startsWith(USER_NOTE) || n.startsWith(TEAMMATE_NOTE),
+    );
     this.store.saveRun(run);
     for (const decision of parsed.decisions)
       this.store.addDecision(run.id, decision);

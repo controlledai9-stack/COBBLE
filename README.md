@@ -162,6 +162,15 @@ The Agent Team panel opens on **Team Chat**, one conversation per run. Type what
 - `@codex …`, `@coder …` or `@T2 …` addresses one agent's task. If that agent is waiting on a question, your message answers it directly. Otherwise the planner passes it on.
 - `team chat [RUN_ID]` prints the chat in the terminal.
 
+### Team room: several people, each with their own agents
+
+When the workspace is hosted or joined (Workspace & Plan → Workspace & Hosting), every member's Cobble shares its agents and runs over the team's existing encrypted connection. Each person brings their own agents: subscriptions, API keys or free local models.
+
+- **Team room** under the Team Chat lists each member's ready agents and roles, plus teammates' runs with their live chat.
+- You can write into a teammate's run. Their planner gets it as a teammate's suggestion and decides how to use it.
+- Only the run's owner can answer their workers directly, approve deploys or complete sign-ins. The host checks every shared event and records who sent it from the authenticated connection.
+- Coming next: the planner on one PC hands tasks to agents on other PCs.
+
 ### Without an AI subscription: API and free models
 
 Two team members need no coding-agent subscription. They work through Cobble's own file tools, which stay inside the task's worktree and never touch `.git` or secret files. Commands run only for roles with full access.

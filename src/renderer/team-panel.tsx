@@ -1,4 +1,5 @@
 import { TeamChat } from "./team-chat";
+import { TeamRoom } from "./team-room";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentDetection,
@@ -304,6 +305,18 @@ function TeamPanelContent({
               })
             }
             onChanged={() => void refreshRuns()}
+          />
+        )}
+      {typeof window.cobble?.agentRoom === "function" &&
+        typeof window.cobble?.agentRoomChat === "function" &&
+        typeof window.cobble?.sayInAgentRoom === "function" && (
+          <TeamRoom
+            api={{
+              agentRoom: window.cobble.agentRoom,
+              agentRoomChat: window.cobble.agentRoomChat,
+              sayInAgentRoom: window.cobble.sayInAgentRoom,
+              onChange: window.cobble.onChange,
+            }}
           />
         )}
       <section className="agent-team-card">

@@ -195,3 +195,84 @@ test("Team Chat renders agents' light Markdown safely", async () => {
   assert.match(html, /Done &lt;script&gt;/);
   assert.doesNotMatch(html, /<script>/);
 });
+
+test("Team room shows teammates' agents and runs, and explains sharing", async () => {
+  const { TeamRoom } = await import("../src/renderer/team-room");
+  const api = {
+    agentRoom: async () => ({ shared: true, roster: [], runs: [] }),
+    agentRoomChat: async () => [],
+    sayInAgentRoom: async () => ({ shared: true, roster: [], runs: [] }),
+    onChange: () => () => {},
+  };
+  const shared = renderToStaticMarkup(
+    React.createElement(TeamRoom, {
+      api,
+      initial: {
+        shared: true,
+        roster: [
+          {
+            memberId: "a",
+            memberName: "Aarya",
+            agents: [{ agent: "claude", installed: true }],
+            roles: { planner: "claude" },
+            updatedAt: at(0),
+          },
+          {
+            memberId: "r",
+            memberName: "Rahul",
+            agents: [
+              { agent: "free", installed: true },
+              { agent: "codex", installed: false },
+            ],
+            roles: {},
+            updatedAt: at(0),
+          },
+        ],
+        runs: [
+          {
+            id: "run1",
+            ownerId: "r",
+            ownerName: "Rahul",
+            goal: "Build the API",
+            state: "running",
+            updatedAt: at(1),
+          },
+        ],
+      },
+      initialChat: [
+        {
+          id: "c1",
+          runId: "run1",
+          author: "user",
+          memberName: "Rahul",
+          kind: "message",
+          text: "Build the API",
+          createdAt: at(1),
+        },
+      ],
+    }),
+  );
+  for (const text of [
+    "Shared with your teammates",
+    "Aarya",
+    "planner: Claude",
+    "Free model",
+    "Rahul: Build the API (running)",
+    "Suggest something to Rahul&#x27;s planner",
+    "Only Rahul can approve",
+  ])
+    assert.ok(shared.includes(text), `missing ${text}`);
+  assert.doesNotMatch(
+    shared,
+    /Codex/,
+    "agents that are not installed are not listed",
+  );
+  const local = renderToStaticMarkup(
+    React.createElement(TeamRoom, {
+      api,
+      initial: { shared: false, roster: [], runs: [] },
+    }),
+  );
+  assert.match(local, /Only on this computer/);
+  assert.match(local, /Host or join this workspace/);
+});

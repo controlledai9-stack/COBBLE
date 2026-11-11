@@ -1,3 +1,4 @@
+import { AgentRoom, type RoomPost, type RoomSay } from "./team/room";
 import { createServer, request, Agent, type Server } from "node:https";
 import type { ClientRequest } from "node:http";
 import type { TLSSocket } from "node:tls";
@@ -48,6 +49,10 @@ interface Session {
 }
 export class TeamNetwork {
   readonly hosting: HostCoordinator;
+  /** Shared agent room (rosters, runs, Team Chat) on this team's sync log. */
+  readonly room: AgentRoom;
+  /** Called when a teammate writes into a run (the owner's Cobble acts on it). */
+  onRoomSay?: (teamId: string, say: RoomSay) => void;
   private collaboration: Collaboration;
   server?: Server;
   state: AppState["network"] = {
@@ -99,6 +104,7 @@ export class TeamNetwork {
     )
       throw new Error("Network deadline may only tighten the 12-second limit");
     this.collaboration = new Collaboration(store);
+    this.room = new AgentRoom(store);
     this.hosting = new HostCoordinator(
       store,
       {
@@ -506,6 +512,10 @@ export class TeamNetwork {
                   : this.collaboration.vote(team.id, member, body);
             this.changed();
             return json(res, 200, { received: true, result });
+          }
+          if (req.method === "POST" && url.pathname === "/agent-room") {
+            this.acceptRoom(team.id, member.id, await readBody());
+            return json(res, 200, { ok: true });
           }
           if (req.method === "POST" && url.pathname === "/chat") {
             const body = await readBody();
@@ -1163,6 +1173,7 @@ export class TeamNetwork {
             "receipts",
             "owner-team",
             "owner-admin",
+            "agent-room",
           ].includes(row.kind)
         )
           throw Object.assign(new Error("Unsupported queued event"), {
@@ -1672,6 +1683,40 @@ export class TeamNetwork {
     });
     if (!authorizedManager) this.changed();
   }
+  /** Team this Cobble currently shares with others (hosting or joined). */
+  sharedTeamId(): string | null {
+    if (this.state.role === "host") return this.activeHostId ?? null;
+    if (this.state.role === "client") return this.session?.teamId ?? null;
+    return null;
+  }
+  /** Host side: validate, store and append an agent room event. */
+  private acceptRoom(teamId: string, memberId: string, body: unknown) {
+    const { kind, data } = this.room.accept(teamId, memberId, body);
+    let fresh = false;
+    this.store.transaction(() => {
+      fresh = this.room.apply(teamId, kind, data);
+      if (fresh) this.store.appendSync(teamId, kind, data);
+    });
+    if (fresh && kind === "agent-say")
+      this.onRoomSay?.(teamId, data as RoomSay);
+    if (fresh) this.changed();
+  }
+  /**
+   * Shares a roster, run, chat message or teammate message with the team.
+   * No-op when this Cobble is not hosting or joined to `teamId`.
+   */
+  async publishRoom(teamId: string, post: RoomPost) {
+    if (this.sharedTeamId() !== teamId) return false;
+    if (this.state.role === "host" && !this.hosting.frozen) {
+      this.acceptRoom(teamId, this.store.profile()!.id, post);
+      return true;
+    }
+    this.store.db
+      .prepare("INSERT INTO outbox VALUES(?,?,?,?)")
+      .run(randomUUID(), teamId, "agent-room", JSON.stringify(post));
+    await this.tick();
+    return true;
+  }
   async publish(kind: "chat" | "activity", data: ChatMessage | Activity) {
     if (this.state.role === "host" && !this.hosting.frozen) {
       this.store.transaction(() => {
@@ -1839,6 +1884,7 @@ export class TeamNetwork {
               "ballot",
               "owner-team",
               "owner-admin",
+              "agent-room",
             ].includes(row.kind)
           )
             throw new Error("Invalid queued event type");
@@ -1898,6 +1944,7 @@ export class TeamNetwork {
         if (generation !== this.generation) return;
         const local = this.store.team(s.teamId);
         catchingUp = result.more === true;
+        const says: RoomSay[] = [];
         this.store.transaction(() => {
           const pendingOwnerUpdate = this.store.db
             .prepare(
@@ -1916,7 +1963,13 @@ export class TeamNetwork {
               this.store.putInvite(s.teamId, invite);
           for (const event of result.events) {
             const data = JSON.parse(event.data);
-            if (event.kind === "chat") {
+            if (event.kind.startsWith("agent-")) {
+              if (
+                this.room.apply(s.teamId, event.kind, data) &&
+                event.kind === "agent-say"
+              )
+                says.push(data as RoomSay);
+            } else if (event.kind === "chat") {
               this.store.db
                 .prepare("INSERT OR REPLACE INTO messages VALUES(?,?,?)")
                 .run(data.id, s.teamId, JSON.stringify(data));
@@ -1977,6 +2030,7 @@ export class TeamNetwork {
           s.cursor = result.cursor;
           this.saveSession(s);
         });
+        for (const say of says) this.onRoomSay?.(s.teamId, say);
         this.state.state = "Connected to host";
         await this.hosting.clientTick(result.hostControl);
       }

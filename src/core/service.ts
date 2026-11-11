@@ -61,6 +61,7 @@ import {
   type ApprovalPolicy,
   type TeamAgentId,
   type TeamBudget,
+  type TeamChatMessage,
   type TeamRole,
   type TeamRun,
 } from "./team/types";
@@ -318,6 +319,128 @@ export class CobbleService extends EventEmitter {
       secrets.unprotect,
       options.measureCapacity,
     );
+    // Shared agent room: share this Cobble's runs and act on teammates' messages.
+    this.network.onRoomSay = (teamId, say) => {
+      const run = this.teamStore.run(say.runId);
+      if (!run || run.teamId !== teamId) return; // not my run
+      try {
+        this.agentTeam.userMessage(run.id, say.text, { name: say.fromName });
+      } catch (error) {
+        this.emit(
+          "diagnostic",
+          `Teammate message not delivered: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    };
+    this.agentTeam.on("chat", (message: TeamChatMessage) => {
+      const run = this.teamStore.run(message.runId);
+      if (!run) return;
+      this.shareRoom(run.teamId, async () => {
+        await this.shareRun(run.id);
+        await this.network.publishRoom(run.teamId, {
+          type: "chat",
+          runId: run.id,
+          message,
+        });
+      });
+    });
+    this.agentTeam.on("update", (runId: string) => {
+      const run = runId ? this.teamStore.run(runId) : null;
+      if (run) this.shareRoom(run.teamId, () => this.shareRun(run.id));
+    });
+  }
+  /** Room posts go out one at a time, in order. */
+  private roomQueue: Promise<unknown> = Promise.resolve();
+  private sharedRunStates = new Map<string, string>();
+  private shareRoom(teamId: string, task: () => Promise<unknown>) {
+    if (this.network.sharedTeamId() !== teamId) return;
+    this.roomQueue = this.roomQueue
+      .then(task)
+      .catch((error) =>
+        this.emit(
+          "diagnostic",
+          `Agent room: ${error instanceof Error ? error.message : error}`,
+        ),
+      );
+  }
+  private async shareRun(runId: string) {
+    const run = this.teamStore.run(runId);
+    if (!run || this.sharedRunStates.get(run.id) === run.state) return;
+    this.sharedRunStates.set(run.id, run.state);
+    await this.network.publishRoom(run.teamId, {
+      type: "run",
+      run: {
+        id: run.id,
+        goal: run.goal.slice(0, 4_000),
+        state: run.state,
+        updatedAt: run.updatedAt,
+      },
+    });
+  }
+  /** Shares this member's agents and roles with the team (shared teams only). */
+  private shareRoster(detections: AgentDetection[]) {
+    const team = this.activeTeam();
+    if (!team) return;
+    const roles = this.teamStore.roles(team.id);
+    this.shareRoom(team.id, () =>
+      this.network.publishRoom(team.id, {
+        type: "roster",
+        agents: detections.map((d) => ({
+          agent: d.agent,
+          installed: d.installed,
+          ...(d.version ? { version: d.version } : {}),
+        })),
+        roles: roles as Record<string, string>,
+      }),
+    );
+  }
+  /** The shared agent room of the active team. */
+  agentRoom() {
+    const team = this.activeTeam();
+    const me = this.store.profile()?.id;
+    if (!team) return { shared: false, roster: [], runs: [] };
+    const roster = this.network.room.roster(team.id);
+    // Joined after detecting agents: share this member's roster once.
+    if (
+      this.lastDetection &&
+      this.network.sharedTeamId() === team.id &&
+      !roster.some((r) => r.memberId === me)
+    )
+      this.shareRoster(this.lastDetection);
+    return {
+      shared: this.network.sharedTeamId() === team.id,
+      roster,
+      // Other members' runs; your own runs are in your Team Chat.
+      runs: this.network.room.runs(team.id).filter((r) => r.ownerId !== me),
+    };
+  }
+  agentRoomChat(runId: string) {
+    const team = this.activeTeam();
+    if (!team || !this.network.room.run(team.id, runId))
+      throw new Error("Unknown shared run");
+    return this.network.room.chat(team.id, runId);
+  }
+  /** Writes into a teammate's run; their planner reads it as a suggestion. */
+  async sayInAgentRoom(runId: string, text: string) {
+    const team = this.activeTeam();
+    if (!team || this.network.sharedTeamId() !== team.id)
+      throw new Error("Host or join this team to talk in teammates' runs");
+    const run = this.network.room.run(team.id, runId);
+    if (!run) throw new Error("Unknown shared run");
+    if (run.ownerId === this.store.profile()?.id)
+      throw new Error("Use your own Team Chat for your runs");
+    if (["done", "failed", "stopped"].includes(run.state))
+      throw new Error("That run has ended");
+    const clean = String(text ?? "").trim();
+    if (!clean || clean.length > 4_000)
+      throw new Error("Messages must be 1-4000 characters");
+    await this.network.publishRoom(team.id, {
+      type: "say",
+      id: randomUUID(),
+      runId,
+      text: clean,
+    });
+    return this.agentRoom();
   }
   async start() {
     // Runs left "running" by a previous process are paused, never relaunched.
@@ -1712,6 +1835,7 @@ export class CobbleService extends EventEmitter {
       agent as TeamAgentId | null,
     );
     this.emit("team", null);
+    if (this.lastDetection) this.shareRoster(this.lastDetection);
     return this.teamRoles();
   }
   /** Settings for the API-model workers (Claude API model, free/local model). */
@@ -1739,8 +1863,14 @@ export class CobbleService extends EventEmitter {
     }));
   }
   async detectTeamAgents(): Promise<AgentDetection[]> {
-    return Promise.all(TEAM_AGENTS.map((id) => this.teamAdapters[id].detect()));
+    const found = await Promise.all(
+      TEAM_AGENTS.map((id) => this.teamAdapters[id].detect()),
+    );
+    this.lastDetection = found;
+    this.shareRoster(found);
+    return found;
   }
+  private lastDetection?: AgentDetection[];
   /** Sends a one-line prompt to an agent to prove headless mode and sign-in. */
   async testTeamAgent(agent: string) {
     if (!TEAM_AGENTS.includes(agent as TeamAgentId))

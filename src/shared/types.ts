@@ -1,5 +1,14 @@
 import type { PhoneNotifyView } from "../core/team/notify";
 export type { PhoneNotifyView } from "../core/team/notify";
+import type { RoomRoster, RoomRun } from "../core/team/room";
+export type { RoomRoster, RoomRun } from "../core/team/room";
+export interface AgentRoomView {
+  /** This Cobble is hosting or joined to the active team. */
+  shared: boolean;
+  roster: RoomRoster[];
+  /** Other members' runs (your own are in your Team Chat). */
+  runs: RoomRun[];
+}
 import type {
   AgentDetection,
   ApprovalPolicy,
@@ -590,6 +599,10 @@ export interface DesktopApi {
   autopilotStatus?(): Promise<AutopilotStatus>;
   teamRuns?(): Promise<TeamRun[]>;
   teamRun?(runId: string): Promise<RunSnapshot>;
+  /** Shared agent room of a hosted/joined team: members' agents and runs. */
+  agentRoom?(): Promise<AgentRoomView>;
+  agentRoomChat?(runId: string): Promise<TeamChatMessage[]>;
+  sayInAgentRoom?(runId: string, message: string): Promise<AgentRoomView>;
   /** Team Chat of a run, oldest first. */
   teamChat?(runId: string): Promise<TeamChatMessage[]>;
   /** Sends a chat message; with no run (or an ended one) it starts a new run. */
