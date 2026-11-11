@@ -1,11 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-function cli(data: string, args: string[]) {
+function cli(data: string, args: string[], env?: NodeJS.ProcessEnv) {
   const result = spawnSync(
     process.execPath,
     ["--import", "tsx", "src/cli.ts", "--data", data, ...args],
@@ -14,7 +20,7 @@ function cli(data: string, args: string[]) {
       input: "",
       encoding: "utf8",
       timeout: 60_000,
-      env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      env: env ?? { ...process.env, NODE_NO_WARNINGS: "1" },
     },
   );
   assert.ifError(result.error);
@@ -108,3 +114,60 @@ for (const command of ["run", "resume", "autopilot"]) {
     }
   }
 }
+
+test("documented team detect, roles and status work on an isolated --data database without invoking agents", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cobble-cli-team-"));
+  try {
+    const data = join(dir, "test.db");
+    const workspace = join(dir, "workspace");
+    mkdirSync(workspace);
+    const emptyBin = join(dir, "empty-bin");
+    mkdirSync(emptyBin);
+    const plan = join(dir, "plan.md");
+    writeFileSync(plan, "Build a shared board\n");
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) {
+      if (key.toLowerCase() === "path") delete env[key];
+    }
+    env.PATH = emptyBin;
+    env.NODE_NO_WARNINGS = "1";
+
+    const init = cli(
+      data,
+      [
+        "init",
+        "--name",
+        "T",
+        "--display-name",
+        "Tester",
+        "--plan-file",
+        plan,
+        "--workspace",
+        workspace,
+      ],
+      env,
+    );
+    assert.equal(init.status, 0, init.stderr);
+
+    const detect = cli(data, ["team", "detect"], env);
+    assert.equal(detect.status, 0, detect.stderr);
+    const agents = JSON.parse(detect.stdout);
+    assert.ok(Array.isArray(agents));
+    assert.ok(agents.some((entry) => entry.agent === "claude"));
+    assert.ok(agents.some((entry) => entry.agent === "codex"));
+    for (const entry of agents) {
+      assert.deepEqual(entry, { agent: entry.agent, installed: false });
+    }
+
+    const roles = cli(data, ["team", "roles"], env);
+    assert.equal(roles.status, 0, roles.stderr);
+    assert.deepEqual(JSON.parse(roles.stdout), {});
+
+    const status = cli(data, ["team", "status"], env);
+    assert.equal(status.status, 0, status.stderr);
+    assert.equal(status.stdout.trim(), "No team runs yet.");
+    assert.ok(existsSync(data));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

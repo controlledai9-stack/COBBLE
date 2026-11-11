@@ -97,6 +97,61 @@ Without name/plan flags, init prompts interactively. Finish a multiline plan wit
 
 The default desktop/CLI database is `%APPDATA%\cobble\cobble.sqlite`; CLI `--data PATH` isolates a database. Reports go to `.cobble/reports/` in the watched project. Do not run multiple independent watchers against the same database; use desktop monitoring or a CLI ingest workflow. Source snapshots are stored locally for comparison, with private/dependency/generated paths excluded and file/byte caps recorded as coverage gaps.
 
+## Agent Team CLI
+
+`--data PATH` uses a separate SQLite database. The default is `%APPDATA%\cobble\cobble.sqlite` on Windows (`~/.config/cobble/cobble.sqlite` otherwise, when `APPDATA` is unset). Create a plan file first, then initialize an isolated trial:
+
+```powershell
+npm run cli -- --data .\.cobble\team-trial.sqlite init --name "Trial" --display-name "Me" --plan-file .\plan.md --workspace C:\projects\my-app
+```
+
+`--display-name` is only needed when that database has no profile yet. Pass the same `--data` on every later command, as below. Do not run `team run` while the desktop app is open on the same data.
+
+Detect lists agent CLIs and checks installed versions; it only runs `<cli> --version` for CLIs found on PATH. The optional `team test AGENT` performs a one-line headless round trip and **does call the agent**.
+
+```powershell
+npm run cli -- --data .\.cobble\team-trial.sqlite team detect
+npm run cli -- --data .\.cobble\team-trial.sqlite team test claude
+npm run cli -- --data .\.cobble\team-trial.sqlite team roles
+npm run cli -- --data .\.cobble\team-trial.sqlite team role planner claude
+npm run cli -- --data .\.cobble\team-trial.sqlite team role coder codex
+```
+
+`team role ROLE AGENT|none` assigns or clears a role. `team backup` lists backup agents; `team backup ROLE AGENT|none` sets or clears the backup used when a role's agent hits a usage limit. `team access` lists roles with **FULL ACCESS (no agent sandbox)**; `team access ROLE...` sets those roles and `team access none` clears them.
+
+```powershell
+npm run cli -- --data .\.cobble\team-trial.sqlite team backup
+npm run cli -- --data .\.cobble\team-trial.sqlite team backup coder claude
+npm run cli -- --data .\.cobble\team-trial.sqlite team access
+npm run cli -- --data .\.cobble\team-trial.sqlite team access coder deployer
+npm run cli -- --data .\.cobble\team-trial.sqlite team access none
+```
+
+Phone alerts use ntfy: `team notify status|on|off|test|new-topic|server URL` shows settings, toggles alerts, sends a test, regenerates the topic, or sets the server.
+
+```powershell
+npm run cli -- --data .\.cobble\team-trial.sqlite team notify status
+```
+
+Runs require a planner and at least one worker role (coder, generator, reviewer or deployer); all assigned agents must have installed CLIs. Run syntax is `team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"] [--base BRANCH] [--share-deps]`. Budgets are whole numbers: `--max-tasks` 1-100 and `--max-turns` 1-50. `--base` selects the starting branch; `--share-deps` links the workspace's existing, git-ignored `node_modules` into task worktrees.
+
+```powershell
+npm run cli -- --data .\.cobble\team-trial.sqlite team run "Build the next plan item" --max-tasks 5 --max-turns 10 --check "npm test"
+npm run cli -- --data .\.cobble\team-trial.sqlite team resume
+npm run cli -- --data .\.cobble\team-trial.sqlite team stop
+npm run cli -- --data .\.cobble\team-trial.sqlite team status
+```
+
+`team resume [RUN_ID] [--max-turns N]` resumes the latest or specified run and can raise its turn budget. `team stop [RUN_ID]` stops it, keeping branches. `team status [RUN_ID]` prints the latest or specified run as JSON. With no runs, `team status` and `team stop` print `No team runs yet.`
+
+Autopilot works through Markdown checklist items such as `- [ ] Add X` on `cobble/autopilot`, created from the current HEAD if absent. The backlog must be a Git-tracked, regular `.md` file inside that branch's worktree, with no links or junctions anywhere in its path; commit it on that branch before running. Syntax: `team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps] [--base BRANCH]`. `--max-runs` accepts whole numbers 1-20 (default 3). Autopilot also accepts `--max-tasks N` and `--max-turns N` per run, with the same ranges as `team run`. Although the CLI accepts `--base`, autopilot always starts each item from `cobble/autopilot`.
+
+```powershell
+npm run cli -- --data .\.cobble\team-trial.sqlite team autopilot --backlog docs/BACKLOG.md --max-runs 3 --check "npm test" --share-deps
+```
+
+`team decisions [forget]` shows or forgets project decisions saved from intake interviews.
+
 ## Verify
 
 ```powershell
