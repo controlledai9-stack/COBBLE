@@ -22,6 +22,8 @@ export type PlannerAction =
   | { type: "set_brief"; content: string }
   | { type: "answer"; taskId: string; answer: string }
   | { type: "merge_task"; taskId: string }
+  /** Accept a task the worker reported as failed when Cobble's check passed. */
+  | { type: "accept_task"; taskId: string; why: string }
   | { type: "ask_human"; kind: HumanGateKind; message: string }
   /** Intake interview: several questions for the user, answered together. */
   | { type: "ask_user"; intro: string; questions: UserQuestion[] }
@@ -293,6 +295,17 @@ export function parsePlannerReply(
         if (!knownTaskIds.has(taskId))
           throw new Error(`${at} merges unknown or unfinished task ${taskId}`);
         actions.push({ type: "merge_task", taskId });
+        break;
+      }
+      case "accept_task": {
+        const taskId = text(a.taskId, `${at}.taskId`, 32);
+        if (!knownTaskIds.has(taskId))
+          throw new Error(`${at} accepts unknown task ${taskId}`);
+        actions.push({
+          type: "accept_task",
+          taskId,
+          why: text(a.why, `${at}.why`, ACTION_LIMITS.decisionField),
+        });
         break;
       }
       case "ask_user": {

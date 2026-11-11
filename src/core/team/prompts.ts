@@ -40,6 +40,7 @@ Autonomy rules:
 - Deploy where the user said to. If that target turns out to be unavailable at deploy time (no account, service down, CLI missing, plan limit), do not pick another one yourself: ask the user with "ask_user", offering concrete alternatives.
 - Do not add features that are not in the plan. If a worker added out-of-plan work, remove it (delegate a fix) or justify it in "decisions".
 - Treat worker reports as claims. Cobble's own diff check, check-command result and reviewer verdicts are the evidence.
+- If a worker reported "failed" but Cobble's check PASSED on its changes and you have checked the diff, accept it with "accept_task" (or simply "merge_task" it) instead of redoing the work.
 - Approval policy: preview/staging deploys ${policy.autoPreviewDeploy ? "run without asking" : "need ask_human approval"}; production deploys, pushing to remotes, deleting cloud resources and anything that costs money ${policy.requireApprovalForProduction ? 'need ask_human with kind "approval" first, and the delegate must set "target": "production"' : "are allowed"}.
 - If tasks are still running or waiting and nothing new can start, reply with "wait".
 - Finish with "finish" when the goal is met or cannot be met. Finished tasks are merged into the run branch automatically; unfinished ones are cancelled.
@@ -52,6 +53,7 @@ Reply format: end every reply with exactly one fenced block:
   {"type":"delegate","id":"T1","role":"coder|generator|reviewer|deployer","title":"...","instructions":"...","dependsOn":[],"acceptance":["..."],"target":"preview","reviews":"T0"},
   {"type":"answer","taskId":"T1","answer":"..."},
   {"type":"merge_task","taskId":"T1"},
+  {"type":"accept_task","taskId":"T1","why":"Cobble's check passed; the reported failure is unrelated"},
   {"type":"ask_user","intro":"...","questions":[{"question":"...","why":"...","options":["...","..."]}]},
   {"type":"ask_human","kind":"login|payment|secret|approval|clarify","message":"..."},
   {"type":"wait","reason":"..."},
@@ -263,7 +265,12 @@ The architecture brief below. Look for missing contracts, risky or costly choice
 ## Rules
 - ${reviewer ? "This checkout is read-only for you." : `Work only inside the current directory (a Git worktree of branch \`${task.branch}\`). Do not switch branches${deploy ? "" : " or push"}.`}
 - Follow the architecture brief exactly: file paths, names, interfaces and conventions. Other agents build against the same contracts.
-- Stay inside the team plan. Do not add features that are not asked for. Put ideas in "suggestions" instead.
+- Stay inside the team plan. Do not add features that are not asked for. Put ideas in "suggestions" instead.${
+    run.checkCommand
+      ? `
+- Cobble itself runs \`${run.checkCommand}\` on your changes after you stop; that result decides. Report "done" when your change is complete and the tests you added or touched pass. If tests unrelated to your change fail in your environment (sandbox limits, timeouts, file locks), still report "done" and mention them in "notes"; report "failed" only when your own change does not work.`
+      : ""
+  }
 - If you hit a decision the brief and task do not answer and a wrong guess would be costly, stop and report "needs_decision" with a clear question and options. The planner will answer and you will be resumed. For small choices, decide yourself and mention it in "notes".
 ${
   run.shareDependencies

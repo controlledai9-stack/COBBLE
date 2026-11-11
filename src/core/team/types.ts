@@ -145,6 +145,8 @@ export interface TeamTask {
   delivered?: boolean;
   /** Set when the user cleared this task's gate; sent to the resumed agent. */
   resumeNote?: string;
+  /** The planner accepted it although the worker reported failure (check passed). */
+  accepted?: boolean;
   /** Agent that started the task before a usage limit moved it to a backup. */
   switchedFrom?: TeamAgentId;
   /** Production deploy explicitly approved by the user for this task only. */

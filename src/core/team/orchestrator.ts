@@ -443,6 +443,39 @@ export class TeamOrchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * Why a failed task may not be accepted, or null when it may: it must be a
+   * writing task whose changes passed Cobble's own check command, with no
+   * plan-drift alert. The worker's own verdict is only a claim.
+   */
+  private acceptRefusal(task: TeamTask): string | null {
+    if (task.state !== "failed") return "it is not a failed task";
+    if (!WRITING_ROLES.has(task.role)) return "it made no file changes";
+    if (!task.check) return "Cobble ran no check on its changes";
+    if (!task.check.passed) return "Cobble's check failed on its changes";
+    if (task.drift?.alert) return "its changes raised a plan-drift alert";
+    return null;
+  }
+
+  private acceptTask(run: TeamRun, task: TeamTask, why: string) {
+    const reported = task.error;
+    task.state = "done";
+    task.accepted = true;
+    task.error = undefined;
+    this.store.saveTask(task);
+    this.store.addDecision(run.id, {
+      question: `${task.id}: the worker reported failure${reported ? ` (${reported.slice(0, 300)})` : ""}, but Cobble's check passed. Accept it?`,
+      choice: "Accept",
+      why: why.slice(0, 1_000),
+    });
+    this.log(
+      run,
+      "task",
+      `${task.id} accepted: Cobble's check passed`,
+      task.id,
+    );
+  }
+
   /** True when another Cobble process holds a live lease on this run. */
   private leasedElsewhere(run: TeamRun) {
     return (
@@ -962,13 +995,36 @@ export class TeamOrchestrator extends EventEmitter {
         );
         return;
       }
+      case "accept_task": {
+        const task = this.store
+          .tasks(run.id)
+          .find((t) => t.id === action.taskId);
+        const refusal = task ? this.acceptRefusal(task) : "it does not exist";
+        if (refusal) {
+          run.pendingNotes.push(`Cannot accept ${action.taskId}: ${refusal}.`);
+          run.wakeRequested = true;
+          this.store.saveRun(run);
+          return;
+        }
+        this.acceptTask(run, task!, action.why);
+        return;
+      }
       case "merge_task": {
         const task = this.store
           .tasks(run.id)
           .find((t) => t.id === action.taskId);
         let note: string | null = null;
+        // A task the worker called "failed" but whose changes passed Cobble's
+        // own check is accepted on merge (live autopilot runs 1 and 4: Codex
+        // reported failures from its sandbox while the real check passed).
+        if (task && task.state === "failed" && !this.acceptRefusal(task))
+          this.acceptTask(
+            run,
+            task,
+            "merged by the planner; Cobble's check passed",
+          );
         if (!task || task.state !== "done")
-          note = `Cannot merge ${action.taskId}: it is not done.`;
+          note = `Cannot merge ${action.taskId}: it is not done${task?.state === "failed" ? ` (${this.acceptRefusal(task)})` : ""}.`;
         else if (!WRITING_ROLES.has(task.role))
           note = `${task.id} made no file changes to merge.`;
         else if (task.merged) return;
