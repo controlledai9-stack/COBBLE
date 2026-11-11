@@ -179,3 +179,19 @@ test("Team Chat without a run starts one, or explains what is missing", () => {
   assert.match(questions, /Answer them in the/);
   assert.doesNotMatch(questions, />Approve</);
 });
+
+test("Team Chat renders agents' light Markdown safely", async () => {
+  const { ChatText } = await import("../src/renderer/team-chat");
+  const html = renderToStaticMarkup(
+    React.createElement(ChatText, {
+      text: "Plan for **truncate**:\n- cut at a `space`\n- cap at max\n\nDone <script>alert(1)</script>",
+    }),
+  );
+  assert.match(html, /<strong>truncate<\/strong>/);
+  assert.match(
+    html,
+    /<ul class="agent-team-chat-bullets"><li>cut at a <code>space<\/code><\/li><li>cap at max<\/li><\/ul>/,
+  );
+  assert.match(html, /Done &lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+});

@@ -322,3 +322,24 @@
   resize: vertical;
   min-height: 2.6rem;
 }
+
+.agent-team-chat-run {
+  min-width: 0;
+  flex: 1 1 12rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.agent-team-chat-body {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.agent-team-chat-bullets {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.2rem;
+}

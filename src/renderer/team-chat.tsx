@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type {
   DesktopApi,
   RunSnapshot,
@@ -45,6 +45,72 @@ function tone(message: TeamChatMessage) {
 }
 
 const ENDED = ["done", "failed", "stopped"];
+
+/** **bold** and `code` inside one line, as React nodes (never raw HTML). */
+function inline(text: string) {
+  return text
+    .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+    .map((part, i) =>
+      part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
+        <strong key={i}>{part.slice(2, -2)}</strong>
+      ) : part.startsWith("`") && part.endsWith("`") && part.length > 2 ? (
+        <code key={i}>{part.slice(1, -1)}</code>
+      ) : (
+        part
+      ),
+    );
+}
+
+/**
+ * Agents write a little Markdown: paragraphs, "- " bullet lists, **bold**
+ * and `code`. Rendered as plain elements; anything else stays text.
+ */
+export function ChatText({ text }: { text: string }) {
+  const blocks: React.ReactNode[] = [];
+  let bullets: string[] = [];
+  let lines: string[] = [];
+  const flush = () => {
+    if (lines.length)
+      blocks.push(
+        <p key={blocks.length} className="agent-team-text">
+          {lines.map((line, i) => (
+            <span key={i}>
+              {i > 0 && <br />}
+              {inline(line)}
+            </span>
+          ))}
+        </p>,
+      );
+    if (bullets.length)
+      blocks.push(
+        <ul key={blocks.length} className="agent-team-chat-bullets">
+          {bullets.map((item, i) => (
+            <li key={i}>{inline(item)}</li>
+          ))}
+        </ul>,
+      );
+    lines = [];
+    bullets = [];
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    const bullet = raw.match(/^\s*[-*] (.*)$/);
+    if (bullet) {
+      if (lines.length) {
+        const keep = bullets;
+        bullets = [];
+        flush();
+        bullets = keep;
+      }
+      bullets.push(bullet[1]!);
+    } else if (!raw.trim()) flush();
+    else {
+      if (bullets.length) flush();
+      lines.push(raw);
+    }
+  }
+  flush();
+  return <div className="agent-team-chat-body">{blocks}</div>;
+}
 
 /**
  * Team Chat: one conversation per run. You write to the planner (or
@@ -139,8 +205,8 @@ export function TeamChat({
       <div className="agent-team-heading">
         <h3 id="agent-team-chat-heading">Team Chat</h3>
         {run && (
-          <span className="small">
-            {live ? "Current run" : "Last run"}: {run.goal.slice(0, 60)}
+          <span className="small agent-team-chat-run" title={run.goal}>
+            {live ? "Current run" : "Last run"}: {run.goal}
           </span>
         )}
       </div>
@@ -170,7 +236,7 @@ export function TeamChat({
                 })}
               </time>
             </div>
-            <p className="agent-team-text">{message.text}</p>
+            <ChatText text={message.text} />
           </li>
         ))}
       </ol>

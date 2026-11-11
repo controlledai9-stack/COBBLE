@@ -252,7 +252,7 @@ async function teamCommand(
     if (!run) return console.log("No team runs yet.");
     for (const m of service.teamChat(run))
       console.log(
-        `[${m.createdAt.slice(11, 19)}] ${m.author === "user" ? "You" : m.author === "cobble" ? "Cobble" : `${m.agent ?? "agent"} (${m.role ?? ""})`}: ${m.text}`,
+        `[${new Date(m.createdAt).toLocaleTimeString()}] ${m.author === "user" ? "You" : m.author === "cobble" ? "Cobble" : `${m.agent ?? "agent"} (${m.role ?? ""})`}: ${m.text}`,
       );
     return;
   }
