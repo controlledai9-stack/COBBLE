@@ -710,6 +710,136 @@ test("failed dependency cancels dependents; retries are bounded; stop and restar
   }
 });
 
+test("service start() recovers an interrupted run: task interrupted, run paused, agent relaunches only on resume", async () => {
+  const { CobbleService } = await import("../src/core/service");
+  const { setTimeout: delay } = await import("node:timers/promises");
+  const r = repo();
+  const db = join(r.root, "cobble.sqlite");
+  const finish = () => ({
+    finalText: actions({ actions: [{ type: "finish", summary: "Recovered" }] }),
+  });
+  const plannerA = fake("claude", (_input, call) =>
+    call === 1
+      ? {
+          finalText: actions({
+            actions: [
+              {
+                type: "delegate",
+                id: "T1",
+                role: "coder",
+                title: "Recover task",
+                instructions: "Write a done report",
+              },
+            ],
+          }),
+        }
+      : finish(),
+  );
+  const coderA = fake("codex", async (input) => {
+    assert.ok(input.signal);
+    await new Promise<void>((resolve) => {
+      if (input.signal!.aborted) resolve();
+      else
+        input.signal!.addEventListener("abort", () => resolve(), {
+          once: true,
+        });
+    });
+    return { exitCode: 1 };
+  });
+  const a = new CobbleService(db, undefined, {
+    teamWorktreeRoot: r.trees,
+    teamAdapters: {
+      claude: plannerA.adapter,
+      codex: coderA.adapter,
+      gemini: fake("gemini", () => ({})).adapter,
+    },
+  });
+  let b: InstanceType<typeof CobbleService> | undefined;
+  const waitFor = async (condition: () => boolean) => {
+    const signal = AbortSignal.timeout(10_000);
+    while (!condition()) await delay(10, undefined, { signal });
+  };
+  try {
+    a.store.saveProfile("Owner", "");
+    const team = a.store.createTeam("Team", "Recover task", r.work);
+    a.teamStore.setRole(team.id, "planner", "claude");
+    a.teamStore.setRole(team.id, "coder", "codex");
+    const run = await a.startTeamRun("Recover task");
+    await waitFor(() => coderA.calls.length === 1);
+    assert.equal(a.teamRun(run.id).tasks[0].state, "running");
+    await a.close();
+
+    const plannerB = fake("claude", finish);
+    const coderB = fake("codex", (input) => {
+      writeReport(input.cwd, { status: "done", summary: "Recovered" });
+      return {};
+    });
+    const reopened = new CobbleService(db, undefined, {
+      teamWorktreeRoot: r.trees,
+      teamAdapters: {
+        claude: plannerB.adapter,
+        codex: coderB.adapter,
+        gemini: fake("gemini", () => ({})).adapter,
+      },
+    });
+    b = reopened;
+    // close() recovers gracefully; restore the state left by a process crash.
+    const crash = reopened.teamRun(run.id);
+    const task = crash.tasks.find((task) => task.id === "T1")!;
+    reopened.teamStore.saveTask({
+      ...task,
+      state: "running",
+      error: undefined,
+    });
+    reopened.teamStore.saveRun({
+      ...crash.run,
+      state: "running",
+      pausedReason: undefined,
+      ownerId: undefined,
+      ownerSeen: undefined,
+    });
+    const before = reopened.teamRun(run.id);
+    assert.equal(
+      before.tasks.find((task) => task.id === "T1")!.state,
+      "running",
+    );
+    assert.equal(before.run.state, "running");
+    assert.equal(before.run.ownerId, undefined);
+    assert.equal(before.run.ownerSeen, undefined);
+
+    await reopened.start();
+    await reopened.agentTeam.idle(run.id);
+    const recovered = reopened.teamRun(run.id);
+    assert.equal(
+      recovered.tasks.find((task) => task.id === "T1")!.state,
+      "interrupted",
+    );
+    assert.equal(recovered.run.state, "paused");
+    assert.match(recovered.run.pausedReason!, /restart/i);
+    assert.equal(coderB.calls.length, 0);
+
+    await reopened.teamRunCommand(run.id, "resume");
+    await waitFor(() => reopened.teamRun(run.id).run.state === "done");
+    assert.equal(coderB.calls.length, 1);
+    assert.equal(
+      reopened.teamRun(run.id).tasks.find((task) => task.id === "T1")!.state,
+      "done",
+    );
+    assert.equal(plannerB.calls.length, 1);
+  } finally {
+    try {
+      await b?.close();
+    } finally {
+      await a.close();
+      try {
+        rmSync(r.root, { recursive: true, force: true });
+      } catch {
+        /* Windows file locks */
+      }
+    }
+  }
+});
+
 test("runs require a planner, a worker role and a git workspace", async () => {
   const f = setup(() => ({}), {}, { planner: "claude" });
   try {
