@@ -43,6 +43,7 @@ import {
 } from "./icons";
 import { Pebble, PebbleMotionSettings } from "./cinematic-pebble";
 import { HostingPanel } from "./hosting-panel";
+import { MonitoringStatusPanel } from "./monitoring-status";
 import { ModalShell } from "./modal-shell";
 import "./styles.css";
 import "./hosting-panel.css";
@@ -673,22 +674,14 @@ function App() {
                       <IconArrowRight />
                     </button>
                   </section>
-                  <section className="panel">
-                    <span className="eyebrow">OBSERVATION COVERAGE</span>
-                    {state.coverage.map((c) => (
-                      <p className="small" key={c}>
-                        {c}
-                      </p>
-                    ))}
-                    <button
-                      className="text-button"
-                      onClick={() =>
-                        void act({ type: "pause", paused: !state.paused })
-                      }
-                    >
-                      {state.paused ? "Resume watching" : "Pause watching"}
-                    </button>
-                  </section>
+                  <MonitoringStatusPanel
+                    coverage={state.coverage}
+                    monitoring={state.monitoring}
+                    paused={state.paused}
+                    onTogglePause={() =>
+                      void act({ type: "pause", paused: !state.paused })
+                    }
+                  />
                 </div>
                 {/* Collaboration panel moved to Teams */}
               </>
