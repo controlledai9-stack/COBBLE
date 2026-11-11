@@ -280,7 +280,10 @@ function TeamPanelContent({
 
   return (
     <section className="panel agent-team" aria-labelledby="agent-team-heading">
-      <h2 id="agent-team-heading">Agent Team</h2>
+      {/* The page title already says "Agent Team"; keep the heading for screen readers. */}
+      <h2 id="agent-team-heading" className="cobble-sr-only">
+        Agent Team
+      </h2>
       {typeof window.cobble?.teamChat === "function" &&
         typeof window.cobble?.sendTeamChat === "function" && (
           <TeamChat

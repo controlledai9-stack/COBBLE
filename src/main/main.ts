@@ -701,9 +701,11 @@ else {
         }
         return artwork;
       });
-      handle("open", (_, tab: Tab = "Home", voice = false) => {
+      handle("open", (_, tab: Tab = "Agents", voice = false) => {
         if (
-          !["Home", "Chats", "Teams", "Invites", "Profile"].includes(tab) ||
+          !["Agents", "Home", "Chats", "Teams", "Invites", "Profile"].includes(
+            tab,
+          ) ||
           typeof voice !== "boolean"
         )
           throw new Error("Unknown navigation");

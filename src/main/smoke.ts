@@ -109,9 +109,20 @@ export async function runSmoke(
     ),
   );
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[2].click()`,
+    `document.querySelectorAll('nav button')[3].click()`,
   );
   await wait('document.body.innerText.includes("The core plan")');
+  // The Agent Team is its own page now (the app opens on it).
+  assert.equal(
+    await main.webContents.executeJavaScript(
+      "!!document.querySelector('#agent-team-chat-heading')",
+    ),
+    false,
+  );
+  await main.webContents.executeJavaScript(
+    `document.querySelectorAll('nav button')[0].click()`,
+  );
+  await wait('!!document.querySelector("#agent-team-chat-heading")');
   await wait('!!document.querySelector("#agent-team-autopilot-heading")');
   assert.deepEqual(
     await main.webContents.executeJavaScript(`(() => {
@@ -136,6 +147,11 @@ export async function runSmoke(
     ),
     /Share node_modules must be a boolean/,
   );
+  // Back to Workspace & Plan for the plan and work-area checks.
+  await main.webContents.executeJavaScript(
+    `document.querySelectorAll('nav button')[3].click()`,
+  );
+  await wait('document.body.innerText.includes("The core plan")');
   assert.equal(
     await main.webContents.executeJavaScript(
       'document.querySelectorAll(".plan-items > div").length',
@@ -146,7 +162,7 @@ export async function runSmoke(
     await main.webContents.executeJavaScript(
       'document.querySelectorAll("nav button").length',
     ),
-    4,
+    5,
   );
   const fill = async (selector: string, value: string) =>
     main.webContents.executeJavaScript(
@@ -175,7 +191,7 @@ export async function runSmoke(
   });
   assert.equal(service.activeTeam()!.graph!.contracts.length, 1);
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[2].click()`,
+    `document.querySelectorAll('nav button')[3].click()`,
   );
   await wait(
     "!!document.querySelector('form[aria-label=\"Mark completed work\"]')",
@@ -220,7 +236,7 @@ export async function runSmoke(
     `window.cobble.action({type:'send',recipientId:null,content:'Starting with the shared task board.',sentVia:'text'})`,
   );
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[1].click()`,
+    `document.querySelectorAll('nav button')[2].click()`,
   );
   await wait('!!document.querySelector(".bubble")');
   assert.equal(
@@ -294,7 +310,7 @@ export async function runSmoke(
   assert.equal(service.state().analysis!.semanticReview, false);
   assert.equal(service.state().activities[0].alert, true);
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[0].click()`,
+    `document.querySelectorAll('nav button')[1].click()`,
   );
   await wait('!!document.querySelector(".needs-review")');
   await main.webContents.executeJavaScript(
@@ -332,7 +348,7 @@ export async function runSmoke(
   assert.equal(paired.status, 200);
   await wait("/IDE (linked|connected)/.test(document.body.innerText)");
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[2].click()`,
+    `document.querySelectorAll('nav button')[3].click()`,
   );
   const second = await fetch(`http://127.0.0.1:${service.bridge.port}/ide`, {
     method: "POST",
@@ -354,7 +370,7 @@ export async function runSmoke(
   assert.equal(service.bridge.current.connections?.length, 2);
   await screenshot(main, "smoke-ides.png");
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[0].click()`,
+    `document.querySelectorAll('nav button')[1].click()`,
   );
   await companion.webContents.executeJavaScript(
     `window.cobble.companion('drag-start')`,
@@ -378,7 +394,7 @@ export async function runSmoke(
   await new Promise((resolve) => setTimeout(resolve, 300));
   await screenshot(main, "smoke-home.png");
   await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[2].click()`,
+    `document.querySelectorAll('nav button')[3].click()`,
   );
   await wait('!!document.querySelector(".plan-items")');
   await new Promise((resolve) => setTimeout(resolve, 300));

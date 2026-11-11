@@ -29,7 +29,7 @@ export type {
 export type Availability = "available" | "focused" | "away";
 export type CompanionMode = "normal" | "idle" | "dragging";
 export type Classification = "covered" | "required" | "uncertain" | "extra";
-export type Tab = "Home" | "Chats" | "Teams" | "Invites" | "Profile";
+export type Tab = "Agents" | "Home" | "Chats" | "Teams" | "Invites" | "Profile";
 export interface AutopilotOptions {
   backlogPath?: string;
   maxRuns?: number;

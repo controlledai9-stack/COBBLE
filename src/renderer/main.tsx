@@ -20,6 +20,7 @@ import {
 import { TeamPanel } from "./team-panel";
 import { RevertDialog } from "./revert-dialog";
 import {
+  IconAgents,
   IconHome,
   IconChats,
   IconTeams,
@@ -53,7 +54,8 @@ declare global {
   }
 }
 const navTabs: { tab: Tab; label: string; icon: React.ReactNode }[] = [
-  { tab: "Home", label: "Overview", icon: <IconHome /> },
+  { tab: "Agents", label: "Agent Team", icon: <IconAgents /> },
+  { tab: "Home", label: "Plan Guard", icon: <IconHome /> },
   { tab: "Chats", label: "Discussions", icon: <IconChats /> },
   { tab: "Teams", label: "Workspace & Plan", icon: <IconTeams /> },
   { tab: "Invites", label: "Join Requests", icon: <IconInvites /> },
@@ -99,7 +101,7 @@ function App() {
   };
 
   const [state, setState] = useState<AppState | null>(null);
-  const [tab, setTab] = useState<Tab>("Home");
+  const [tab, setTab] = useState<Tab>("Agents");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -419,7 +421,8 @@ function App() {
                 <span className="eyebrow">
                   {
                     {
-                      Home: "WORKSPACE SIGNALS",
+                      Agents: "MULTI-AGENT WORKSPACE",
+                      Home: "PLAN GUARD",
                       Chats: "TEAM COMMUNICATOR",
                       Teams: "COLLECTIVE DIRECTION",
                       Invites: "ACCESS REQUESTS",
@@ -430,7 +433,8 @@ function App() {
                 <h1>
                   {
                     {
-                      Home: "Overview",
+                      Agents: "Agent Team",
+                      Home: "Plan Guard",
                       Chats: "Discussions",
                       Teams: "Workspace & Plan",
                       Invites: "Join Requests",
@@ -441,7 +445,9 @@ function App() {
                 <p>
                   {
                     {
-                      Home: "Track live progress, saved file changes, and plan alignment in real time.",
+                      Agents:
+                        "Give your AI agents a goal. The planner splits the work, the agents build and test it, and Cobble checks it against your plan.",
+                      Home: "Checks saved changes and agent work against your plan in real time.",
                       Chats:
                         "Direct and team sync with local offline voice transcription.",
                       Teams:
@@ -693,6 +699,21 @@ function App() {
                 onError={setError}
               />
             )}
+            {tab === "Agents" &&
+              (team ? (
+                <TeamPanel teamId={team.id} hasWorkspace={!!team.workspace} />
+              ) : (
+                <section className="panel">
+                  <h2>Start with a project</h2>
+                  <p>
+                    Create a workspace with your plan and project folder. Then
+                    assign your agents and tell the team what to build.
+                  </p>
+                  <button onClick={() => setTab("Teams")}>
+                    Create or join a workspace
+                  </button>
+                </section>
+              ))}
             {tab === "Teams" && (
               <Teams
                 state={state}
@@ -1568,7 +1589,6 @@ function Teams({
           <WorkAreas state={state} act={act} />
           <CollaborationPanel state={state} act={act} onError={onError} />
           <AgentConnections state={state} onError={onError} notice={notice} />
-          <TeamPanel teamId={team.id} hasWorkspace={!!team.workspace} />
         </>
       )}
     </>
