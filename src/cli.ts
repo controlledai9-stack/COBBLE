@@ -16,6 +16,7 @@ async function main() {
       workspace: { type: "string" },
       file: { type: "string" },
       stdin: { type: "boolean" },
+      json: { type: "boolean" },
       "from-transcript": { type: "boolean" },
       "max-tasks": { type: "string" },
       "max-turns": { type: "string" },
@@ -51,6 +52,7 @@ async function main() {
   cobble team backup [ROLE AGENT|none] backup agent used when a role's agent hits a usage limit
   cobble team decisions [forget]      project decisions saved from intake interviews
   cobble team status [RUN_ID]
+  cobble team runs [--json]          recent Agent Team runs, newest first
 
 Do not run "team run" while the desktop app is open on the same data.
 Optional: --data PATH uses an isolated SQLite database.
@@ -255,6 +257,25 @@ async function teamCommand(
     throw new Error(
       "Usage: cobble team notify status|on|off|test|new-topic|server URL",
     );
+  }
+  if (sub === "runs") {
+    const runs = service.teamRuns();
+    const list = runs.map((run) => ({
+      id: run.id,
+      state: run.state,
+      goal: run.goal,
+      branch: run.runBranch,
+      updatedAt: run.updatedAt,
+    }));
+    if (values.json) return print(list);
+    if (!list.length) return console.log("No team runs yet.");
+    for (const { id, state, goal, branch, updatedAt } of list) {
+      const collapsed = goal.replace(/\s+/g, " ").trim();
+      const summary =
+        collapsed.length > 80 ? `${collapsed.slice(0, 77)}...` : collapsed;
+      console.log(`${id}  ${state}  ${updatedAt}  ${branch}  ${summary}`);
+    }
+    return;
   }
   if (sub === "stop") {
     const id = rest[0] ?? service.teamRuns()[0]?.id;
