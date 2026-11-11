@@ -4,6 +4,7 @@ import { readdir, open, lstat, realpath } from "node:fs/promises";
 import { resolve, relative, sep, isAbsolute } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { Change, MonitoringStatus } from "../shared/types";
+import { COVERAGE_BASELINE_NOTE } from "../shared/monitoring";
 const exec = promisify(execFile);
 const ignored =
   /(^|\/)(\.git|\.cobble|\.claude|\.cursor|\.gemini|node_modules|dist|build|coverage|\.env(?:\.[^/]*)?|\.aws|\.ssh|\.codex)(\/|$)|\.(?:(?:sqlite|db)(?:-(?:wal|shm|journal))?|pem|key|pfx|png|jpe?g|gif|webp|zip|exe|dll|pdf|mp[34]|wav|webm|lock)$/i;
@@ -221,10 +222,10 @@ export class Observer {
     }
   }
   private finish(result: Map<string, string>, scan: Scan, start: number) {
-    scan.coverage = [
-      "Saved text files only; unsaved buffers are not observed.",
-      ...new Set(scan.coverage),
-    ].slice(0, 25);
+    scan.coverage = [COVERAGE_BASELINE_NOTE, ...new Set(scan.coverage)].slice(
+      0,
+      25,
+    );
     scan.metrics.durationMs = performance.now() - start;
     this.scans.set(result, scan);
     this.coverage = scan.coverage;
