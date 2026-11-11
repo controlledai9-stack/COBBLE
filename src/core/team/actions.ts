@@ -445,3 +445,18 @@ export function parseTaskReport(
     return null;
   }
 }
+
+/**
+ * The planner's words for the Team Chat: its reply without the
+ * cobble-actions / cobble-report blocks. A reply that is only JSON has none.
+ */
+export function plannerProse(reply: string): string {
+  let text = reply;
+  for (const tag of ["cobble-actions", "cobble-report"]) {
+    const at = text.indexOf("```" + tag);
+    if (at >= 0) text = text.slice(0, at);
+  }
+  text = text.trim();
+  if (text.startsWith("{") || text.startsWith("[")) return "";
+  return text.slice(0, 4_000);
+}

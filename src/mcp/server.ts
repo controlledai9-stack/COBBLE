@@ -270,6 +270,18 @@ async function call(
       })),
       decisions: snap.decisions.slice(-20),
       events: snap.events.slice(-50),
+      chat: service
+        .teamChat(id)
+        .slice(-30)
+        .map((m) => ({
+          author: m.author,
+          agent: m.agent,
+          role: m.role,
+          taskId: m.taskId,
+          kind: m.kind,
+          text: m.text,
+          at: m.createdAt,
+        })),
     };
   }
   if (name === "cobble_answer_questions") {

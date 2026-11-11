@@ -58,6 +58,7 @@ async function main() {
       gemini, openrouter, groq or custom (URL); e.g. team model free ollama qwen3-coder
   cobble team status [RUN_ID]
   cobble team runs [--json]          recent Agent Team runs, newest first
+  cobble team chat [RUN_ID]          the run's Team Chat (you, the agents, Cobble's checks)
 
 Do not run "team run" while the desktop app is open on the same data.
 Optional: --data PATH uses an isolated SQLite database.
@@ -244,6 +245,16 @@ async function teamCommand(
     // `team access deployer coder` | `team access none` | `team access`
     if (!rest.length) return print(service.teamFullAccess());
     return print(service.setTeamFullAccess(rest[0] === "none" ? [] : rest));
+  }
+  if (sub === "chat") {
+    // `team chat [RUN_ID]`: the run's Team Chat (read-only here; write in the app).
+    const run = rest[0] ?? service.teamRuns()[0]?.id;
+    if (!run) return console.log("No team runs yet.");
+    for (const m of service.teamChat(run))
+      console.log(
+        `[${m.createdAt.slice(11, 19)}] ${m.author === "user" ? "You" : m.author === "cobble" ? "Cobble" : `${m.agent ?? "agent"} (${m.role ?? ""})`}: ${m.text}`,
+      );
+    return;
   }
   if (sub === "model") {
     // `team model` | `team model claude claude-opus-5-5 high` |

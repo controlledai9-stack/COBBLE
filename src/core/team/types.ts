@@ -238,6 +238,8 @@ export interface TeamRun {
   pendingNotes: string[];
   /** Set when the planner must be woken even without finished tasks. */
   wakeRequested: boolean;
+  /** A Team Chat message waits for the planner (wakes it even mid-work). */
+  userWaiting?: boolean;
   /** Workspace the run was started for; worktrees branch from its repo. */
   workspace: string;
   /** Lease: the Cobble process currently driving this run, and when it last confirmed. */
@@ -265,6 +267,31 @@ export interface TeamEvent {
   taskId?: string;
   kind: string;
   message: string;
+  createdAt: string;
+}
+
+/** One message in a run's Team Chat. */
+export interface TeamChatMessage {
+  id: string;
+  runId: string;
+  /** user: you; agent: a team member; cobble: checks, plan guard, gates. */
+  author: "user" | "agent" | "cobble";
+  agent?: TeamAgentId;
+  role?: TeamRole;
+  taskId?: string;
+  /** For a user message: who it was addressed to, e.g. "planner" or "T2". */
+  to?: string;
+  kind:
+    | "message"
+    | "delegate"
+    | "question"
+    | "answer"
+    | "report"
+    | "check"
+    | "drift"
+    | "gate"
+    | "finish";
+  text: string;
   createdAt: string;
 }
 

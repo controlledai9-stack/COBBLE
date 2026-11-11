@@ -15,6 +15,7 @@ import {
   reportFromReply,
   parsePlannerReply,
   parseTaskReport,
+  plannerProse,
   type PlannerAction,
 } from "./actions";
 import {
@@ -39,6 +40,7 @@ import {
   TERMINAL_TASK_STATES,
   WRITING_ROLES,
   type ApprovalPolicy,
+  type TeamChatMessage,
   type HumanGateKind,
   type RunSnapshot,
   type TeamAgentId,
@@ -63,6 +65,8 @@ export interface OrchestratorOptions {
 
 export type GateAnswer = "done" | "approve" | "skip" | "deny";
 /** Key of the planner's abort controller in `running`. */
+/** Prefix of planner notes that carry a Team Chat message from the user. */
+const USER_NOTE = "The user says";
 const PLANNER_KEY = "__planner";
 
 /**
@@ -119,6 +123,16 @@ export class TeamOrchestrator extends EventEmitter {
   }
   private log(run: TeamRun, kind: string, message: string, taskId?: string) {
     this.store.event(run.id, kind, message, taskId);
+  }
+  /** Posts to the run's Team Chat. */
+  private say(
+    run: TeamRun,
+    message: Omit<TeamChatMessage, "id" | "createdAt" | "runId">,
+  ) {
+    this.store.chat({ ...message, runId: run.id });
+  }
+  private plannerOf(run: TeamRun): TeamAgentId | undefined {
+    return run.plannerAgent ?? this.store.roles(run.teamId).planner;
   }
   private changed(runId: string) {
     this.emit("update", runId);
@@ -243,6 +257,12 @@ export class TeamOrchestrator extends EventEmitter {
     };
     this.store.saveRun(run);
     this.log(run, "run", `Run started: ${cleanGoal.slice(0, 200)}`);
+    this.say(run, {
+      author: "user",
+      kind: "message",
+      to: "planner",
+      text: cleanGoal,
+    });
     this.store.prune(teamId);
     this.schedule(id);
     return run;
@@ -250,6 +270,76 @@ export class TeamOrchestrator extends EventEmitter {
 
   snapshot(runId: string): RunSnapshot | null {
     return this.store.snapshot(runId);
+  }
+
+  /**
+   * A message the user typed in the Team Chat. Plain text goes to the
+   * planner, which wakes up for it even while workers are busy.
+   * "@codex ..." / "@coder ..." / "@T2 ..." is addressed to that task: if it
+   * is waiting on a question, the message answers it directly; otherwise the
+   * planner passes it on.
+   */
+  userMessage(runId: string, text: string): TeamChatMessage {
+    const clean = text.trim();
+    if (!clean) throw new Error("Type a message first");
+    if (clean.length > 4_000)
+      throw new Error("Messages can be at most 4000 characters");
+    const run = this.require(runId);
+    if (["done", "failed", "stopped"].includes(run.state))
+      throw new Error("This run has ended. Start a new run to continue.");
+    const mention = clean.match(/^@([\w-]{1,40})[\s,:]+([\s\S]+)$/);
+    const name = mention?.[1]!.toLowerCase();
+    const body = mention ? mention[2]!.trim() : clean;
+    let target: TeamTask | undefined;
+    if (name && name !== "planner") {
+      const tasks = this.store.tasks(runId);
+      const open = tasks.filter((t) => !TERMINAL_TASK_STATES.has(t.state));
+      const named = (t: TeamTask) => t.agent === name || t.role === name;
+      target =
+        tasks.find((t) => t.id.toLowerCase() === name) ??
+        open.find((t) => t.state === "needs_decision" && named(t)) ??
+        open.find(named) ??
+        [...tasks].reverse().find(named);
+      if (!target)
+        throw new Error(
+          `Nobody called @${mention![1]} works in this run. Write to the planner instead.`,
+        );
+    }
+    const saved = this.store.chat({
+      runId,
+      author: "user",
+      kind: "message",
+      to: target?.id ?? "planner",
+      ...(target ? { taskId: target.id } : {}),
+      text: clean,
+    });
+    if (target?.state === "needs_decision") {
+      const asked = target.question?.text ?? "";
+      target.state = "queued";
+      target.question = undefined;
+      target.resumeNote = `The user answered your question ("${asked.slice(0, 300)}"): ${body} Continue the task with this decision.`;
+      this.store.saveTask(target);
+      this.store.addDecision(runId, {
+        question: `${target.id}: ${asked.slice(0, 900)}`,
+        choice: body.slice(0, 1_000),
+        why: "The user's answer in Team Chat",
+      });
+      run.pendingNotes.push(
+        `${USER_NOTE} answered ${target.id}'s question directly in the chat: ${body.slice(0, 2_000)}`,
+      );
+    } else
+      run.pendingNotes.push(
+        target
+          ? `${USER_NOTE} to ${target.agent} (${target.id}, ${target.state}) in the chat: "${body.slice(0, 2_000)}". Act on it: answer, re-delegate or adjust the plan.`
+          : `${USER_NOTE} in the chat: "${body.slice(0, 3_000)}". Reply in plain text before your actions block, and act on it.`,
+      );
+    run.userWaiting = true;
+    run.wakeRequested = true;
+    this.store.saveRun(run);
+    this.log(run, "chat", `You: ${clean.slice(0, 200)}`, target?.id);
+    this.changed(runId);
+    this.schedule(runId);
+    return saved;
   }
 
   pause(runId: string) {
@@ -668,6 +758,7 @@ export class TeamOrchestrator extends EventEmitter {
       run.state === "running" &&
       !this.plannerBusy.has(runId) &&
       (newQuestions ||
+        run.userWaiting ||
         (!runningNow &&
           (run.wakeRequested ||
             undelivered.length > 0 ||
@@ -837,6 +928,15 @@ export class TeamOrchestrator extends EventEmitter {
       if (["done", "failed", "stopped"].includes(run.state)) return;
       try {
         parsed = parsePlannerReply(result.finalText, known, available);
+        const prose = plannerProse(result.finalText);
+        if (prose)
+          this.say(run, {
+            author: "agent",
+            agent,
+            role: "planner",
+            kind: "message",
+            text: prose,
+          });
       } catch (error) {
         run.invalidPlannerReplies++;
         this.store.saveRun(run);
@@ -868,6 +968,8 @@ export class TeamOrchestrator extends EventEmitter {
       }
     run.pendingNotes = run.pendingNotes.filter((n) => !notes.includes(n));
     run.wakeRequested = false;
+    // A chat message that arrived during this turn still wakes the planner.
+    run.userWaiting = run.pendingNotes.some((n) => n.startsWith(USER_NOTE));
     this.store.saveRun(run);
     for (const decision of parsed.decisions)
       this.store.addDecision(run.id, decision);
@@ -916,6 +1018,15 @@ export class TeamOrchestrator extends EventEmitter {
     run.gate = { kind, message, ...(questions ? { questions } : {}) };
     this.store.saveRun(run);
     this.log(run, "gate", message);
+    this.say(run, {
+      author: "cobble",
+      kind: "gate",
+      text: questions?.length
+        ? [message, ...questions.map((q, i) => `${i + 1}. ${q.question}`)].join(
+            "\n",
+          )
+        : message,
+    });
     this.emit("attention", {
       runId: run.id,
       kind: "needs_you",
@@ -1006,6 +1117,14 @@ export class TeamOrchestrator extends EventEmitter {
           `${task.id} → ${task.role} (${agent}): ${task.title}`,
           task.id,
         );
+        this.say(run, {
+          author: "agent",
+          agent: this.plannerOf(run),
+          role: "planner",
+          taskId: task.id,
+          kind: "delegate",
+          text: `@${agent} ${task.id} (${task.role}): ${task.title}`,
+        });
         return;
       }
       case "accept_task": {
@@ -1103,6 +1222,14 @@ export class TeamOrchestrator extends EventEmitter {
           `${task.id}: ${action.answer.slice(0, 200)}`,
           task.id,
         );
+        this.say(run, {
+          author: "agent",
+          agent: this.plannerOf(run),
+          role: "planner",
+          taskId: task.id,
+          kind: "answer",
+          text: `@${task.agent} ${action.answer}`,
+        });
         return;
       }
       case "ask_human":
@@ -1151,6 +1278,13 @@ export class TeamOrchestrator extends EventEmitter {
           : action.summary;
         this.store.saveRun(run);
         this.log(run, "run", `Finished: ${action.summary.slice(0, 300)}`);
+        this.say(run, {
+          author: "agent",
+          agent: this.plannerOf(run),
+          role: "planner",
+          kind: "finish",
+          text: run.summary ?? action.summary,
+        });
         this.emit("attention", {
           runId: run.id,
           kind: "finished",
@@ -1293,13 +1427,20 @@ export class TeamOrchestrator extends EventEmitter {
             `${task.id}: not committed (secret-looking): ${blocked.slice(0, 5).join(", ")}`,
             task.id,
           );
-        if (assessment.alert)
+        if (assessment.alert) {
           this.log(
             run,
             "drift",
             `${task.id}: ${assessment.explanation}`,
             task.id,
           );
+          this.say(run, {
+            author: "cobble",
+            taskId: task.id,
+            kind: "drift",
+            text: `Plan guard: ${task.id} may be off plan. ${assessment.explanation}`,
+          });
+        }
         patch.diffStat = await wt.diffStat(cwd, base);
         if (run.checkCommand && changes.length && !controller.signal.aborted) {
           this.log(
@@ -1321,6 +1462,12 @@ export class TeamOrchestrator extends EventEmitter {
             `${task.id}: check ${check.passed ? "passed" : "failed"}`,
             task.id,
           );
+          this.say(run, {
+            author: "cobble",
+            taskId: task.id,
+            kind: "check",
+            text: `${task.id}: \`${run.checkCommand}\` ${check.passed ? "passed" : "failed"}`,
+          });
         }
       }
       const needs =
@@ -1371,6 +1518,19 @@ export class TeamOrchestrator extends EventEmitter {
           `${task.id} asks the planner: ${report.question.slice(0, 200)}`,
           task.id,
         );
+        this.say(run, {
+          author: "agent",
+          agent: task.agent,
+          role: task.role,
+          taskId: task.id,
+          kind: "question",
+          text: [
+            `@planner ${report.question}`,
+            ...(report.options?.length
+              ? [`Options: ${report.options.join(" / ")}`]
+              : []),
+          ].join("\n"),
+        });
         return;
       }
       if (result.rateLimited) {
@@ -1422,10 +1582,26 @@ export class TeamOrchestrator extends EventEmitter {
           );
           return;
         }
+        this.say(run, {
+          author: "agent",
+          agent: task.agent,
+          role: task.role,
+          taskId: task.id,
+          kind: "report",
+          text: `${task.id} failed: ${error}`,
+        });
         return finish({ ...patch, state: "failed", error });
       }
       finish({ ...patch, state: "done", error: undefined });
       this.log(run, "task", `${task.id} done`, task.id);
+      this.say(run, {
+        author: "agent",
+        agent: task.agent,
+        role: task.role,
+        taskId: task.id,
+        kind: "report",
+        text: `Done with ${task.id}: ${patch.report?.summary || task.title}`,
+      });
     } catch (error) {
       finish({
         state: "failed",

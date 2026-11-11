@@ -3,6 +3,7 @@
  * never sent over team transport or included in host handover snapshots.
  */
 import { randomUUID } from "node:crypto";
+import type { TeamChatMessage } from "./types";
 import type { Store } from "../store";
 import type {
   RunSnapshot,
@@ -20,6 +21,8 @@ import { totalUsage } from "./usage";
 export const TEAM_STORE_LIMITS = Object.freeze({
   runsPerTeam: 200,
   eventsPerRun: 2_000,
+  chatPerRun: 1_000,
+  chatText: 8_000,
   retentionDays: 8,
   userAnswers: 60,
 });
@@ -35,6 +38,8 @@ export class TeamStore {
       CREATE INDEX IF NOT EXISTS team_decision_run ON team_decisions(run_id,created_at);
       CREATE TABLE IF NOT EXISTS team_events(seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS team_event_run ON team_events(run_id,seq);
+      CREATE TABLE IF NOT EXISTS team_chat(seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS team_chat_run ON team_chat(run_id,seq);
       INSERT OR IGNORE INTO migrations VALUES(6);`);
   }
 
@@ -269,6 +274,37 @@ export class TeamStore {
       .run(runId, runId, TEAM_STORE_LIMITS.eventsPerRun);
     return event;
   }
+  chat(
+    message: Omit<TeamChatMessage, "id" | "createdAt"> & { createdAt?: string },
+  ): TeamChatMessage {
+    const saved: TeamChatMessage = {
+      ...message,
+      id: randomUUID(),
+      text: message.text.slice(0, TEAM_STORE_LIMITS.chatText),
+      createdAt: message.createdAt ?? new Date().toISOString(),
+    };
+    this.store.db
+      .prepare("INSERT INTO team_chat(run_id,data) VALUES(?,?)")
+      .run(saved.runId, JSON.stringify(saved));
+    this.store.db
+      .prepare(
+        "DELETE FROM team_chat WHERE run_id=? AND seq <= (SELECT seq FROM team_chat WHERE run_id=? ORDER BY seq DESC LIMIT 1 OFFSET ?)",
+      )
+      .run(saved.runId, saved.runId, TEAM_STORE_LIMITS.chatPerRun);
+    return saved;
+  }
+  chatMessages(runId: string, limit = 500): TeamChatMessage[] {
+    return (
+      this.store.db
+        .prepare(
+          "SELECT data FROM team_chat WHERE run_id=? ORDER BY seq DESC LIMIT ?",
+        )
+        .all(runId, limit) as { data: string }[]
+    )
+      .map((r) => JSON.parse(r.data) as TeamChatMessage)
+      .reverse();
+  }
+
   events(runId: string, limit = 200): TeamEvent[] {
     return (
       this.store.db

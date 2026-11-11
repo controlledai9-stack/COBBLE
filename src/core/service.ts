@@ -1980,6 +1980,26 @@ export class CobbleService extends EventEmitter {
       throw new Error("Unknown team run");
     return snapshot;
   }
+  /** The run's Team Chat, oldest first. */
+  teamChat(runId: string) {
+    const run = this.teamRun(runId).run;
+    return this.teamStore.chatMessages(run.id);
+  }
+  /**
+   * Sends a Team Chat message. Without a run (or after it ended) the message
+   * becomes the goal of a new run, so the chat is also how runs start.
+   */
+  async sendTeamChat(runId: string | null, message: string) {
+    const text = String(message ?? "").trim();
+    if (!text) throw new Error("Type a message first");
+    const run = runId ? this.teamRun(runId).run : null;
+    if (!run || ["done", "failed", "stopped"].includes(run.state)) {
+      const started = await this.startTeamRun(text);
+      return { runId: started.id, started: true };
+    }
+    this.agentTeam.userMessage(run.id, text);
+    return { runId: run.id, started: false };
+  }
   async teamRunCommand(
     runId: string,
     command: "pause" | "resume" | "stop" | "cleanup" | GateAnswer,

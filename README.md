@@ -152,6 +152,14 @@ npm run cli -- --data .\.cobble\team-trial.sqlite team autopilot --backlog docs/
 
 `team decisions [forget]` shows or forgets project decisions saved from intake interviews.
 
+### Team Chat
+
+The Agent Team panel opens on **Team Chat**, one conversation per run. Type what to build and press **Start**. The planner answers in the chat, and the agents post as they work: which tasks were handed out, workers' questions and the answers, finished work, Cobble's test results and **plan guard** warnings when a task drifts from your plan. Production approvals and sign-ins show up as cards that only you can answer.
+
+- A plain message goes to the planner. It wakes up for it even while workers are busy.
+- `@codex …`, `@coder …` or `@T2 …` addresses one agent's task. If that agent is waiting on a question, your message answers it directly. Otherwise the planner passes it on.
+- `team chat [RUN_ID]` prints the chat in the terminal.
+
 ### Without an AI subscription: API and free models
 
 Two team members need no coding-agent subscription. They work through Cobble's own file tools, which stay inside the task's worktree and never touch `.git` or secret files. Commands run only for roles with full access.

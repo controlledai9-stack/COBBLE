@@ -536,6 +536,15 @@ else {
       handle("team-run", (_, runId: unknown) =>
         service.teamRun(text(runId, 64)),
       );
+      handle("team-chat", (_, runId: unknown) =>
+        service.teamChat(text(runId, 64)),
+      );
+      handle("team-chat-send", (_, runId: unknown, message: unknown) =>
+        service.sendTeamChat(
+          runId === null ? null : text(runId, 64),
+          text(message, 4_000),
+        ),
+      );
       handle(
         "team-command",
         (

@@ -38,6 +38,9 @@ const api: DesktopApi = {
   autopilotStatus: () => ipcRenderer.invoke("cobble:team-autopilot-status"),
   teamRuns: () => ipcRenderer.invoke("cobble:team-runs"),
   teamRun: (runId) => ipcRenderer.invoke("cobble:team-run", runId),
+  teamChat: (runId) => ipcRenderer.invoke("cobble:team-chat", runId),
+  sendTeamChat: (runId, message) =>
+    ipcRenderer.invoke("cobble:team-chat-send", runId, message),
   teamCommand: (runId, command, taskId, note, answers) =>
     ipcRenderer.invoke(
       "cobble:team-command",

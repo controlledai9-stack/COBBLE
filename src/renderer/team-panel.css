@@ -234,3 +234,91 @@
 .agent-team-log dd {
   margin: 0.15rem 0 0.5rem;
 }
+
+/* Team Chat */
+.agent-team-chat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  display: grid;
+  gap: 0.55rem;
+  max-height: 26rem;
+  min-height: 6rem;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.6rem;
+}
+
+.agent-team-chat-empty {
+  padding: 0.5rem;
+  opacity: 0.75;
+}
+
+.agent-team-chat-message {
+  display: grid;
+  gap: 0.2rem;
+  max-width: min(42rem, 92%);
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--surface-elevated);
+}
+
+.agent-team-chat-message.is-user {
+  justify-self: end;
+  border-color: var(--accent);
+}
+
+.agent-team-chat-message.is-cobble,
+.agent-team-chat-message.is-gate {
+  justify-self: center;
+  max-width: 100%;
+  background: var(--surface-hover);
+  font-size: 0.92em;
+}
+
+.agent-team-chat-message.is-gate {
+  border-color: var(--notice-border);
+}
+
+.agent-team-chat-message.is-warn {
+  justify-self: center;
+  max-width: 100%;
+  border-color: var(--danger-border);
+  background: var(--danger-surface);
+  font-size: 0.92em;
+}
+
+.agent-team-chat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.82em;
+}
+
+.agent-team-chat-meta time {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+.agent-team-chat-card {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--notice-border);
+  border-radius: 0.6rem;
+  background: var(--surface-hover);
+}
+
+.agent-team-chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.agent-team-chat-form textarea {
+  resize: vertical;
+  min-height: 2.6rem;
+}

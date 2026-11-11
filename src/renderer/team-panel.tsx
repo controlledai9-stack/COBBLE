@@ -1,3 +1,4 @@
+import { TeamChat } from "./team-chat";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentDetection,
@@ -232,6 +233,24 @@ function TeamPanelContent({
     }
   }
 
+  /** Starts a run with the settings from "Start a run" (also used by the chat). */
+  async function startRun(cleanGoal: string) {
+    await api.startTeamRun(
+      cleanGoal,
+      {
+        maxTasks: Number(budget.maxTasks),
+        maxPlannerTurns: Number(budget.maxPlannerTurns),
+        maxParallel: Number(budget.maxParallel),
+      },
+      { requireApprovalForProduction },
+      {
+        checkCommand: checkCommand.trim() || undefined,
+        shareDependencies,
+      },
+    );
+    await refreshRuns();
+  }
+
   const activeRun = snapshot && !isFinished(snapshot.run.state);
   const readyRoles =
     !!assignments?.planner &&
@@ -262,6 +281,28 @@ function TeamPanelContent({
   return (
     <section className="panel agent-team" aria-labelledby="agent-team-heading">
       <h2 id="agent-team-heading">Agent Team</h2>
+      {typeof window.cobble?.teamChat === "function" &&
+        typeof window.cobble?.sendTeamChat === "function" && (
+          <TeamChat
+            api={{
+              teamChat: window.cobble.teamChat,
+              sendTeamChat: window.cobble.sendTeamChat,
+            }}
+            snapshot={snapshot}
+            pending={pending}
+            canStart={!startDisabled}
+            startHint={startHint}
+            start={startRun}
+            command={(command, taskId, note) =>
+              void perform(async () => {
+                if (!snapshot) return;
+                await api.teamCommand(snapshot.run.id, command, taskId, note);
+                await refreshRuns();
+              })
+            }
+            onChanged={() => void refreshRuns()}
+          />
+        )}
       <section className="agent-team-card">
         <h3>Roles</h3>
         {roleError && (
@@ -434,21 +475,8 @@ function TeamPanelContent({
           const cleanGoal = goal.trim();
           if (startDisabled || !cleanGoal) return;
           void perform(async () => {
-            await api.startTeamRun(
-              cleanGoal,
-              {
-                maxTasks: Number(budget.maxTasks),
-                maxPlannerTurns: Number(budget.maxPlannerTurns),
-                maxParallel: Number(budget.maxParallel),
-              },
-              { requireApprovalForProduction },
-              {
-                checkCommand: checkCommand.trim() || undefined,
-                shareDependencies,
-              },
-            );
+            await startRun(cleanGoal);
             setGoal("");
-            await refreshRuns();
           });
         }}
       >

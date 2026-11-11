@@ -6,6 +6,7 @@ import type {
   RunSnapshot,
   TeamAgentId,
   TeamBudget,
+  TeamChatMessage,
   TeamRole,
   TeamRun,
   UserAnswer,
@@ -13,6 +14,7 @@ import type {
 export type {
   AgentDetection,
   ApprovalPolicy,
+  TeamChatMessage,
   RunSnapshot,
   TeamAgentId,
   TeamBudget,
@@ -588,6 +590,13 @@ export interface DesktopApi {
   autopilotStatus?(): Promise<AutopilotStatus>;
   teamRuns?(): Promise<TeamRun[]>;
   teamRun?(runId: string): Promise<RunSnapshot>;
+  /** Team Chat of a run, oldest first. */
+  teamChat?(runId: string): Promise<TeamChatMessage[]>;
+  /** Sends a chat message; with no run (or an ended one) it starts a new run. */
+  sendTeamChat?(
+    runId: string | null,
+    message: string,
+  ): Promise<{ runId: string; started: boolean }>;
   teamCommand?(
     runId: string,
     command:
