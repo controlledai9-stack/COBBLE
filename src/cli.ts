@@ -11,6 +11,7 @@ async function main() {
     options: {
       data: { type: "string" },
       name: { type: "string" },
+      "display-name": { type: "string" },
       "plan-file": { type: "string" },
       workspace: { type: "string" },
       file: { type: "string" },
@@ -30,7 +31,7 @@ async function main() {
   if (values.help || !command) {
     console.log(`Cobble — shared direction for your team
 
-  cobble init --name NAME --plan-file PLAN.md --workspace FOLDER
+  cobble init --name NAME --display-name NAME --plan-file PLAN.md --workspace FOLDER
   cobble ingest --stdin | --file FILE | --from-transcript
   cobble status
   cobble report
@@ -57,6 +58,23 @@ Transcript ingest accepts current-turn text or {assistant_message: text}.
 Agent hook installation is not yet automatic.`);
     return;
   }
+  if (
+    command === "team" &&
+    ["run", "resume", "autopilot"].includes(positionals[1])
+  ) {
+    for (const [flag, limit] of [
+      ["max-tasks", 100],
+      ["max-turns", 50],
+      ["max-runs", 20],
+    ] as const) {
+      const value = values[flag];
+      if (
+        value !== undefined &&
+        (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > limit)
+      )
+        throw new Error(`--${flag} must be a whole number from 1 to ${limit}`);
+    }
+  }
   const data = resolve(
     values.data ??
       join(
@@ -68,28 +86,42 @@ Agent hook installation is not yet automatic.`);
   const service = new CobbleService(data);
   try {
     if (command === "init") {
-      const prompt = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+      if (!process.stdin.isTTY) {
+        for (const flag of [
+          "name",
+          "plan-file",
+          ...(!service.store.profile() ? (["display-name"] as const) : []),
+        ] as const) {
+          if (!values[flag])
+            throw new Error(`Missing --${flag} (stdin is not interactive)`);
+        }
+      }
+      const prompt = process.stdin.isTTY
+        ? createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          })
+        : undefined;
       try {
         let name = values.name;
         let plan: string;
-        if (!name) name = await prompt.question("Team name: ");
+        if (!name) name = await prompt!.question("Team name: ");
         if (values["plan-file"])
           plan = await readFile(resolve(values["plan-file"]), "utf8");
         else {
           console.log("Starting plan (finish with a line containing END):");
           const lines: string[] = [];
           for (;;) {
-            const line = await prompt.question("");
+            const line = await prompt!.question("");
             if (line === "END") break;
             lines.push(line);
           }
           plan = lines.join("\n");
         }
         if (!service.store.profile()) {
-          const displayName = await prompt.question("Your display name: ");
+          const displayName =
+            values["display-name"] ||
+            (await prompt!.question("Your display name: "));
           await service.action({
             type: "profile",
             name: displayName,
@@ -106,7 +138,7 @@ Agent hook installation is not yet automatic.`);
           `Created ${name}. Starting plan stored as ${service.activeTeam()!.items.length} pieces.`,
         );
       } finally {
-        prompt.close();
+        prompt?.close();
       }
     } else if (command === "status") {
       const s = service.state();
