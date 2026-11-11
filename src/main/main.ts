@@ -578,6 +578,13 @@ else {
           );
         },
       );
+      handle("team-backup-agents", () => service.teamBackupAgents());
+      handle("team-set-backup-agent", (_, role: unknown, agent: unknown) =>
+        service.setTeamBackupAgent(
+          text(role, 32),
+          agent === null ? null : text(agent, 32),
+        ),
+      );
       handle("team-full-access", () => service.teamFullAccess());
       handle("team-set-full-access", (_, roles: unknown) =>
         service.setTeamFullAccess(roles),

@@ -20,6 +20,7 @@ import {
 import type { AgentAdapter, AdapterResult } from "./adapters";
 import {
   autonomyPolicy,
+  plannerTakeoverContext,
   plannerRepairPrompt,
   plannerStartPrompt,
   plannerWakePrompt,
@@ -422,6 +423,26 @@ export class TeamOrchestrator extends EventEmitter {
     }
   }
 
+  /**
+   * The team's backup agent for a role, if one is set, differs from the agent
+   * that hit its usage limit, and is installed.
+   */
+  private async usableBackup(
+    teamId: string,
+    role: TeamRole,
+    current: TeamAgentId,
+  ): Promise<TeamAgentId | null> {
+    const backup = this.store.backupAgents(teamId)[role];
+    if (!backup || backup === current) return null;
+    try {
+      return (await this.options.adapters[backup].detect()).installed
+        ? backup
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** True when another Cobble process holds a live lease on this run. */
   private leasedElsewhere(run: TeamRun) {
     return (
@@ -642,7 +663,8 @@ export class TeamOrchestrator extends EventEmitter {
     const team = this.options.team(run.teamId);
     if (!team) return this.pauseFor(run, "The team is no longer available");
     const roles = this.store.roles(run.teamId);
-    const agent = roles.planner;
+    // A backup planner that took over after a usage limit stays for the run.
+    const agent = run.plannerAgent ?? roles.planner;
     if (!agent) return this.pauseFor(run, "No planner is assigned");
     if (run.plannerTurns >= run.budget.maxPlannerTurns)
       return this.pauseFor(run, "Planner turn budget used up");
@@ -677,7 +699,9 @@ export class TeamOrchestrator extends EventEmitter {
             userAnswers,
           );
     if (run.plannerTurns > 0 && !run.plannerSessionId)
-      prompt = `${autonomyPolicy(run.policy)}\n\n${prompt}`;
+      // No session to continue (a new or backup planner): give it the rules,
+      // the plan and the published brief before the update.
+      prompt = `${plannerTakeoverContext(team, run, roles)}\n\n${prompt}`;
     const known = new Set(tasks.map((t) => t.id));
     const available = new Set(Object.keys(roles) as TeamRole[]);
     const wt = this.worktrees(run);
@@ -732,11 +756,34 @@ export class TeamOrchestrator extends EventEmitter {
           `The planner (${agent}) needs you to sign in: ${result.authRequired.hint}`,
         );
       }
-      if (result.rateLimited)
+      if (result.rateLimited) {
+        const backup = await this.usableBackup(run.teamId, "planner", agent);
+        if (backup && !run.plannerSwitchedFrom) {
+          run.plannerAgent = backup;
+          run.plannerSwitchedFrom = agent;
+          run.plannerSessionId = undefined;
+          run.wakeRequested = true;
+          run.pendingNotes.push(
+            `You are taking over as planner: the previous planner (${agent}) hit its usage limit. Continue the run from the status below.`,
+          );
+          this.store.saveRun(run);
+          this.log(
+            run,
+            "planner",
+            `${agent} hit a usage limit; backup planner ${backup} takes over`,
+          );
+          this.emit("attention", {
+            runId: run.id,
+            kind: "info",
+            message: `Planner ${agent} hit a usage limit; ${backup} took over.`,
+          });
+          return;
+        }
         return this.pauseFor(
           run,
           `Planner (${agent}) hit a usage limit. Resume later.`,
         );
+      }
       if (result.timedOut)
         return this.pauseFor(run, `Planner (${agent}) timed out`);
       // Stopped or finished meanwhile: drop the reply. Paused: keep it, so the
@@ -1242,12 +1289,33 @@ export class TeamOrchestrator extends EventEmitter {
         );
         return;
       }
-      if (result.rateLimited)
+      if (result.rateLimited) {
+        // A backup agent for this role takes over once (no ping-pong).
+        const backup = task.switchedFrom
+          ? null
+          : await this.usableBackup(run.teamId, task.role, task.agent);
+        if (backup) {
+          this.log(
+            run,
+            "task",
+            `${task.id}: ${task.agent} hit a usage limit; backup ${backup} takes over`,
+            task.id,
+          );
+          return finish({
+            ...patch,
+            state: "queued",
+            agent: backup,
+            switchedFrom: task.agent,
+            sessionId: undefined,
+            resumeNote: `The ${task.agent} agent that started this task hit its usage limit and you are taking over. Earlier work in this worktree is already committed; check it, then complete the task.`,
+          });
+        }
         return finish({
           ...patch,
           state: "failed",
-          error: `${task.agent} hit a usage limit. Reassign the role or try later.`,
+          error: `${task.agent} hit a usage limit. Reassign the role, set a backup agent, or try later.`,
         });
+      }
       const failed =
         result.timedOut ||
         report?.status === "failed" ||

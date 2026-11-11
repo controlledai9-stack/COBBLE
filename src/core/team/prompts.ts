@@ -202,6 +202,27 @@ Plan version is ${team.version}. Reply with your next actions in a cobble-action
   return clip(body, PROMPT_LIMITS.wake);
 }
 
+/**
+ * Context for a planner with no session to continue (a backup planner taking
+ * over, or a CLI without sessions): the rules, plan, roles and current brief.
+ */
+export function plannerTakeoverContext(
+  team: Team,
+  run: TeamRun,
+  roles: Partial<Record<TeamRole, TeamAgentId>>,
+) {
+  return `${autonomyPolicy(run.policy)}
+
+## Team plan (version ${team.version})
+${planText(team)}
+
+## Available worker roles
+${roleList(roles, run.fullAccessRoles)}
+
+## Architecture brief${run.brief ? ` (version ${run.briefVersion}, already published)` : ""}
+${run.brief ? clip(run.brief, PROMPT_LIMITS.brief) : "(not published yet)"}`;
+}
+
 export function plannerRepairPrompt(error: string) {
   return `Your last reply could not be used: ${clip(error, 300)}.
 Reply again with exactly one valid \`\`\`cobble-actions JSON block following the format in your instructions.`;

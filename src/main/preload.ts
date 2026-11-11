@@ -47,6 +47,9 @@ const api: DesktopApi = {
       note,
       answers,
     ),
+  teamBackupAgents: () => ipcRenderer.invoke("cobble:team-backup-agents"),
+  setTeamBackupAgent: (role, agent) =>
+    ipcRenderer.invoke("cobble:team-set-backup-agent", role, agent),
   teamFullAccess: () => ipcRenderer.invoke("cobble:team-full-access"),
   setTeamFullAccess: (roles) =>
     ipcRenderer.invoke("cobble:team-set-full-access", roles),

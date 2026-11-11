@@ -47,6 +47,7 @@ async function main() {
   run/autopilot options: --base BRANCH (start from it), --share-deps (link node_modules)
   cobble team stop [RUN_ID]
   cobble team access [ROLE...|none]   roles with FULL ACCESS (no agent sandbox), e.g. access deployer
+  cobble team backup [ROLE AGENT|none] backup agent used when a role's agent hits a usage limit
   cobble team decisions [forget]      project decisions saved from intake interviews
   cobble team status [RUN_ID]
 
@@ -187,6 +188,15 @@ async function teamCommand(
   if (sub === "test") {
     if (!rest[0]) throw new Error("Usage: cobble team test AGENT");
     return print(await service.testTeamAgent(rest[0]));
+  }
+  if (sub === "backup") {
+    // `team backup coder claude` | `team backup coder none` | `team backup`
+    const [role, agent] = rest;
+    if (!role) return print(service.teamBackupAgents());
+    if (!agent) throw new Error("Usage: cobble team backup ROLE AGENT|none");
+    return print(
+      service.setTeamBackupAgent(role, agent === "none" ? null : agent),
+    );
   }
   if (sub === "access") {
     // `team access deployer coder` | `team access none` | `team access`
@@ -337,7 +347,7 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|stop|access|decisions|autopilot|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|stop|access|backup|decisions|autopilot|notify|status",
   );
 }
 

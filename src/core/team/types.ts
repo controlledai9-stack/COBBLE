@@ -145,6 +145,8 @@ export interface TeamTask {
   delivered?: boolean;
   /** Set when the user cleared this task's gate; sent to the resumed agent. */
   resumeNote?: string;
+  /** Agent that started the task before a usage limit moved it to a backup. */
+  switchedFrom?: TeamAgentId;
   /** Production deploy explicitly approved by the user for this task only. */
   approved?: boolean;
   /** Reviewer tasks: the task whose changes are reviewed. */
@@ -201,6 +203,9 @@ export interface TeamRun {
   productionApprovals?: number;
   /** Finished tasks that could not be merged into the run branch at finish. */
   unmerged?: string[];
+  /** Backup planner that took over after the planner hit a usage limit. */
+  plannerAgent?: TeamAgentId;
+  plannerSwitchedFrom?: TeamAgentId;
   invalidPlannerReplies: number;
   pausedReason?: string;
   /** Messages for the planner's next wake-up (gate answers, merge failures). */

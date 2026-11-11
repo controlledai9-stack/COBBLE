@@ -14,7 +14,7 @@ import type {
   TeamTask,
   UserAnswer,
 } from "./types";
-import { FULL_ACCESS_ROLES } from "./types";
+import { FULL_ACCESS_ROLES, TEAM_AGENTS, TEAM_ROLES } from "./types";
 
 export const TEAM_STORE_LIMITS = Object.freeze({
   runsPerTeam: 200,
@@ -42,6 +42,30 @@ export class TeamStore {
       .prepare("SELECT role, agent FROM team_roles WHERE team_id=?")
       .all(teamId) as { role: TeamRole; agent: TeamAgentId }[];
     return Object.fromEntries(rows.map((r) => [r.role, r.agent]));
+  }
+
+  /** Backup agent per role, used once when the assigned agent hits a usage limit. */
+  backupAgents(teamId: string): Partial<Record<TeamRole, TeamAgentId>> {
+    const saved = this.store.setting<unknown>(`teamBackupAgents:${teamId}`, {});
+    if (!saved || typeof saved !== "object") return {};
+    const out: Partial<Record<TeamRole, TeamAgentId>> = {};
+    for (const [role, agent] of Object.entries(saved))
+      if (
+        TEAM_ROLES.includes(role as TeamRole) &&
+        TEAM_AGENTS.includes(agent as TeamAgentId)
+      )
+        out[role as TeamRole] = agent as TeamAgentId;
+    return out;
+  }
+  setBackupAgent(teamId: string, role: TeamRole, agent: TeamAgentId | null) {
+    if (!TEAM_ROLES.includes(role)) throw new Error("Unknown role");
+    if (agent !== null && !TEAM_AGENTS.includes(agent))
+      throw new Error("Unsupported agent");
+    const next = { ...this.backupAgents(teamId) };
+    if (agent) next[role] = agent;
+    else delete next[role];
+    this.store.set(`teamBackupAgents:${teamId}`, next);
+    return next;
   }
 
   /** Worker roles the user opted into full access (no agent sandbox). */

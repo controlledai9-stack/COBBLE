@@ -1966,6 +1966,22 @@ export class CobbleService extends EventEmitter {
     }
     return this.teamRun(runId);
   }
+  /** Backup agent per role for the active team (used on usage limits). */
+  teamBackupAgents(): Partial<Record<TeamRole, TeamAgentId>> {
+    return this.teamStore.backupAgents(this.teamId());
+  }
+  setTeamBackupAgent(role: string, agent: string | null) {
+    if (!TEAM_ROLES.includes(role as TeamRole)) throw new Error("Unknown role");
+    if (agent !== null && !TEAM_AGENTS.includes(agent as TeamAgentId))
+      throw new Error("Unsupported agent");
+    const next = this.teamStore.setBackupAgent(
+      this.teamId(),
+      role as TeamRole,
+      agent as TeamAgentId | null,
+    );
+    this.emit("team", null);
+    return next;
+  }
   /** Worker roles the user opted into full access for the active team. */
   teamFullAccess(): TeamRole[] {
     return this.teamStore.fullAccessRoles(this.teamId());

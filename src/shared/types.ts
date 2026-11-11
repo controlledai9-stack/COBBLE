@@ -604,6 +604,12 @@ export interface DesktopApi {
     /** Answers to an intake ("questions") gate, in question order. */
     answers?: string[],
   ): Promise<RunSnapshot>;
+  /** Backup agent per role, used once when the assigned agent hits a usage limit. */
+  teamBackupAgents?(): Promise<Partial<Record<TeamRole, TeamAgentId>>>;
+  setTeamBackupAgent?(
+    role: TeamRole,
+    agent: TeamAgentId | null,
+  ): Promise<Partial<Record<TeamRole, TeamAgentId>>>;
   /** Roles running with full access (no agent sandbox), user opt-in. */
   teamFullAccess?(): Promise<TeamRole[]>;
   setTeamFullAccess?(roles: TeamRole[]): Promise<TeamRole[]>;

@@ -130,9 +130,12 @@ function TeamPanelContent({
   const [shareDependencies, setShareDependencies] = useState(false);
   const desktop = window.cobble;
   const [fullAccess, setFullAccess] = useState<TeamRole[]>();
+  const [backups, setBackups] =
+    useState<Partial<Record<TeamRole, TeamAgentId>>>();
   const refreshFullAccess = useCallback(async () => {
     try {
       setFullAccess(await desktop?.teamFullAccess?.());
+      setBackups(await desktop?.teamBackupAgents?.());
     } catch (error) {
       setRoleError(describeError(error));
     }
@@ -266,6 +269,12 @@ function TeamPanelContent({
             <tr>
               <th scope="col">Role</th>
               <th scope="col">Agent</th>
+              <th
+                scope="col"
+                title="Takes over a task once if the agent hits its usage limit"
+              >
+                Backup
+              </th>
               <th scope="col">Full access</th>
             </tr>
           </thead>
@@ -304,6 +313,36 @@ function TeamPanelContent({
                         {names[assignments[role]!]} is not installed
                       </span>
                     )}
+                </td>
+                <td>
+                  <select
+                    aria-label={`${role} backup agent`}
+                    value={backups?.[role] ?? ""}
+                    disabled={
+                      pending || !backups || !desktop?.setTeamBackupAgent
+                    }
+                    onChange={(event) => {
+                      const value = event.currentTarget.value as
+                        TeamAgentId | "";
+                      void perform(async () => {
+                        setBackups(
+                          await desktop!.setTeamBackupAgent!(
+                            role,
+                            value || null,
+                          ),
+                        );
+                      });
+                    }}
+                  >
+                    <option value="">None</option>
+                    {agents
+                      .filter((agent) => agent !== assignments?.[role])
+                      .map((agent) => (
+                        <option key={agent} value={agent}>
+                          {names[agent]}
+                        </option>
+                      ))}
+                  </select>
                 </td>
                 <td>
                   {fullAccessRoles.includes(role) ? (
@@ -468,9 +507,9 @@ function TeamPanelContent({
             <p id="agent-team-check-hint" className="small">
               Runs in each task’s worktree when the task captures changes. The
               command must install its own dependencies unless they are shared.
-              It runs code the agents wrote, with your file access (like
-              running a teammate’s tests); Cobble removes tokens and keys from
-              its environment.
+              It runs code the agents wrote, with your file access (like running
+              a teammate’s tests); Cobble removes tokens and keys from its
+              environment.
             </p>
           </fieldset>
         </details>
