@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { COVERAGE_NO_WORKSPACE_NOTE } from "../shared/monitoring";
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -404,9 +405,7 @@ export class CobbleService extends EventEmitter {
       },
       coverage: this.monitoringError
         ? [this.monitoringError]
-        : (this.observer?.coverage ?? [
-            "Choose a workspace to start watching saved changes.",
-          ]),
+        : (this.observer?.coverage ?? [COVERAGE_NO_WORKSPACE_NOTE]),
       planHistory: team ? this.store.history(team.id) : [],
       notifications: team ? this.store.notices(team.id) : [],
       completions: team ? this.collaboration.completions(team.id) : [],
