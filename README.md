@@ -142,7 +142,7 @@ npm run cli -- --data .\.cobble\team-trial.sqlite team stop
 npm run cli -- --data .\.cobble\team-trial.sqlite team status
 ```
 
-`team resume [RUN_ID] [--max-turns N]` resumes the latest or specified run and can raise its turn budget. `team stop [RUN_ID]` stops it, keeping branches. `team status [RUN_ID]` prints the latest or specified run as JSON. With no runs, `team status` and `team stop` print `No team runs yet.`
+`team resume [RUN_ID] [--max-turns N]` resumes the latest or specified run and can raise its turn budget. `team stop [RUN_ID]` stops it, keeping branches. `team status [RUN_ID]` prints the latest or specified run as JSON. `team runs [--json]` lists recent runs (id, state, goal, branch, updated time), newest first. With no runs, `team status`, `team stop`, and `team runs` print `No team runs yet.`
 
 Autopilot works through Markdown checklist items such as `- [ ] Add X` on `cobble/autopilot`, created from the current HEAD if absent. The backlog must be a Git-tracked, regular `.md` file inside that branch's worktree, with no links or junctions anywhere in its path; commit it on that branch before running. Syntax: `team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps] [--base BRANCH]`. `--max-runs` accepts whole numbers 1-20 (default 3). Autopilot also accepts `--max-tasks N` and `--max-turns N` per run, with the same ranges as `team run`. Although the CLI accepts `--base`, autopilot always starts each item from `cobble/autopilot`.
 
