@@ -10,6 +10,7 @@
  */
 import { randomBytes } from "node:crypto";
 import type { Store } from "../store";
+import type { HumanGateKind } from "./types";
 
 export type AttentionKind =
   "needs_you" | "paused" | "finished" | "info" | "test";
@@ -18,6 +19,44 @@ export interface AttentionEvent {
   taskId?: string;
   kind?: AttentionKind;
   message: string;
+  /** The gate this alert is about, so the phone can offer answer buttons. */
+  gate?: { kind: HumanGateKind; taskId?: string };
+}
+
+/**
+ * Answers the user can give from the phone. Sign-ins and typed answers still
+ * need the PC; approvals and "let the planner decide" do not.
+ */
+export type PhoneAction = "approve" | "deny" | "skip";
+export interface PhoneReply {
+  runId: string;
+  taskId?: string;
+  action: PhoneAction;
+  label: string;
+}
+interface PendingReply {
+  runId: string;
+  taskId?: string;
+  allowed: PhoneAction[];
+  label: string;
+  expires: number;
+}
+const REPLY_PROTOCOL = "cobble1";
+const REPLY_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_PENDING_REPLIES = 50;
+
+/** Buttons offered for a gate (labels must not contain commas or semicolons). */
+export function phoneActionsFor(
+  kind: HumanGateKind,
+): { label: string; action: PhoneAction }[] {
+  if (kind === "approval")
+    return [
+      { label: "Approve", action: "approve" },
+      { label: "Deny", action: "deny" },
+    ];
+  if (kind === "questions" || kind === "clarify")
+    return [{ label: "Let the planner decide", action: "skip" }];
+  return [];
 }
 export interface PhoneNotifySettings {
   enabled: boolean;
@@ -82,12 +121,90 @@ export function validServer(server: string): string {
 
 export class PhoneNotifier {
   private sent: { at: number; key: string }[] = [];
+  /** One-time codes for answer buttons, by code. In memory only. */
+  private readonly pending = new Map<string, PendingReply>();
+  /** Last reply-topic message seen; replies older than this process are ignored. */
+  private replySince: string;
   constructor(
     private readonly store: Store,
     private readonly post: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
     private readonly onError: (message: string) => void = () => {},
-  ) {}
+  ) {
+    this.replySince = String(Math.floor(this.now() / 1000));
+  }
+
+  /** The private topic the phone's answer buttons post to. */
+  replyTopic() {
+    return `${this.settings().topic}-reply`;
+  }
+
+  /** True while an alert with answer buttons is waiting for a tap. */
+  hasPendingReplies() {
+    const now = this.now();
+    for (const [code, entry] of this.pending)
+      if (entry.expires <= now) this.pending.delete(code);
+    return this.pending.size > 0;
+  }
+
+  /** Forgets the buttons of a gate that was answered elsewhere. */
+  forget(runId: string, taskId?: string) {
+    for (const [code, entry] of this.pending)
+      if (entry.runId === runId && entry.taskId === taskId)
+        this.pending.delete(code);
+  }
+
+  /**
+   * Reads new taps from the reply topic. Each valid tap (known one-time code,
+   * allowed action, not expired) is consumed and passed to `handle`; anything
+   * else is ignored. Returns the replies handled.
+   */
+  async pollReplies(
+    handle: (reply: PhoneReply) => Promise<void> | void,
+  ): Promise<PhoneReply[]> {
+    if (!this.hasPendingReplies()) return [];
+    const { server } = this.settings();
+    const response = await this.post(
+      `${server}/${this.replyTopic()}/json?poll=1&since=${encodeURIComponent(this.replySince)}`,
+      { signal: AbortSignal.timeout(NOTIFY_LIMITS.timeoutMs) },
+    );
+    if (!response.ok) throw new Error(`ntfy answered HTTP ${response.status}`);
+    const handled: PhoneReply[] = [];
+    for (const line of (await response.text()).split(/\r?\n/)) {
+      let event: { id?: string; event?: string; message?: string };
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (typeof event.id === "string") this.replySince = event.id;
+      if (event.event !== "message" || typeof event.message !== "string")
+        continue;
+      const match = event.message
+        .trim()
+        .match(/^cobble1 (approve|deny|skip) ([\w-]{16,32})$/);
+      if (!match) continue;
+      const action = match[1] as PhoneAction;
+      const entry = this.pending.get(match[2]);
+      if (
+        !entry ||
+        entry.expires <= this.now() ||
+        !entry.allowed.includes(action)
+      )
+        continue;
+      // One tap per alert: every code of this gate is consumed.
+      this.forget(entry.runId, entry.taskId);
+      const reply = {
+        runId: entry.runId,
+        ...(entry.taskId ? { taskId: entry.taskId } : {}),
+        action,
+        label: entry.label,
+      };
+      await handle(reply);
+      handled.push(reply);
+    }
+    return handled;
+  }
 
   settings(): PhoneNotifySettings {
     const saved = this.store.setting<Partial<PhoneNotifySettings> | null>(
@@ -176,17 +293,41 @@ export class PhoneNotifier {
         return;
     }
     const { server, topic } = this.settings();
+    const headers: Record<string, string> = {
+      Title: TITLES[kind],
+      Priority: PRIORITY[kind],
+      Tags: TAGS[kind],
+    };
+    // Answer buttons: each posts "cobble1 <action> <code>" to the private
+    // reply topic. The code is random, single-use and expires in 24 hours.
+    const buttons =
+      !force && event.gate ? phoneActionsFor(event.gate.kind) : [];
+    const code = randomBytes(12).toString("base64url");
+    if (buttons.length)
+      headers.Actions = buttons
+        .map(
+          (b) =>
+            `http, ${b.label}, ${server}/${topic}-reply, method=POST, body=${REPLY_PROTOCOL} ${b.action} ${code}, clear=true`,
+        )
+        .join("; ");
     const response = await this.post(`${server}/${topic}`, {
       method: "POST",
       body,
-      headers: {
-        Title: TITLES[kind],
-        Priority: PRIORITY[kind],
-        Tags: TAGS[kind],
-      },
+      headers,
       signal: AbortSignal.timeout(NOTIFY_LIMITS.timeoutMs),
     });
     if (!response.ok) throw new Error(`ntfy answered HTTP ${response.status}`);
     this.sent.push({ at: now, key });
+    if (buttons.length) {
+      if (this.pending.size >= MAX_PENDING_REPLIES)
+        this.pending.delete(this.pending.keys().next().value!);
+      this.pending.set(code, {
+        runId: event.runId,
+        ...(event.gate?.taskId ? { taskId: event.gate.taskId } : {}),
+        allowed: buttons.map((b) => b.action),
+        label: body.slice(0, 120),
+        expires: now + REPLY_TTL_MS,
+      });
+    }
   }
 }

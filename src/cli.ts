@@ -401,6 +401,38 @@ async function followRun(service: CobbleService, runId: string) {
     output: process.stdout,
   });
   let shown = 0;
+  /**
+   * Asks in the terminal, but gives up (returns null) as soon as the gate is
+   * answered elsewhere, e.g. with a button on the phone.
+   */
+  const ask = async (
+    text: string,
+    stillWaiting: () => boolean,
+  ): Promise<string | null> => {
+    const controller = new AbortController();
+    const onUpdate = () => {
+      if (!stillWaiting()) controller.abort();
+    };
+    service.agentTeam.on("update", onUpdate);
+    try {
+      return await prompt.question(text, { signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        console.log("\n(Answered from your phone.)");
+        return null;
+      }
+      throw error;
+    } finally {
+      service.agentTeam.off("update", onUpdate);
+    }
+  };
+  const runGateOpen = (kind: string) => () => {
+    const run = service.agentTeam.snapshot(runId)?.run;
+    return run?.state === "needs_human" && run.gate?.kind === kind;
+  };
+  const taskGateOpen = (taskId: string) => () =>
+    service.agentTeam.snapshot(runId)?.tasks.find((t) => t.id === taskId)
+      ?.state === "needs_human";
   try {
     for (;;) {
       await service.agentTeam.idle(runId);
@@ -419,26 +451,35 @@ async function followRun(service: CobbleService, runId: string) {
           `\nThe planner has questions for you: ${snap.run.gate.message}\n(Type a number to pick an option, your own answer, or press Enter to let the planner decide.)`,
         );
         const answers: string[] = [];
+        let answeredElsewhere = false;
         for (const [i, q] of questions.entries()) {
           console.log(`\n${i + 1}/${questions.length}. ${q.question}`);
           if (q.why) console.log(`   Why: ${q.why}`);
           q.options?.forEach((o, j) => console.log(`   ${j + 1}) ${o}`));
-          const raw = (await prompt.question("   > ")).trim();
+          const typed = await ask("   > ", runGateOpen("questions"));
+          if (typed === null) {
+            answeredElsewhere = true;
+            break;
+          }
+          const raw = typed.trim();
           const pick = /^\d+$/.test(raw)
             ? q.options?.[Number(raw) - 1]
             : undefined;
           answers.push(pick ?? raw);
         }
-        service.agentTeam.resolveGate(runId, "done", undefined, "", answers);
+        if (!answeredElsewhere)
+          service.agentTeam.resolveGate(runId, "done", undefined, "", answers);
         continue;
       }
       if (
         snap.run.state === "needs_human" &&
         snap.run.gate?.kind === "approval"
       ) {
-        const answer = await prompt.question(
+        const answer = await ask(
           `\nApproval needed: ${snap.run.gate.message}\nType "approve" to allow one production deploy, anything else to deny: `,
+          runGateOpen("approval"),
         );
+        if (answer === null) continue;
         const yes = answer.trim().toLowerCase() === "approve";
         service.agentTeam.resolveGate(
           runId,
@@ -449,9 +490,11 @@ async function followRun(service: CobbleService, runId: string) {
         continue;
       }
       if (snap.run.state === "needs_human" && snap.run.gate) {
-        const answer = await prompt.question(
+        const answer = await ask(
           `\nThe planner needs you (${snap.run.gate.kind}): ${snap.run.gate.message}\nType your answer, or "skip": `,
+          runGateOpen(snap.run.gate.kind),
         );
+        if (answer === null) continue;
         service.agentTeam.resolveGate(
           runId,
           answer.trim() === "skip" ? "skip" : "done",
@@ -463,11 +506,13 @@ async function followRun(service: CobbleService, runId: string) {
       if (waiting.length && snap.run.state === "running") {
         const task = waiting[0];
         const approval = task.gate?.kind === "approval";
-        const answer = await prompt.question(
+        const answer = await ask(
           approval
             ? `\n${task.id} needs approval: ${task.gate?.message}\nType "approve" to allow this one production deploy, anything else to deny: `
             : `\n${task.id} needs you: ${task.gate?.message}\nFolder: ${task.worktree ?? snap.run.workspace}\nPress Enter when done, or type "skip": `,
+          taskGateOpen(task.id),
         );
+        if (answer === null) continue;
         const reply = answer.trim().toLowerCase();
         service.agentTeam.resolveGate(
           runId,

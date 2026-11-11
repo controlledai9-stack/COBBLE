@@ -94,6 +94,10 @@ export class CobbleService extends EventEmitter {
   readonly phone: PhoneNotifier;
   readonly autopilot: Autopilot;
   private readonly autopilotSessions = new Map<string, AutopilotSession>();
+  private phoneReplyTimer?: ReturnType<typeof setInterval>;
+  private phonePolling = false;
+  /** How often to check for taps on phone answer buttons. */
+  static PHONE_REPLY_POLL_MS = 10_000;
   private readonly startingTeamRuns = new Set<string>();
   private readonly teamAdapters: Record<TeamAgentId, AgentAdapter>;
   private agentTask?: Promise<void>;
@@ -184,7 +188,15 @@ export class CobbleService extends EventEmitter {
     );
     this.agentTeam.on("attention", (event: AttentionEvent) => {
       this.emit("team-attention", event);
-      void this.phone.notify(event);
+      void this.phone.notify(event).then(() => this.watchPhoneReplies());
+    });
+    // A gate answered on the PC makes its phone buttons stale.
+    this.agentTeam.on("update", (runId: string) => {
+      const snap = runId ? this.agentTeam.snapshot(runId) : null;
+      if (!snap) return;
+      if (!snap.run.gate) this.phone.forget(runId);
+      for (const task of snap.tasks)
+        if (task.state !== "needs_human") this.phone.forget(runId, task.id);
     });
     this.agentTeam.on("diagnostic", (message) =>
       this.emit("diagnostic", message),
@@ -2019,6 +2031,57 @@ export class CobbleService extends EventEmitter {
       ...(patch?.regenerateTopic === true ? { regenerateTopic: true } : {}),
     });
   }
+  /** Polls the reply topic while an alert with answer buttons is waiting. */
+  private watchPhoneReplies() {
+    if (this.closed || this.phoneReplyTimer || !this.phone.hasPendingReplies())
+      return;
+    this.phoneReplyTimer = setInterval(
+      () => void this.checkPhoneReplies(),
+      CobbleService.PHONE_REPLY_POLL_MS,
+    );
+    this.phoneReplyTimer.unref?.();
+  }
+
+  /** Applies taps on phone buttons; returns how many were applied. */
+  async checkPhoneReplies(): Promise<number> {
+    if (this.phonePolling) return 0;
+    this.phonePolling = true;
+    try {
+      const replies = await this.phone.pollReplies(async (reply) => {
+        let outcome: string;
+        try {
+          this.agentTeam.resolveGate(reply.runId, reply.action, reply.taskId);
+          outcome =
+            reply.action === "approve"
+              ? "Approved"
+              : reply.action === "deny"
+                ? "Denied"
+                : "The planner will decide";
+        } catch {
+          outcome = "Already handled on your PC";
+        }
+        await this.phone.notify({
+          runId: reply.runId,
+          kind: "info",
+          message: `${outcome}: ${reply.label}`,
+        });
+      });
+      return replies.length;
+    } catch (error) {
+      this.emit(
+        "diagnostic",
+        `Phone replies: ${error instanceof Error ? error.message : error}`,
+      );
+      return 0;
+    } finally {
+      this.phonePolling = false;
+      if (!this.phone.hasPendingReplies()) {
+        clearInterval(this.phoneReplyTimer);
+        this.phoneReplyTimer = undefined;
+      }
+    }
+  }
+
   async testPhoneNotify() {
     await this.phone.test();
     return this.phone.view();
@@ -2041,6 +2104,8 @@ export class CobbleService extends EventEmitter {
     clearTimeout(this.analysisTimer);
     clearTimeout(this.agentTimer);
     clearInterval(this.reconciliationTimer);
+    clearInterval(this.phoneReplyTimer);
+    this.phoneReplyTimer = undefined;
     for (const session of this.autopilotSessions.values())
       session.shutdown.abort();
     await Promise.allSettled([

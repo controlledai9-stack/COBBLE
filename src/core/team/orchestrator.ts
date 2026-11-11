@@ -870,7 +870,12 @@ export class TeamOrchestrator extends EventEmitter {
     run.gate = { kind, message, ...(questions ? { questions } : {}) };
     this.store.saveRun(run);
     this.log(run, "gate", message);
-    this.emit("attention", { runId: run.id, kind: "needs_you", message });
+    this.emit("attention", {
+      runId: run.id,
+      kind: "needs_you",
+      message,
+      gate: { kind },
+    });
     this.changed(run.id);
   }
 
@@ -945,6 +950,7 @@ export class TeamOrchestrator extends EventEmitter {
             taskId: task.id,
             kind: "needs_you",
             message: task.gate.message,
+            gate: { kind: "approval", taskId: task.id },
           });
         }
         this.store.saveTask(task);
@@ -1259,6 +1265,7 @@ export class TeamOrchestrator extends EventEmitter {
           kind: "needs_you",
           message,
           worktree: cwd,
+          gate: { kind: "login", taskId },
         });
         return;
       }

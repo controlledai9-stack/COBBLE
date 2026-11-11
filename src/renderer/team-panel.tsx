@@ -817,6 +817,13 @@ function PhoneAlerts() {
         Alerts are short status lines (no code) and pass through the ntfy
         server.
       </p>
+      <p className="small">
+        Alerts that need a decision have buttons: Approve or Deny a production
+        deploy, or let the planner decide its questions, right from your phone.
+        Sign-ins still need this computer. Anyone who knows your channel name
+        can see alerts and press buttons, so keep it private and use New channel
+        if it leaks.
+      </p>
       {view && (
         <>
           <label className="agent-team-checkbox">

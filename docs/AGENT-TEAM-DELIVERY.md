@@ -98,6 +98,30 @@
 | 14 | Reports were read through links, without a size cap | Regular file inside the worktree only, at most 256 KB |
 | 15 | A stale report could decide a later invocation | The report is cleared before each worker invocation |
 
+## Backup agents, phone answers and CLI fixes (11 November 2026)
+
+**Backup agent per role.** `cobble team backup ROLE AGENT|none`, or the Backup column in the Roles table.
+
+- **Worker hits a usage limit:** the task is queued again on the backup agent. It gets a hand-over note and a fresh session, and this does not count as a retry. If the backup also hits a limit, the task fails, so agents never hand work back and forth.
+- **Planner hits a usage limit:** the backup planner takes over the run with the rules, plan, roles and published brief, and stays for the rest of the run.
+- An uninstalled backup is never used.
+
+**Answering from the phone.** Alerts that need a decision carry ntfy action buttons:
+
+- Production approvals get **Approve** and **Deny**. Questions and clarifications get **Let the planner decide**. Sign-ins have no buttons, because they need the PC.
+- A button posts `cobble1 <action> <code>` to the private topic `<topic>-reply`. The code is random (96 bits), kept only in memory, used once (all buttons of that alert become invalid after a tap), and expires after 24 hours.
+- Only the actions offered for that gate are accepted. Replies older than the Cobble process are ignored.
+- Cobble polls the reply topic every 10 seconds, only while an alert with buttons is waiting. The decision is applied through the normal gate path, and the phone gets a confirmation ("Approved: …", or "Already handled on your PC").
+- A gate answered on the PC makes its phone buttons stale. A terminal run (`cobble team run`) stops waiting at its prompt when the gate is answered from the phone.
+- Security boundary: anyone who knows the topic name can read alerts and press their buttons. The topic is random and can be regenerated with New channel.
+
+**CLI fixes, implemented by Codex** (`codex exec` in its own worktree, reviewed and merged here):
+
+- `cobble init --display-name NAME` never prompts when stdin is not a terminal, and a missing flag exits non-zero with its name.
+- `team run`, `resume` and `autopilot` reject malformed, zero or out-of-range `--max-tasks` (1–100), `--max-turns` (1–50) and `--max-runs` (1–20) before anything is created.
+
+Tests: `test/agent-team-backup.test.ts` (3), `test/agent-team-phone.test.ts` (3) and `test/cli-init-budget.test.ts` (49). Full suite: 307 passed. The one failure is the known Windows `EBUSY` cleanup flake in `plan-context-refresh`, which passes when run alone.
+
 ## Interfaces
 
 **Desktop API** (`window.cobble`, every field validated in main):
