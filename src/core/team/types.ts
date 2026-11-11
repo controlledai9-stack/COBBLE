@@ -1,10 +1,30 @@
 /** Agent Team: shared types. See docs/AGENT-TEAM-PLAN.md. */
-export type TeamAgentId = "claude" | "codex" | "gemini";
+/**
+ * claude/codex/gemini: the user's installed coding-agent CLIs.
+ * claude-api: Claude through the Anthropic API (pay per use, own key).
+ * free: a free or local model through an OpenAI-compatible server
+ * (Ollama, LM Studio, Gemini/OpenRouter/Groq free tiers).
+ */
+export type TeamAgentId = "claude" | "codex" | "gemini" | "claude-api" | "free";
 export const TEAM_AGENTS: readonly TeamAgentId[] = [
   "claude",
   "codex",
   "gemini",
+  "claude-api",
+  "free",
 ];
+/** Tokens and cost used by API-model workers (CLI agents report none). */
+export interface TeamUsage {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** Estimated USD at list prices; 0 for free and local models. */
+  costUsd: number;
+  /** Some calls used a model without a known price. */
+  unpriced?: boolean;
+}
 export type TeamRole =
   "planner" | "coder" | "generator" | "reviewer" | "deployer";
 export const TEAM_ROLES: readonly TeamRole[] = [
@@ -149,6 +169,8 @@ export interface TeamTask {
   accepted?: boolean;
   /** Agent that started the task before a usage limit moved it to a backup. */
   switchedFrom?: TeamAgentId;
+  /** Tokens and cost of this task (API-model workers only). */
+  usage?: TeamUsage;
   /** Production deploy explicitly approved by the user for this task only. */
   approved?: boolean;
   /** Reviewer tasks: the task whose changes are reviewed. */
@@ -205,6 +227,8 @@ export interface TeamRun {
   productionApprovals?: number;
   /** Finished tasks that could not be merged into the run branch at finish. */
   unmerged?: string[];
+  /** Tokens and cost of the planner's turns (API-model planners only). */
+  plannerUsage?: TeamUsage;
   /** Backup planner that took over after the planner hit a usage limit. */
   plannerAgent?: TeamAgentId;
   plannerSwitchedFrom?: TeamAgentId;
@@ -249,6 +273,8 @@ export interface RunSnapshot {
   tasks: TeamTask[];
   decisions: TeamDecision[];
   events: TeamEvent[];
+  /** Planner plus all tasks; absent when no API model was used. */
+  usage?: TeamUsage;
 }
 
 export interface AgentDetection {

@@ -42,6 +42,7 @@
     "build:extension": "esbuild extensions/vscode/src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=extensions/vscode/dist/extension.cjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "ajv": "^8.17.1",
     "chokidar": "^4.0.3",
     "diff": "^9.0.0",

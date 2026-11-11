@@ -42,7 +42,18 @@ import {
   type PhoneNotifyView,
 } from "./team/notify";
 import { TeamOrchestrator, type GateAnswer } from "./team/orchestrator";
-import { defaultAdapters, type AgentAdapter } from "./team/adapters";
+import {
+  defaultAdapters,
+  withUnavailable,
+  type AgentAdapter,
+} from "./team/adapters";
+import {
+  apiAdapters,
+  FREE_PROVIDER_IDS,
+  FREE_PROVIDERS,
+  normalizeModelConfig,
+  type ModelWorkerConfig,
+} from "./team/api-agent";
 import {
   TEAM_AGENTS,
   TEAM_ROLES,
@@ -134,7 +145,7 @@ export class CobbleService extends EventEmitter {
       measureCapacity?: typeof capacity;
       reviewWorker?: { file: string; executable?: string; guard?: string };
       /** Agent Team CLI adapters; tests inject scripted fakes. */
-      teamAdapters?: Record<TeamAgentId, AgentAdapter>;
+      teamAdapters?: Partial<Record<TeamAgentId, AgentAdapter>>;
       /** Where run/task worktrees live (defaults beside the database). */
       teamWorktreeRoot?: string;
       /** HTTP client for phone alerts; tests inject a fake. */
@@ -153,13 +164,22 @@ export class CobbleService extends EventEmitter {
       );
     this.agentEvents = new AgentEvents(this.store);
     this.teamStore = new TeamStore(this.store);
-    this.teamAdapters = options.teamAdapters ?? defaultAdapters();
     const worktreeRoot =
       options.teamWorktreeRoot ??
       join(
         file === ":memory:" ? tmpdir() : dirname(resolve(file)),
         "team-worktrees",
       );
+    // Injected adapters (tests) replace all real ones; missing ids get a stub.
+    this.teamAdapters = options.teamAdapters
+      ? withUnavailable(options.teamAdapters)
+      : {
+          ...defaultAdapters(),
+          ...apiAdapters({
+            sessionDir: join(dirname(worktreeRoot), "model-sessions"),
+            config: () => this.modelWorkerConfig(),
+          }),
+        };
     const teamById = (id: string) => {
       try {
         return this.store.team(id);
@@ -1693,6 +1713,30 @@ export class CobbleService extends EventEmitter {
     );
     this.emit("team", null);
     return this.teamRoles();
+  }
+  /** Settings for the API-model workers (Claude API model, free/local model). */
+  modelWorkerConfig(): ModelWorkerConfig {
+    try {
+      return normalizeModelConfig(
+        this.store.setting<unknown>("modelWorkers", {}),
+      );
+    } catch {
+      return normalizeModelConfig({});
+    }
+  }
+  setModelWorkerConfig(patch: unknown): ModelWorkerConfig {
+    const next = normalizeModelConfig(patch, this.modelWorkerConfig());
+    this.store.set("modelWorkers", next);
+    this.emit("team", null);
+    return next;
+  }
+  freeModelProviders() {
+    return FREE_PROVIDER_IDS.map((id) => ({
+      id,
+      label: FREE_PROVIDERS[id].label,
+      local: FREE_PROVIDERS[id].local,
+      keyEnv: FREE_PROVIDERS[id].keyEnv,
+    }));
   }
   async detectTeamAgents(): Promise<AgentDetection[]> {
     return Promise.all(TEAM_AGENTS.map((id) => this.teamAdapters[id].detect()));

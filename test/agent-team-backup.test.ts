@@ -49,7 +49,7 @@ function fake(id: TeamAgentId, script: Script, installed = true) {
   return { adapter, calls };
 }
 function setup(
-  scripts: Record<TeamAgentId, Script>,
+  scripts: Record<"claude" | "codex" | "gemini", Script>,
   roles: Partial<Record<TeamRole, TeamAgentId>>,
   geminiInstalled = true,
 ) {

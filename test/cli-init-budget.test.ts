@@ -221,7 +221,8 @@ test("documented team detect, roles and status work on an isolated --data databa
     writeFileSync(plan, "Build a shared board\n");
     const env = { ...process.env };
     for (const key of Object.keys(env)) {
-      if (key.toLowerCase() === "path") delete env[key];
+      if (key.toLowerCase() === "path" || key === "ANTHROPIC_API_KEY")
+        delete env[key];
     }
     env.PATH = emptyBin;
     env.NODE_NO_WARNINGS = "1";
@@ -250,7 +251,11 @@ test("documented team detect, roles and status work on an isolated --data databa
     assert.ok(agents.some((entry) => entry.agent === "claude"));
     assert.ok(agents.some((entry) => entry.agent === "codex"));
     for (const entry of agents) {
-      assert.deepEqual(entry, { agent: entry.agent, installed: false });
+      if (["claude-api", "free"].includes(entry.agent)) {
+        // API-model workers explain what to set up instead of a CLI path.
+        assert.equal(entry.installed, false);
+        assert.equal(typeof entry.error, "string");
+      } else assert.deepEqual(entry, { agent: entry.agent, installed: false });
     }
 
     const roles = cli(data, ["team", "roles"], env);

@@ -15,6 +15,7 @@ import type {
   UserAnswer,
 } from "./types";
 import { FULL_ACCESS_ROLES, TEAM_AGENTS, TEAM_ROLES } from "./types";
+import { totalUsage } from "./usage";
 
 export const TEAM_STORE_LIMITS = Object.freeze({
   runsPerTeam: 200,
@@ -283,11 +284,14 @@ export class TeamStore {
   snapshot(runId: string): RunSnapshot | null {
     const run = this.run(runId);
     if (!run) return null;
+    const tasks = this.tasks(runId);
+    const usage = totalUsage(run.plannerUsage, tasks);
     return {
       run,
-      tasks: this.tasks(runId),
+      tasks,
       decisions: this.decisions(runId),
       events: this.events(runId),
+      ...(usage ? { usage } : {}),
     };
   }
 

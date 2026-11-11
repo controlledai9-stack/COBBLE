@@ -20,13 +20,21 @@ const roles: TeamRole[] = [
   "reviewer",
   "deployer",
 ];
-const agents: TeamAgentId[] = ["claude", "codex", "gemini"];
+const agents: TeamAgentId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "claude-api",
+  "free",
+];
 /** Roles that may be given full access (planner/reviewer stay read-only). */
 const fullAccessRoles: TeamRole[] = ["coder", "generator", "deployer"];
 const names: Record<TeamAgentId, string> = {
   claude: "Claude",
   codex: "Codex",
   gemini: "Gemini",
+  "claude-api": "Claude API",
+  free: "Free / local model",
 };
 const columns: { label: string; states: TeamTask["state"][] }[] = [
   { label: "Queued", states: ["queued", "interrupted"] },

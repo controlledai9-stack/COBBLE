@@ -13,7 +13,8 @@
 import { spawn, execFile } from "node:child_process";
 import { access, constants } from "node:fs/promises";
 import { delimiter, extname, join } from "node:path";
-import type { AgentDetection, TeamAgentId } from "./types";
+import type { AgentDetection, TeamAgentId, TeamUsage } from "./types";
+import { TEAM_AGENTS } from "./types";
 
 export interface AdapterRunInput {
   cwd: string;
@@ -40,6 +41,8 @@ export interface AdapterResult {
   rateLimited?: boolean;
   timedOut?: boolean;
   durationMs: number;
+  /** Tokens and cost (API-model workers). */
+  usage?: TeamUsage;
 }
 export interface AgentAdapter {
   id: TeamAgentId;
@@ -380,7 +383,27 @@ export const geminiSpec: CliSpec = {
   },
 };
 
-export function defaultAdapters(): Record<TeamAgentId, AgentAdapter> {
+/** Fills agent ids without an adapter with one that reports "not available". */
+export function withUnavailable(
+  adapters: Partial<Record<TeamAgentId, AgentAdapter>>,
+): Record<TeamAgentId, AgentAdapter> {
+  const out = { ...adapters } as Record<TeamAgentId, AgentAdapter>;
+  for (const id of TEAM_AGENTS)
+    out[id] ??= {
+      id,
+      detect: async () => ({ agent: id, installed: false }),
+      run: async () => {
+        throw new Error(`${id} is not available`);
+      },
+    };
+  return out;
+}
+
+/** The installed coding-agent CLIs (API-model workers live in api-agent.ts). */
+export function defaultAdapters(): Pick<
+  Record<TeamAgentId, AgentAdapter>,
+  "claude" | "codex" | "gemini"
+> {
   return {
     claude: new CliAdapter(claudeSpec),
     codex: new CliAdapter(codexSpec),

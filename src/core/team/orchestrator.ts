@@ -17,7 +17,12 @@ import {
   parseTaskReport,
   type PlannerAction,
 } from "./actions";
-import type { AgentAdapter, AdapterResult } from "./adapters";
+import {
+  withUnavailable,
+  type AgentAdapter,
+  type AdapterResult,
+} from "./adapters";
+import { addUsage, emptyUsage } from "./usage";
 import {
   autonomyPolicy,
   plannerTakeoverContext,
@@ -47,7 +52,8 @@ import { Worktrees } from "./worktrees";
 
 export interface OrchestratorOptions {
   teamStore: TeamStore;
-  adapters: Record<TeamAgentId, AgentAdapter>;
+  /** Missing agent ids are treated as not installed. */
+  adapters: Partial<Record<TeamAgentId, AgentAdapter>>;
   /** Directory for run/task worktrees (application data, not the workspace). */
   worktreeRoot: string;
   gitBinary?: () => string;
@@ -93,8 +99,10 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly inflight = new Set<Promise<unknown>>();
   private closed = false;
 
+  private readonly adapters: Record<TeamAgentId, AgentAdapter>;
   constructor(private readonly options: OrchestratorOptions) {
     super();
+    this.adapters = withUnavailable(options.adapters);
   }
   private get store() {
     return this.options.teamStore;
@@ -150,7 +158,7 @@ export class TeamOrchestrator extends EventEmitter {
       );
     // Fail now, not halfway through a run, when an assigned CLI is missing.
     for (const agent of new Set(Object.values(roles))) {
-      const detection = await this.options.adapters[agent].detect();
+      const detection = await this.adapters[agent].detect();
       if (!detection.installed) {
         const held = Object.entries(roles)
           .filter(([, a]) => a === agent)
@@ -435,9 +443,7 @@ export class TeamOrchestrator extends EventEmitter {
     const backup = this.store.backupAgents(teamId)[role];
     if (!backup || backup === current) return null;
     try {
-      return (await this.options.adapters[backup].detect()).installed
-        ? backup
-        : null;
+      return (await this.adapters[backup].detect()).installed ? backup : null;
     } catch {
       return null;
     }
@@ -753,7 +759,7 @@ export class TeamOrchestrator extends EventEmitter {
       const controller = new AbortController();
       this.running.set(`${runId}:${PLANNER_KEY}`, controller);
       try {
-        result = await this.options.adapters[agent].run({
+        result = await this.adapters[agent].run({
           cwd: wt.runPath(run.id),
           prompt,
           resumeSessionId: run.plannerSessionId,
@@ -781,6 +787,13 @@ export class TeamOrchestrator extends EventEmitter {
       )
         return;
       if (result.sessionId) run.plannerSessionId = result.sessionId;
+      if (result.usage) {
+        run.plannerUsage = addUsage(
+          { ...(run.plannerUsage ?? emptyUsage()) },
+          result.usage,
+        );
+        this.store.saveRun(run);
+      }
       if (result.authRequired) {
         this.store.saveRun(run);
         return this.gateRun(
@@ -1206,7 +1219,7 @@ export class TeamOrchestrator extends EventEmitter {
       const current = this.require(runId);
       let result: AdapterResult;
       try {
-        result = await this.options.adapters[task.agent].run({
+        result = await this.adapters[task.agent].run({
           cwd,
           prompt: workerPrompt(
             team,
@@ -1237,6 +1250,14 @@ export class TeamOrchestrator extends EventEmitter {
         parseTaskReport(reportFromReply(result.finalText) ?? "");
       const patch: Partial<TeamTask> = {
         ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+        ...(result.usage
+          ? {
+              usage: addUsage(
+                { ...(task.usage ?? emptyUsage()) },
+                result.usage,
+              ),
+            }
+          : {}),
         ...(report
           ? { report }
           : !result.finalText

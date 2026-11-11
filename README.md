@@ -152,6 +152,31 @@ npm run cli -- --data .\.cobble\team-trial.sqlite team autopilot --backlog docs/
 
 `team decisions [forget]` shows or forgets project decisions saved from intake interviews.
 
+### Without an AI subscription: API and free models
+
+Two team members need no coding-agent subscription. They work through Cobble's own file tools, which stay inside the task's worktree and never touch `.git` or secret files. Commands run only for roles with full access.
+
+- **`free`**: a free or local model through any OpenAI-compatible server.
+  - **Free and on your PC:** Ollama or LM Studio. No key is needed.
+  - **Free hosted tiers:** Gemini, OpenRouter or Groq. Set `GEMINI_API_KEY`, `OPENROUTER_API_KEY` or `GROQ_API_KEY` in your own environment.
+- **`claude-api`**: Claude through Anthropic's API. Pay per use with your own `ANTHROPIC_API_KEY`. The default model is `claude-opus-5-5`.
+
+Cobble reads these keys from the environment when it calls the provider. It never stores, prints or commits them.
+
+```powershell
+npm run cli -- --data .\.cobble\team-trial.sqlite team model
+npm run cli -- --data .\.cobble\team-trial.sqlite team model free ollama qwen3-coder
+npm run cli -- --data .\.cobble\team-trial.sqlite team role coder free
+npm run cli -- --data .\.cobble\team-trial.sqlite team model claude claude-opus-5-5 high
+npm run cli -- --data .\.cobble\team-trial.sqlite team role planner claude-api
+```
+
+`team detect` checks that the server is reachable and the model exists. `team status` shows each run's tokens and estimated cost (`usage`).
+
+### Drive Cobble from another agent (MCP)
+
+`cobble mcp [--data PATH]` runs Cobble as an MCP server over stdio. Another agent can then start runs, read status, answer the planner's questions, and pause, resume or stop runs. It cannot approve production deploys, complete sign-ins or change the team's configuration. Those stay with a human in the desktop app, the terminal or the phone.
+
 ## Verify
 
 ```powershell

@@ -34,6 +34,7 @@ async function main() {
 
   cobble init --name NAME --display-name NAME --plan-file PLAN.md --workspace FOLDER
   cobble ingest --stdin | --file FILE | --from-transcript
+  cobble mcp [--data PATH]           Agent Team MCP server over stdio
   cobble status
   cobble report
 
@@ -51,6 +52,10 @@ async function main() {
   cobble team access [ROLE...|none]   roles with FULL ACCESS (no agent sandbox), e.g. access deployer
   cobble team backup [ROLE AGENT|none] backup agent used when a role's agent hits a usage limit
   cobble team decisions [forget]      project decisions saved from intake interviews
+  cobble team model                  API-model workers: settings and free providers
+  cobble team model claude MODEL [EFFORT]   agent "claude-api" (needs ANTHROPIC_API_KEY)
+  cobble team model free PROVIDER [MODEL] [URL]   agent "free": ollama, lmstudio,
+      gemini, openrouter, groq or custom (URL); e.g. team model free ollama qwen3-coder
   cobble team status [RUN_ID]
   cobble team runs [--json]          recent Agent Team runs, newest first
 
@@ -88,7 +93,10 @@ Agent hook installation is not yet automatic.`);
   );
   const service = new CobbleService(data);
   try {
-    if (command === "init") {
+    if (command === "mcp") {
+      const { serveMcp } = await import("./mcp/server");
+      await serveMcp(service);
+    } else if (command === "init") {
       if (!process.stdin.isTTY) {
         for (const flag of [
           "name",
@@ -236,6 +244,36 @@ async function teamCommand(
     // `team access deployer coder` | `team access none` | `team access`
     if (!rest.length) return print(service.teamFullAccess());
     return print(service.setTeamFullAccess(rest[0] === "none" ? [] : rest));
+  }
+  if (sub === "model") {
+    // `team model` | `team model claude claude-opus-5-5 high` |
+    // `team model free ollama qwen3-coder` | `team model free custom MODEL URL`
+    const [kind, a, b, c] = rest;
+    if (!kind)
+      return print({
+        config: service.modelWorkerConfig(),
+        freeProviders: service.freeModelProviders(),
+      });
+    if (kind === "claude" && a)
+      return print(
+        service.setModelWorkerConfig({
+          claudeModel: a,
+          ...(b ? { claudeEffort: b } : {}),
+        }),
+      );
+    if (kind === "free" && a)
+      return print(
+        service.setModelWorkerConfig({
+          free: {
+            provider: a,
+            ...(b ? { model: b } : {}),
+            ...(c ? { baseUrl: c } : {}),
+          },
+        }),
+      );
+    throw new Error(
+      "Usage: cobble team model [claude MODEL [EFFORT] | free PROVIDER [MODEL] [URL]]",
+    );
   }
   if (sub === "decisions") {
     if (rest[0] === "forget") return print(service.forgetTeamUserDecisions());
