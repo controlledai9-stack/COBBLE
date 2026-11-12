@@ -55,7 +55,29 @@ export interface AgentAdapter {
 export const ADAPTER_LIMITS = Object.freeze({
   stdoutBytes: 1_000_000,
   finalText: 12_000,
+  /** A reply's cobble-actions / cobble-report block is kept up to this size. */
+  blockText: 60_000,
 });
+
+/**
+ * Shortens an agent's reply for storage and parsing. Keeps the end, but never
+ * cuts into the last ```cobble-actions or ```cobble-report block: long
+ * planner replies (a brief plus many tasks) used to lose the block's opening
+ * fence and were rejected as "no cobble-actions block found".
+ */
+export function clipReply(text: string): string {
+  if (text.length <= ADAPTER_LIMITS.finalText) return text;
+  const fence = Math.max(
+    text.lastIndexOf("```cobble-actions"),
+    text.lastIndexOf("```cobble-report"),
+  );
+  const tail = text.length - ADAPTER_LIMITS.finalText;
+  if (fence < 0 || fence >= tail) return text.slice(tail);
+  // Keep the whole block (bounded), plus a little of the words before it.
+  return text.slice(
+    Math.max(0, fence - 2_000, text.length - ADAPTER_LIMITS.blockText),
+  );
+}
 
 const SAFE_ARG = /^[\w .:=/,-]{1,200}$/;
 const SAFE_SESSION = /^[\w-]{1,128}$/;
@@ -210,9 +232,7 @@ export class CliAdapter implements AgentAdapter {
           : classifyFailure(`${out.stderr}\n${out.stdout}`.slice(-20_000));
       return {
         exitCode: out.code,
-        finalText: (parsed.finalText || out.stderr).slice(
-          -ADAPTER_LIMITS.finalText,
-        ),
+        finalText: clipReply(parsed.finalText || out.stderr),
         ...(parsed.sessionId && SAFE_SESSION.test(parsed.sessionId)
           ? { sessionId: parsed.sessionId }
           : {}),
