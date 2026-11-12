@@ -32,7 +32,8 @@ function describeError(error: unknown) {
 export function author(message: TeamChatMessage) {
   if (message.author === "user") return message.memberName ?? "You";
   if (message.author === "cobble") return "Cobble";
-  const name = message.agent ? agentNames[message.agent] : "Agent";
+  const name =
+    message.agentLabel ?? (message.agent ? agentNames[message.agent] : "Agent");
   return `${name} · ${message.role ?? "agent"}${message.taskId && message.role !== "planner" ? ` · ${message.taskId}` : ""}`;
 }
 

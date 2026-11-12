@@ -285,6 +285,8 @@ export interface TeamChatMessage {
   to?: string;
   /** Shared rooms: the person who wrote a "user" message (owner or teammate). */
   memberName?: string;
+  /** Display name of the agent when it isn't obvious, e.g. "Rahul's Codex". */
+  agentLabel?: string;
   kind:
     | "message"
     | "delegate"

@@ -234,7 +234,7 @@ test(
       );
       const texts = rahul.agentRoomChat(run.id).map((m) => m.text);
       assert.ok(
-        texts.some((t) => /@teammate T1 \(coder\): Greeting file/.test(t)),
+        texts.some((t) => /@Rahul's Codex T1 \(coder\): Greeting file/.test(t)),
         texts.join("\n"),
       );
       // Rahul's lent worktree is cleaned up.

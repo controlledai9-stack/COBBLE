@@ -325,6 +325,9 @@ export class AgentRoom {
           ...(m.role ? { role: m.role as TeamRole } : {}),
           ...(m.taskId ? { taskId: id(m.taskId, "task id") } : {}),
           ...(m.to ? { to: str(m.to, 60, "recipient") } : {}),
+          ...(m.agentLabel
+            ? { agentLabel: str(m.agentLabel, 80, "agent name") }
+            : {}),
           ...(m.memberName
             ? { memberName: str(m.memberName, 80, "member name") }
             : // A message the owner typed is shown with the owner's name.

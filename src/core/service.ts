@@ -106,6 +106,15 @@ interface AutopilotSession {
   work: Promise<void>;
 }
 
+const AGENT_NAMES: Record<TeamAgentId, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  gemini: "Gemini",
+  "claude-api": "Claude API",
+  free: "free model",
+  teammate: "agent",
+};
+
 export class CobbleService extends EventEmitter {
   readonly store: Store;
   readonly bridge: IdeBridge;
@@ -246,6 +255,15 @@ export class CobbleService extends EventEmitter {
       worktreeRoot,
       gitBinary: () => this.gitBinary,
       team: teamById,
+      agentLabel: (teamId, role, agent) => {
+        if (agent !== "teammate") return undefined;
+        const who = this.teammateRoles(teamId)[role];
+        if (!who) return undefined;
+        const name =
+          this.store.members(teamId).find((m) => m.id === who.memberId)?.name ??
+          "A teammate";
+        return `${name}'s ${AGENT_NAMES[who.agent]}`;
+      },
     });
     this.autopilot = new Autopilot({
       orchestrator: this.agentTeam,

@@ -61,6 +61,12 @@ export interface OrchestratorOptions {
   gitBinary?: () => string;
   team(teamId: string): Team | null;
   now?: () => number;
+  /** Display name for an agent in a role, e.g. "Rahul's Codex" for a teammate. */
+  agentLabel?: (
+    teamId: string,
+    role: TeamRole,
+    agent: TeamAgentId,
+  ) => string | undefined;
 }
 
 export type GateAnswer = "done" | "approve" | "skip" | "deny";
@@ -131,7 +137,18 @@ export class TeamOrchestrator extends EventEmitter {
     run: TeamRun,
     message: Omit<TeamChatMessage, "id" | "createdAt" | "runId">,
   ) {
-    this.emit("chat", this.store.chat({ ...message, runId: run.id }));
+    const label =
+      message.agent && message.role
+        ? this.options.agentLabel?.(run.teamId, message.role, message.agent)
+        : undefined;
+    this.emit(
+      "chat",
+      this.store.chat({
+        ...message,
+        ...(label ? { agentLabel: label.slice(0, 80) } : {}),
+        runId: run.id,
+      }),
+    );
   }
   private plannerOf(run: TeamRun): TeamAgentId | undefined {
     return run.plannerAgent ?? this.store.roles(run.teamId).planner;
@@ -1148,7 +1165,7 @@ export class TeamOrchestrator extends EventEmitter {
           role: "planner",
           taskId: task.id,
           kind: "delegate",
-          text: `@${agent} ${task.id} (${task.role}): ${task.title}`,
+          text: `@${this.options.agentLabel?.(run.teamId, task.role, agent) ?? agent} ${task.id} (${task.role}): ${task.title}`,
         });
         return;
       }
