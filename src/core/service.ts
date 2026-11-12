@@ -48,6 +48,18 @@ import {
   type AgentAdapter,
 } from "./team/adapters";
 import {
+  LendingRunner,
+  TeammateAdapter,
+  type TeammateAssignment,
+} from "./team/teammates";
+import {
+  LENDABLE_AGENTS,
+  TEAMMATE_ROLES,
+  type RoomResult,
+  type RoomSay,
+  type RoomTask,
+} from "./team/room";
+import {
   apiAdapters,
   FREE_PROVIDER_IDS,
   FREE_PROVIDERS,
@@ -171,16 +183,56 @@ export class CobbleService extends EventEmitter {
         file === ":memory:" ? tmpdir() : dirname(resolve(file)),
         "team-worktrees",
       );
+    this.worktreeRoot = worktreeRoot;
+    // Workers on teammates' lent agents (shared team room).
+    const teammate = new TeammateAdapter({
+      gitBinary: () => this.gitBinary,
+      assignment: (teamId, role) => this.teammateRoles(teamId)[role],
+      memberName: (teamId, memberId) =>
+        this.store.members(teamId).find((m) => m.id === memberId)?.name ??
+        "Your teammate",
+      available: () => {
+        const team = this.activeTeam();
+        const me = this.store.profile()?.id;
+        return (
+          !!team &&
+          this.network.sharedTeamId() === team.id &&
+          this.network.room
+            .roster(team.id)
+            .some((r) => r.memberId !== me && (r.lends ?? []).length > 0)
+        );
+      },
+      publish: (teamId, post) => this.network.publishRoom(teamId, post),
+      waitResult: (teamId, requestId, signal) =>
+        this.waitRoomResult(teamId, requestId, signal),
+    });
     // Injected adapters (tests) replace all real ones; missing ids get a stub.
     this.teamAdapters = options.teamAdapters
-      ? withUnavailable(options.teamAdapters)
+      ? withUnavailable({ teammate, ...options.teamAdapters })
       : {
           ...defaultAdapters(),
           ...apiAdapters({
             sessionDir: join(dirname(worktreeRoot), "model-sessions"),
             config: () => this.modelWorkerConfig(),
           }),
+          teammate,
         };
+    this.lending = new LendingRunner({
+      me: () => this.store.profile()?.id,
+      gitBinary: () => this.gitBinary,
+      workspace: (teamId) => {
+        try {
+          return this.store.team(teamId).workspace || undefined;
+        } catch {
+          return undefined;
+        }
+      },
+      worktreeRoot,
+      lends: (teamId) => this.lentAgents(teamId),
+      adapter: (agent) => this.teamAdapters[agent],
+      publish: (teamId, post) => this.network.publishRoom(teamId, post),
+      log: (message) => this.emit("diagnostic", message),
+    });
     const teamById = (id: string) => {
       try {
         return this.store.team(id);
@@ -319,17 +371,25 @@ export class CobbleService extends EventEmitter {
       secrets.unprotect,
       options.measureCapacity,
     );
-    // Shared agent room: share this Cobble's runs and act on teammates' messages.
-    this.network.onRoomSay = (teamId, say) => {
-      const run = this.teamStore.run(say.runId);
-      if (!run || run.teamId !== teamId) return; // not my run
-      try {
-        this.agentTeam.userMessage(run.id, say.text, { name: say.fromName });
-      } catch (error) {
-        this.emit(
-          "diagnostic",
-          `Teammate message not delivered: ${error instanceof Error ? error.message : error}`,
-        );
+    // Shared agent room: teammates' messages, tasks for my lent agents, results.
+    this.network.onRoomEvent = (teamId, kind, data) => {
+      if (kind === "agent-say") {
+        const say = data as RoomSay;
+        const run = this.teamStore.run(say.runId);
+        if (!run || run.teamId !== teamId) return; // not my run
+        try {
+          this.agentTeam.userMessage(run.id, say.text, { name: say.fromName });
+        } catch (error) {
+          this.emit(
+            "diagnostic",
+            `Teammate message not delivered: ${error instanceof Error ? error.message : error}`,
+          );
+        }
+      } else if (kind === "agent-task") {
+        void this.lending.receive(teamId, data as RoomTask);
+      } else if (kind === "agent-result") {
+        const result = data as RoomResult;
+        this.roomWaiters.get(result.id)?.(result);
       }
     };
     this.agentTeam.on("chat", (message: TeamChatMessage) => {
@@ -348,6 +408,92 @@ export class CobbleService extends EventEmitter {
       const run = runId ? this.teamStore.run(runId) : null;
       if (run) this.shareRoom(run.teamId, () => this.shareRun(run.id));
     });
+  }
+  private readonly worktreeRoot: string;
+  /** Runs tasks that teammates' planners hand to this member's lent agents. */
+  readonly lending: LendingRunner;
+  private roomWaiters = new Map<string, (result: RoomResult) => void>();
+  private waitRoomResult(
+    teamId: string,
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<RoomResult> {
+    const known = this.network.room.result(teamId, requestId);
+    if (known) return Promise.resolve(known);
+    return new Promise((resolve, reject) => {
+      const done = () => {
+        this.roomWaiters.delete(requestId);
+        signal.removeEventListener("abort", stop);
+      };
+      const stop = () => {
+        done();
+        reject(new Error("Stopped waiting"));
+      };
+      if (signal.aborted) return stop();
+      signal.addEventListener("abort", stop, { once: true });
+      this.roomWaiters.set(requestId, (result) => {
+        done();
+        resolve(result);
+      });
+    });
+  }
+  /** Agents this member lets teammates' planners use (per team, opt-in). */
+  lentAgents(teamId = this.activeTeam()?.id): TeamAgentId[] {
+    if (!teamId) return [];
+    return this.store
+      .setting<TeamAgentId[]>(`lendAgents:${teamId}`, [])
+      .filter((a) => LENDABLE_AGENTS.includes(a));
+  }
+  setLentAgents(agents: unknown) {
+    const team = this.activeTeam();
+    if (!team) throw new Error("Select a team first");
+    if (
+      !Array.isArray(agents) ||
+      agents.some((a) => !LENDABLE_AGENTS.includes(a as TeamAgentId))
+    )
+      throw new Error("Choose agents you have installed");
+    this.store.set(`lendAgents:${team.id}`, [...new Set(agents)]);
+    if (this.lastDetection) this.shareRoster(this.lastDetection);
+    this.emit("team", null);
+    return this.agentRoom();
+  }
+  /** Worker roles that run on a teammate's lent agent, per team. */
+  teammateRoles(
+    teamId = this.activeTeam()?.id,
+  ): Partial<Record<TeamRole, TeammateAssignment>> {
+    if (!teamId) return {};
+    return this.store.setting(`teammateRoles:${teamId}`, {});
+  }
+  /** Assigns a worker role to a teammate's lent agent (null clears it). */
+  setTeammateRole(role: string, memberId: string | null, agent?: string) {
+    const team = this.activeTeam();
+    if (!team) throw new Error("Select a team first");
+    if (!TEAMMATE_ROLES.includes(role as TeamRole))
+      throw new Error(
+        "Only coder, generator and reviewer can use a teammate's agent",
+      );
+    const roles = { ...this.teammateRoles(team.id) };
+    if (memberId === null) {
+      delete roles[role as TeamRole];
+      if (this.teamStore.roles(team.id)[role as TeamRole] === "teammate")
+        this.teamStore.setRole(team.id, role as TeamRole, null);
+    } else {
+      const lender = this.network.room
+        .roster(team.id)
+        .find((r) => r.memberId === memberId);
+      if (
+        memberId === this.store.profile()?.id ||
+        !lender ||
+        !(lender.lends ?? []).includes(agent as TeamAgentId)
+      )
+        throw new Error("That teammate does not lend this agent");
+      roles[role as TeamRole] = { memberId, agent: agent as TeamAgentId };
+      this.teamStore.setRole(team.id, role as TeamRole, "teammate");
+    }
+    this.store.set(`teammateRoles:${team.id}`, roles);
+    this.emit("team", null);
+    if (this.lastDetection) this.shareRoster(this.lastDetection);
+    return this.teammateRoles(team.id);
   }
   /** Room posts go out one at a time, in order. */
   private roomQueue: Promise<unknown> = Promise.resolve();
@@ -391,6 +537,7 @@ export class CobbleService extends EventEmitter {
           ...(d.version ? { version: d.version } : {}),
         })),
         roles: roles as Record<string, string>,
+        lends: this.lentAgents(team.id),
       }),
     );
   }
@@ -398,7 +545,14 @@ export class CobbleService extends EventEmitter {
   agentRoom() {
     const team = this.activeTeam();
     const me = this.store.profile()?.id;
-    if (!team) return { shared: false, roster: [], runs: [] };
+    if (!team)
+      return {
+        shared: false,
+        roster: [],
+        runs: [],
+        lends: [],
+        teammateRoles: {},
+      };
     const roster = this.network.room.roster(team.id);
     // Joined after detecting agents: share this member's roster once.
     if (
@@ -412,6 +566,9 @@ export class CobbleService extends EventEmitter {
       roster,
       // Other members' runs; your own runs are in your Team Chat.
       runs: this.network.room.runs(team.id).filter((r) => r.ownerId !== me),
+      me,
+      lends: this.lentAgents(team.id),
+      teammateRoles: this.teammateRoles(team.id),
     };
   }
   agentRoomChat(runId: string) {

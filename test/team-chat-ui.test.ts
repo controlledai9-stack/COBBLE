@@ -199,9 +199,21 @@ test("Team Chat renders agents' light Markdown safely", async () => {
 test("Team room shows teammates' agents and runs, and explains sharing", async () => {
   const { TeamRoom } = await import("../src/renderer/team-room");
   const api = {
-    agentRoom: async () => ({ shared: true, roster: [], runs: [] }),
+    agentRoom: async () => ({
+      shared: true,
+      roster: [],
+      runs: [],
+      lends: [],
+      teammateRoles: {},
+    }),
     agentRoomChat: async () => [],
-    sayInAgentRoom: async () => ({ shared: true, roster: [], runs: [] }),
+    sayInAgentRoom: async () => ({
+      shared: true,
+      roster: [],
+      runs: [],
+      lends: [],
+      teammateRoles: {},
+    }),
     onChange: () => () => {},
   };
   const shared = renderToStaticMarkup(
@@ -215,6 +227,7 @@ test("Team room shows teammates' agents and runs, and explains sharing", async (
             memberName: "Aarya",
             agents: [{ agent: "claude", installed: true }],
             roles: { planner: "claude" },
+            lends: [],
             updatedAt: at(0),
           },
           {
@@ -225,6 +238,7 @@ test("Team room shows teammates' agents and runs, and explains sharing", async (
               { agent: "codex", installed: false },
             ],
             roles: {},
+            lends: ["free"],
             updatedAt: at(0),
           },
         ],
@@ -238,6 +252,9 @@ test("Team room shows teammates' agents and runs, and explains sharing", async (
             updatedAt: at(1),
           },
         ],
+        me: "a",
+        lends: ["claude"],
+        teammateRoles: { coder: { memberId: "r", agent: "free" } },
       },
       initialChat: [
         {
@@ -270,7 +287,13 @@ test("Team room shows teammates' agents and runs, and explains sharing", async (
   const local = renderToStaticMarkup(
     React.createElement(TeamRoom, {
       api,
-      initial: { shared: false, roster: [], runs: [] },
+      initial: {
+        shared: false,
+        roster: [],
+        runs: [],
+        lends: [],
+        teammateRoles: {},
+      },
     }),
   );
   assert.match(local, /Only on this computer/);

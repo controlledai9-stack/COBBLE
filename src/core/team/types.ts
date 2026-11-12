@@ -5,13 +5,15 @@
  * free: a free or local model through an OpenAI-compatible server
  * (Ollama, LM Studio, Gemini/OpenRouter/Groq free tiers).
  */
-export type TeamAgentId = "claude" | "codex" | "gemini" | "claude-api" | "free";
+export type TeamAgentId =
+  "claude" | "codex" | "gemini" | "claude-api" | "free" | "teammate";
 export const TEAM_AGENTS: readonly TeamAgentId[] = [
   "claude",
   "codex",
   "gemini",
   "claude-api",
   "free",
+  "teammate",
 ];
 /** Tokens and cost used by API-model workers (CLI agents report none). */
 export interface TeamUsage {

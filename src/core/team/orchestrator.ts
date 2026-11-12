@@ -1395,6 +1395,12 @@ export class TeamOrchestrator extends EventEmitter {
             writing && (run.fullAccessRoles ?? []).includes(task.role),
           timeoutMs: run.budget.taskTimeoutMs,
           signal: controller.signal,
+          task: {
+            teamId: run.teamId,
+            runId: run.id,
+            taskId: task.id,
+            role: task.role,
+          },
         });
       } catch (error) {
         return finish({

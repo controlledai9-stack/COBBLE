@@ -251,7 +251,7 @@ test("documented team detect, roles and status work on an isolated --data databa
     assert.ok(agents.some((entry) => entry.agent === "claude"));
     assert.ok(agents.some((entry) => entry.agent === "codex"));
     for (const entry of agents) {
-      if (["claude-api", "free"].includes(entry.agent)) {
+      if (["claude-api", "free", "teammate"].includes(entry.agent)) {
         // API-model workers explain what to set up instead of a CLI path.
         assert.equal(entry.installed, false);
         assert.equal(typeof entry.error, "string");

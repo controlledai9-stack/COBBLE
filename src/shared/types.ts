@@ -8,6 +8,14 @@ export interface AgentRoomView {
   roster: RoomRoster[];
   /** Other members' runs (your own are in your Team Chat). */
   runs: RoomRun[];
+  /** This member's id in the team. */
+  me?: string;
+  /** Agents you let teammates' planners use. */
+  lends: TeamAgentId[];
+  /** Your worker roles that run on a teammate's lent agent. */
+  teammateRoles: Partial<
+    Record<TeamRole, { memberId: string; agent: TeamAgentId }>
+  >;
 }
 import type {
   AgentDetection,
@@ -602,6 +610,14 @@ export interface DesktopApi {
   /** Shared agent room of a hosted/joined team: members' agents and runs. */
   agentRoom?(): Promise<AgentRoomView>;
   agentRoomChat?(runId: string): Promise<TeamChatMessage[]>;
+  /** Agents you let teammates' planners use. */
+  setLentAgents?(agents: TeamAgentId[]): Promise<AgentRoomView>;
+  /** Runs a worker role on a teammate's lent agent (memberId null clears). */
+  setTeammateRole?(
+    role: TeamRole,
+    memberId: string | null,
+    agent?: TeamAgentId,
+  ): Promise<AgentRoomView>;
   sayInAgentRoom?(runId: string, message: string): Promise<AgentRoomView>;
   /** Team Chat of a run, oldest first. */
   teamChat?(runId: string): Promise<TeamChatMessage[]>;

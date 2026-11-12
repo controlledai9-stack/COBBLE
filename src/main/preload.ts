@@ -40,6 +40,15 @@ const api: DesktopApi = {
   teamRun: (runId) => ipcRenderer.invoke("cobble:team-run", runId),
   teamChat: (runId) => ipcRenderer.invoke("cobble:team-chat", runId),
   agentRoom: () => ipcRenderer.invoke("cobble:agent-room"),
+  setLentAgents: (agents) =>
+    ipcRenderer.invoke("cobble:agent-room-lend", agents),
+  setTeammateRole: (role, memberId, agent) =>
+    ipcRenderer.invoke(
+      "cobble:agent-room-teammate-role",
+      role,
+      memberId,
+      agent,
+    ),
   agentRoomChat: (runId) => ipcRenderer.invoke("cobble:agent-room-chat", runId),
   sayInAgentRoom: (runId, message) =>
     ipcRenderer.invoke("cobble:agent-room-say", runId, message),

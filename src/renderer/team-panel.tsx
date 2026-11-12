@@ -37,6 +37,7 @@ const names: Record<TeamAgentId, string> = {
   gemini: "Gemini",
   "claude-api": "Claude API",
   free: "Free / local model",
+  teammate: "Teammate",
 };
 const columns: { label: string; states: TeamTask["state"][] }[] = [
   { label: "Queued", states: ["queued", "interrupted"] },
@@ -316,6 +317,8 @@ function TeamPanelContent({
               agentRoomChat: window.cobble.agentRoomChat,
               sayInAgentRoom: window.cobble.sayInAgentRoom,
               onChange: window.cobble.onChange,
+              setLentAgents: window.cobble.setLentAgents,
+              setTeammateRole: window.cobble.setTeammateRole,
             }}
           />
         )}
@@ -365,11 +368,18 @@ function TeamPanelContent({
                     }}
                   >
                     <option value="">None</option>
-                    {agents.map((agent) => (
-                      <option key={agent} value={agent}>
-                        {names[agent]}
-                      </option>
-                    ))}
+                    {agents
+                      // Teammates' agents are chosen in the Team room.
+                      .filter(
+                        (agent) =>
+                          agent !== "teammate" ||
+                          assignments?.[role] === "teammate",
+                      )
+                      .map((agent) => (
+                        <option key={agent} value={agent}>
+                          {names[agent]}
+                        </option>
+                      ))}
                   </select>
                   {assignments?.[role] &&
                     detected?.find((item) => item.agent === assignments[role])
@@ -401,7 +411,10 @@ function TeamPanelContent({
                   >
                     <option value="">None</option>
                     {agents
-                      .filter((agent) => agent !== assignments?.[role])
+                      .filter(
+                        (agent) =>
+                          agent !== assignments?.[role] && agent !== "teammate",
+                      )
                       .map((agent) => (
                         <option key={agent} value={agent}>
                           {names[agent]}

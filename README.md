@@ -169,7 +169,15 @@ When the workspace is hosted or joined (Workspace & Plan → Workspace & Hosting
 - **Team room** under the Team Chat lists each member's ready agents and roles, plus teammates' runs with their live chat.
 - You can write into a teammate's run. Their planner gets it as a teammate's suggestion and decides how to use it.
 - Only the run's owner can answer their workers directly, approve deploys or complete sign-ins. The host checks every shared event and records who sent it from the authenticated connection.
-- Coming next: the planner on one PC hands tasks to agents on other PCs.
+
+**Using a teammate's agent.** In the Team room, each member can **lend** their agents (for example "lend my Codex"). You can then give your **coder**, **generator** or **reviewer** role to a teammate's lent agent. The planner and the deployer always stay on your own PC. The code travels through your shared Git remote named `origin`, for example your GitHub repository:
+
+1. Your Cobble pushes the task's starting point to a `cobble/<run>/<task>` branch and sends the task through the team room.
+2. Their Cobble runs it on its own copy of that branch with their agent. It is always sandboxed: no full access and no network.
+3. It commits the work without secret files and pushes it back to the same branch.
+4. Your Cobble fetches it, accepts only a fast-forward with no secret files, and then runs your usual checks, plan guard and merge.
+
+Each person pays for their own agents, and `main` is never touched. Both of you need push access to the repository. If Git asks for a sign-in, the task pauses with a "sign in" card.
 
 ### Without an AI subscription: API and free models
 

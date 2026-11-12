@@ -13,7 +13,7 @@
 import { spawn, execFile } from "node:child_process";
 import { access, constants } from "node:fs/promises";
 import { delimiter, extname, join } from "node:path";
-import type { AgentDetection, TeamAgentId, TeamUsage } from "./types";
+import type { AgentDetection, TeamAgentId, TeamRole, TeamUsage } from "./types";
 import { TEAM_AGENTS } from "./types";
 
 export interface AdapterRunInput {
@@ -32,6 +32,8 @@ export interface AdapterRunInput {
   fullAccess?: boolean;
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Worker tasks only: which task this is (used by the teammate adapter). */
+  task?: { teamId: string; runId: string; taskId: string; role: TeamRole };
 }
 export interface AdapterResult {
   sessionId?: string;

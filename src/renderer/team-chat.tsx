@@ -19,6 +19,7 @@ const agentNames: Record<TeamAgentId, string> = {
   gemini: "Gemini",
   "claude-api": "Claude API",
   free: "Free model",
+  teammate: "Teammate",
 };
 
 function describeError(error: unknown) {

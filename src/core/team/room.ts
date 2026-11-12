@@ -32,6 +32,8 @@ export interface RoomRoster {
   memberName: string;
   agents: RoomAgent[];
   roles: Partial<Record<TeamRole, TeamAgentId>>;
+  /** Agents this member lets teammates' planners use (opt-in). */
+  lends: TeamAgentId[];
   updatedAt: string;
 }
 export interface RoomRun {
@@ -55,24 +57,106 @@ export interface RoomSay {
   text: string;
   createdAt: string;
 }
+/** A task one member's planner hands to a teammate's lent agent. */
+export interface RoomTask {
+  id: string;
+  runId: string;
+  taskId: string;
+  fromId: string;
+  fromName: string;
+  toId: string;
+  agent: TeamAgentId;
+  /** Shared-repo branch with the task's starting point; results come back on it. */
+  branch: string;
+  prompt: string;
+  readOnly: boolean;
+  resumeSessionId?: string;
+  timeoutMs: number;
+  createdAt: string;
+}
+/** The teammate's answer to a RoomTask (same id). */
+export interface RoomResult {
+  id: string;
+  runId: string;
+  fromId: string;
+  toId: string;
+  exitCode: number;
+  finalText: string;
+  sessionId?: string;
+  /** The teammate pushed new commits to the task branch. */
+  pushed: boolean;
+  rateLimited?: boolean;
+  authRequired?: { service: string; hint: string };
+  createdAt: string;
+}
 export type RoomKind =
-  "agent-roster" | "agent-run" | "agent-chat" | "agent-say";
+  | "agent-roster"
+  | "agent-run"
+  | "agent-chat"
+  | "agent-say"
+  | "agent-task"
+  | "agent-result";
 export const ROOM_KINDS: readonly RoomKind[] = [
   "agent-roster",
   "agent-run",
   "agent-chat",
   "agent-say",
+  "agent-task",
+  "agent-result",
 ];
+/** Agents a member may lend (never "teammate": no chains of lending). */
+export const LENDABLE_AGENTS: readonly TeamAgentId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "claude-api",
+  "free",
+];
+/** Roles that may run on a teammate's agent (never planner or deployer). */
+export const TEAMMATE_ROLES: readonly TeamRole[] = [
+  "coder",
+  "generator",
+  "reviewer",
+];
+export const TASK_BRANCH = /^cobble\/[\w-]{1,40}\/[\w-]{1,40}$/;
 
 /** What a member sends; identity fields are added by the host. */
 export type RoomPost =
-  | { type: "roster"; agents: RoomAgent[]; roles: Record<string, string> }
+  | {
+      type: "roster";
+      agents: RoomAgent[];
+      roles: Record<string, string>;
+      lends?: TeamAgentId[];
+    }
   | {
       type: "run";
       run: { id: string; goal: string; state: string; updatedAt: string };
     }
   | { type: "chat"; runId: string; message: TeamChatMessage }
-  | { type: "say"; id?: string; runId: string; text: string };
+  | { type: "say"; id?: string; runId: string; text: string }
+  | {
+      type: "task";
+      id: string;
+      runId: string;
+      taskId: string;
+      toId: string;
+      agent: TeamAgentId;
+      branch: string;
+      prompt: string;
+      readOnly: boolean;
+      resumeSessionId?: string;
+      timeoutMs: number;
+    }
+  | {
+      type: "result";
+      id: string;
+      exitCode: number;
+      finalText: string;
+      sessionId?: string;
+      pushed: boolean;
+      rateLimited?: boolean;
+      authRequired?: { service: string; hint: string };
+    };
 
 export const ROOM_LIMITS = Object.freeze({
   goal: 4_000,
@@ -80,6 +164,9 @@ export const ROOM_LIMITS = Object.freeze({
   sayText: 4_000,
   chatPerRun: 500,
   runsPerTeam: 200,
+  taskPrompt: 200_000,
+  resultText: 20_000,
+  taskTimeoutMs: 4 * 60 * 60_000,
 });
 
 const RUN_STATES = [
@@ -173,11 +260,19 @@ export class AgentRoom {
           if (!TEAM_AGENTS.includes(agent as TeamAgentId)) bad("Unknown agent");
           roles[role as TeamRole] = agent as TeamAgentId;
         }
+        const lends = post.lends === undefined ? [] : post.lends;
+        if (
+          !Array.isArray(lends) ||
+          lends.length > LENDABLE_AGENTS.length ||
+          lends.some((a) => !LENDABLE_AGENTS.includes(a as TeamAgentId))
+        )
+          bad("Invalid lent agents");
         const data: RoomRoster = {
           memberId,
           memberName,
           agents,
           roles,
+          lends: [...new Set(lends as TeamAgentId[])],
           updatedAt: now,
         };
         return { kind: "agent-roster", data };
@@ -258,6 +353,98 @@ export class AgentRoom {
         };
         return { kind: "agent-say", data };
       }
+      case "task": {
+        const runId = id(post.runId, "run id");
+        const run = this.run(teamId, runId);
+        if (!run || run.ownerId !== memberId)
+          throw Object.assign(
+            new Error("Only the run's owner can hand out its tasks"),
+            { statusCode: 403 },
+          );
+        if (["done", "failed", "stopped"].includes(run.state))
+          bad("That run has ended");
+        const toId = id(post.toId, "teammate");
+        if (toId === memberId) bad("Use your own agents directly");
+        const lender = this.roster(teamId).find((r) => r.memberId === toId);
+        const agent = post.agent as TeamAgentId;
+        if (!lender || !(lender.lends ?? []).includes(agent))
+          throw Object.assign(
+            new Error("That teammate does not lend this agent"),
+            { statusCode: 403 },
+          );
+        const branch = str(post.branch, 100, "branch");
+        if (!TASK_BRANCH.test(branch)) bad("Invalid task branch");
+        const timeoutMs = Number(post.timeoutMs);
+        if (
+          !Number.isInteger(timeoutMs) ||
+          timeoutMs < 60_000 ||
+          timeoutMs > ROOM_LIMITS.taskTimeoutMs
+        )
+          bad("Invalid task time limit");
+        if (typeof post.readOnly !== "boolean") bad("Invalid read-only flag");
+        const data: RoomTask = {
+          id: id(post.id, "task request id"),
+          runId,
+          taskId: id(post.taskId, "task id"),
+          fromId: memberId,
+          fromName: memberName,
+          toId,
+          agent,
+          branch,
+          prompt: str(post.prompt, ROOM_LIMITS.taskPrompt, "task prompt", 1),
+          readOnly: post.readOnly,
+          ...(post.resumeSessionId !== undefined
+            ? {
+                resumeSessionId: /^[\w-]{1,128}$/.test(
+                  String(post.resumeSessionId),
+                )
+                  ? String(post.resumeSessionId)
+                  : bad("Invalid session id"),
+              }
+            : {}),
+          timeoutMs,
+          createdAt: now,
+        };
+        return { kind: "agent-task", data };
+      }
+      case "result": {
+        const task = this.task(teamId, id(post.id, "task request id"));
+        if (!task || task.toId !== memberId)
+          throw Object.assign(
+            new Error("Only the teammate who got the task can answer it"),
+            { statusCode: 403 },
+          );
+        if (this.result(teamId, task.id)) bad("Task already answered");
+        if (!Number.isInteger(post.exitCode)) bad("Invalid exit code");
+        const auth = post.authRequired as Record<string, unknown> | undefined;
+        const data: RoomResult = {
+          id: task.id,
+          runId: task.runId,
+          fromId: memberId,
+          toId: task.fromId,
+          exitCode: Number(post.exitCode),
+          finalText: str(post.finalText, ROOM_LIMITS.resultText, "result"),
+          pushed: post.pushed === true,
+          ...(post.sessionId !== undefined
+            ? {
+                sessionId: /^[\w-]{1,128}$/.test(String(post.sessionId))
+                  ? String(post.sessionId)
+                  : bad("Invalid session id"),
+              }
+            : {}),
+          ...(post.rateLimited === true ? { rateLimited: true } : {}),
+          ...(auth
+            ? {
+                authRequired: {
+                  service: str(auth.service, 120, "service"),
+                  hint: str(auth.hint, 500, "hint"),
+                },
+              }
+            : {}),
+          createdAt: now,
+        };
+        return { kind: "agent-result", data };
+      }
     }
     return bad("Unknown agent room event");
   }
@@ -283,7 +470,10 @@ export class AgentRoom {
     const existing = this.store.db
       .prepare("SELECT 1 FROM agent_room WHERE team_id=? AND kind=? AND key=?")
       .get(teamId, kind, key);
-    if (existing && (kind === "agent-chat" || kind === "agent-say"))
+    if (
+      existing &&
+      ["agent-chat", "agent-say", "agent-task", "agent-result"].includes(kind)
+    )
       return false;
     this.store.db
       .prepare("INSERT OR REPLACE INTO agent_room VALUES(?,?,?,?,?)")
@@ -339,6 +529,20 @@ export class AgentRoom {
       )
       .get(teamId, runId) as { data: string } | undefined;
     return row ? (JSON.parse(row.data) as RoomRun) : undefined;
+  }
+  private one<T>(teamId: string, kind: RoomKind, key: string): T | undefined {
+    const row = this.store.db
+      .prepare(
+        "SELECT data FROM agent_room WHERE team_id=? AND kind=? AND key=?",
+      )
+      .get(teamId, kind, key) as { data: string } | undefined;
+    return row ? (JSON.parse(row.data) as T) : undefined;
+  }
+  task(teamId: string, requestId: string): RoomTask | undefined {
+    return this.one<RoomTask>(teamId, "agent-task", requestId);
+  }
+  result(teamId: string, requestId: string): RoomResult | undefined {
+    return this.one<RoomResult>(teamId, "agent-result", requestId);
   }
   chat(teamId: string, runId: string): TeamChatMessage[] {
     return this.rows<RoomChat>(teamId, "agent-chat", `${runId}:`).map(

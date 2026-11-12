@@ -40,7 +40,9 @@ test(
       await until(() => stores[1].teams().length === 1, "member accepted");
       const [aarya, rahul] = stores.map((s) => s.profile()!.id);
       const says: RoomSay[] = [];
-      nets[0].onRoomSay = (_, say) => says.push(say);
+      nets[0].onRoomEvent = (_, kind, data) => {
+        if (kind === "agent-say") says.push(data as RoomSay);
+      };
 
       // Not shared with another team: nothing is sent.
       assert.equal(
@@ -261,4 +263,101 @@ test("agent room validation rejects bad input", () => {
   room.apply(team.id, chat.kind, chat.data);
   assert.equal(room.chat(team.id, "a_1").length, 0);
   assert.equal(room.chat(team.id, "ab1")[0]!.memberName, "Owner");
+});
+
+test("agent room: only the run's owner hands out tasks, only to lent agents, only the teammate answers", () => {
+  const store = new Store(":memory:");
+  store.saveProfile("Owner", "");
+  const team = store.createTeam("T", "Plan", "");
+  const owner = store.profile()!.id;
+  store.putMember(team.id, {
+    id: "rahul",
+    name: "Rahul",
+    availability: "available",
+    role: "member",
+  });
+  store.putMember(team.id, {
+    id: "eve",
+    name: "Eve",
+    availability: "available",
+    role: "member",
+  });
+  const room = new AgentRoom(store);
+  const post = (member: string, body: object) => {
+    const e = room.accept(team.id, member, body);
+    room.apply(team.id, e.kind, e.data);
+    return e;
+  };
+  post(owner, {
+    type: "run",
+    run: { id: "r1", goal: "g", state: "running", updatedAt: now() },
+  });
+  post("rahul", {
+    type: "roster",
+    agents: [{ agent: "codex", installed: true }],
+    roles: {},
+    lends: ["codex"],
+  });
+  const task = {
+    type: "task",
+    id: "q1",
+    runId: "r1",
+    taskId: "T1",
+    toId: "rahul",
+    agent: "codex",
+    branch: "cobble/r1/T1",
+    prompt: "do it",
+    readOnly: false,
+    timeoutMs: 600_000,
+  };
+  assert.throws(
+    () => room.accept(team.id, "eve", task),
+    /Only the run's owner/,
+  );
+  assert.throws(
+    () => room.accept(team.id, owner, { ...task, agent: "claude" }),
+    /does not lend/,
+  );
+  assert.throws(
+    () => room.accept(team.id, owner, { ...task, toId: "eve" }),
+    /does not lend/,
+  );
+  assert.throws(
+    () => room.accept(team.id, owner, { ...task, branch: "main" }),
+    /Invalid task branch/,
+  );
+  assert.throws(
+    () => room.accept(team.id, owner, { ...task, branch: "cobble/../main" }),
+    /Invalid task branch/,
+  );
+  assert.throws(
+    () => room.accept(team.id, owner, { ...task, timeoutMs: 999_999_999 }),
+    /time limit/,
+  );
+  assert.throws(
+    () =>
+      room.accept(team.id, "rahul", {
+        type: "roster",
+        agents: [],
+        roles: {},
+        lends: ["teammate"],
+      }),
+    /lent agents/,
+  );
+  post(owner, task);
+  const result = {
+    type: "result",
+    id: "q1",
+    exitCode: 0,
+    finalText: "done",
+    pushed: true,
+  };
+  assert.throws(() => room.accept(team.id, "eve", result), /Only the teammate/);
+  assert.throws(() => room.accept(team.id, owner, result), /Only the teammate/);
+  const ok = post("rahul", result);
+  assert.equal((ok.data as { toId: string }).toId, owner);
+  assert.throws(
+    () => room.accept(team.id, "rahul", result),
+    /already answered/,
+  );
 });

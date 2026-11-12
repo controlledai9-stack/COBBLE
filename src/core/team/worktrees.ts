@@ -66,7 +66,7 @@ function parseNameStatus(status: string): Change[] {
     })
     .filter((c) => !c.path.startsWith(`${REPORT_DIR}/`));
 }
-const IDENTITY = [
+export const IDENTITY = [
   "-c",
   "user.name=Cobble Agent Team",
   "-c",

@@ -4,6 +4,7 @@ import type {
   DesktopApi,
   TeamAgentId,
   TeamChatMessage,
+  TeamRole,
 } from "../shared/types";
 import { author, ChatText, tone } from "./team-chat";
 
@@ -12,7 +13,17 @@ type RoomApi = Required<
     DesktopApi,
     "agentRoom" | "agentRoomChat" | "sayInAgentRoom" | "onChange"
   >
->;
+> &
+  Pick<DesktopApi, "setLentAgents" | "setTeammateRole">;
+
+const LENDABLE: TeamAgentId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "claude-api",
+  "free",
+];
+const TEAMMATE_ROLES: TeamRole[] = ["coder", "generator", "reviewer"];
 
 const agentNames: Record<TeamAgentId, string> = {
   claude: "Claude",
@@ -20,6 +31,7 @@ const agentNames: Record<TeamAgentId, string> = {
   gemini: "Gemini",
   "claude-api": "Claude API",
   free: "Free model",
+  teammate: "Teammate",
 };
 const ENDED = ["done", "failed", "stopped"];
 
@@ -93,6 +105,30 @@ export function TeamRoom({
 
   if (!room) return null;
   const run = room.runs.find((r) => r.id === selected);
+  const mine = room.roster.find((r) => r.memberId === room.me);
+  const myReady = LENDABLE.filter((agent) =>
+    mine?.agents.some((a) => a.agent === agent && a.installed),
+  );
+  const offers = room.roster
+    .filter((r) => r.memberId !== room.me)
+    .flatMap((r) =>
+      (r.lends ?? []).map((agent) => ({
+        value: `${r.memberId}|${agent}`,
+        label: `${r.memberName}'s ${agentNames[agent]}`,
+        memberId: r.memberId,
+        agent,
+      })),
+    );
+
+  async function change(action: () => Promise<AgentRoomView> | undefined) {
+    setError("");
+    try {
+      const next = await action();
+      if (next) setRoom(next);
+    } catch (cause) {
+      setError(describeError(cause));
+    }
+  }
   const open = !!run && !ENDED.includes(run.state);
 
   async function send() {
@@ -155,6 +191,81 @@ export function TeamRoom({
             );
           })}
         </ul>
+      )}
+      {room.shared && api.setLentAgents && (
+        <fieldset className="agent-team-room-lend">
+          <legend>Lend my agents to teammates</legend>
+          {myReady.length ? (
+            myReady.map((agent) => (
+              <label key={agent} className="agent-team-checkbox">
+                <input
+                  type="checkbox"
+                  checked={room.lends.includes(agent)}
+                  onChange={(event) =>
+                    void change(() =>
+                      api.setLentAgents!(
+                        event.target.checked
+                          ? [...room.lends, agent]
+                          : room.lends.filter((a) => a !== agent),
+                      ),
+                    )
+                  }
+                />
+                {agentNames[agent]}
+              </label>
+            ))
+          ) : (
+            <span className="small">
+              Detect your agents first (Agent availability).
+            </span>
+          )}
+          <p className="small">
+            Teammates' planners can then give coding, generating or reviewing
+            tasks to these agents. They run here sandboxed (never full access,
+            never network) on a branch of your shared repository, and the
+            results are pushed back to it. You pay for your own agents' use.
+          </p>
+        </fieldset>
+      )}
+      {room.shared && api.setTeammateRole && offers.length > 0 && (
+        <fieldset className="agent-team-room-lend">
+          <legend>Use a teammate's agent</legend>
+          {TEAMMATE_ROLES.map((role) => {
+            const current = room.teammateRoles[role];
+            return (
+              <label key={role} className="agent-team-field">
+                {role}
+                <select
+                  value={current ? `${current.memberId}|${current.agent}` : ""}
+                  onChange={(event) => {
+                    const offer = offers.find(
+                      (o) => o.value === event.target.value,
+                    );
+                    void change(() =>
+                      api.setTeammateRole!(
+                        role,
+                        offer ? offer.memberId : null,
+                        offer?.agent,
+                      ),
+                    );
+                  }}
+                >
+                  <option value="">My own agent (Roles table)</option>
+                  {offers.map((offer) => (
+                    <option key={offer.value} value={offer.value}>
+                      {offer.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
+          <p className="small">
+            Needs a shared Git remote named origin (for example your GitHub
+            repository) that you and the teammate can push to. Task branches are
+            named cobble/&lt;run&gt;/&lt;task&gt;; main is never touched.
+          </p>
+        </fieldset>
       )}
       {room.shared && !room.runs.length && (
         <p className="small">No teammate runs yet.</p>

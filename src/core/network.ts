@@ -1,4 +1,4 @@
-import { AgentRoom, type RoomPost, type RoomSay } from "./team/room";
+import { AgentRoom, type RoomPost } from "./team/room";
 import { createServer, request, Agent, type Server } from "node:https";
 import type { ClientRequest } from "node:http";
 import type { TLSSocket } from "node:tls";
@@ -51,8 +51,11 @@ export class TeamNetwork {
   readonly hosting: HostCoordinator;
   /** Shared agent room (rosters, runs, Team Chat) on this team's sync log. */
   readonly room: AgentRoom;
-  /** Called when a teammate writes into a run (the owner's Cobble acts on it). */
-  onRoomSay?: (teamId: string, say: RoomSay) => void;
+  /**
+   * Called once for every new agent room event on this Cobble (a teammate's
+   * message, a task for this member, a task's result...).
+   */
+  onRoomEvent?: (teamId: string, kind: string, data: unknown) => void;
   private collaboration: Collaboration;
   server?: Server;
   state: AppState["network"] = {
@@ -1697,9 +1700,10 @@ export class TeamNetwork {
       fresh = this.room.apply(teamId, kind, data);
       if (fresh) this.store.appendSync(teamId, kind, data);
     });
-    if (fresh && kind === "agent-say")
-      this.onRoomSay?.(teamId, data as RoomSay);
-    if (fresh) this.changed();
+    if (fresh) {
+      this.onRoomEvent?.(teamId, kind, data);
+      this.changed();
+    }
   }
   /**
    * Shares a roster, run, chat message or teammate message with the team.
@@ -1944,7 +1948,7 @@ export class TeamNetwork {
         if (generation !== this.generation) return;
         const local = this.store.team(s.teamId);
         catchingUp = result.more === true;
-        const says: RoomSay[] = [];
+        const roomEvents: { kind: string; data: unknown }[] = [];
         this.store.transaction(() => {
           const pendingOwnerUpdate = this.store.db
             .prepare(
@@ -1964,11 +1968,8 @@ export class TeamNetwork {
           for (const event of result.events) {
             const data = JSON.parse(event.data);
             if (event.kind.startsWith("agent-")) {
-              if (
-                this.room.apply(s.teamId, event.kind, data) &&
-                event.kind === "agent-say"
-              )
-                says.push(data as RoomSay);
+              if (this.room.apply(s.teamId, event.kind, data))
+                roomEvents.push({ kind: event.kind, data });
             } else if (event.kind === "chat") {
               this.store.db
                 .prepare("INSERT OR REPLACE INTO messages VALUES(?,?,?)")
@@ -2030,7 +2031,8 @@ export class TeamNetwork {
           s.cursor = result.cursor;
           this.saveSession(s);
         });
-        for (const say of says) this.onRoomSay?.(s.teamId, say);
+        for (const e of roomEvents)
+          this.onRoomEvent?.(s.teamId, e.kind, e.data);
         this.state.state = "Connected to host";
         await this.hosting.clientTick(result.hostControl);
       }

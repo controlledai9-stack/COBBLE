@@ -537,6 +537,20 @@ else {
         service.teamRun(text(runId, 64)),
       );
       handle("agent-room", () => service.agentRoom());
+      handle("agent-room-lend", (_, agents: unknown) =>
+        service.setLentAgents(agents),
+      );
+      handle(
+        "agent-room-teammate-role",
+        (_, role: unknown, memberId: unknown, agent: unknown) => {
+          service.setTeammateRole(
+            text(role, 32),
+            memberId === null ? null : text(memberId, 100),
+            agent === undefined || agent === null ? undefined : text(agent, 32),
+          );
+          return service.agentRoom();
+        },
+      );
       handle("agent-room-chat", (_, runId: unknown) =>
         service.agentRoomChat(text(runId, 100)),
       );
