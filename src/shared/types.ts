@@ -587,6 +587,7 @@ export interface DesktopApi {
     remove?: boolean,
   ): Promise<void>;
   // Agent Team (docs/AGENT-TEAM-PLAN.md). Optional so older test doubles still type-check.
+  setTeamMaxCost?(runId: string, usd: number | null): Promise<RunSnapshot>;
   teamRoles?(): Promise<Partial<Record<TeamRole, TeamAgentId>>>;
   setTeamRole?(
     role: TeamRole,

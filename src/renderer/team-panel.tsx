@@ -13,6 +13,7 @@ import type {
   TeamRole,
   TeamTask,
 } from "../shared/types";
+import { runCostUsd, formatUsd } from "../core/team/usage";
 import "./team-panel.css";
 
 const roles: TeamRole[] = [
@@ -69,6 +70,7 @@ const apiMethods = [
   "teamRuns",
   "teamRun",
   "teamCommand",
+  "setTeamMaxCost",
   "openTeamTerminal",
   "onTeam",
 ] as const;
@@ -131,6 +133,7 @@ function TeamPanelContent({
   const runRequest = useRef(0);
   const roleRequest = useRef(0);
   const [goal, setGoal] = useState("");
+  const [maxCost, setMaxCost] = useState("");
   const [budget, setBudget] = useState({
     maxTasks: "30",
     maxPlannerTurns: "12",
@@ -243,6 +246,7 @@ function TeamPanelContent({
         maxTasks: Number(budget.maxTasks),
         maxPlannerTurns: Number(budget.maxPlannerTurns),
         maxParallel: Number(budget.maxParallel),
+        ...(maxCost === "" ? {} : { maxCostUsd: Number(maxCost) }),
       },
       { requireApprovalForProduction },
       {
@@ -526,6 +530,17 @@ function TeamPanelContent({
           <fieldset disabled={pending}>
             <legend>Run budget and checks</legend>
             <div className="agent-team-budget">
+              <label className="agent-team-field">
+                Maximum spend (USD)
+                <input
+                  type="number"
+                  min={0.01}
+                  max={100000}
+                  step={0.01}
+                  value={maxCost}
+                  onChange={(event) => setMaxCost(event.target.value)}
+                />
+              </label>
               {budgetFields.map(({ key, label, max }) => (
                 <label className="agent-team-field" key={key}>
                   {label}
@@ -637,6 +652,13 @@ function TeamPanelContent({
                   note,
                   answers,
                 );
+                await refreshRuns();
+              })
+            }
+            raiseCap={(usd) =>
+              void perform(async () => {
+                await api.setTeamMaxCost(snapshot.run.id, usd);
+                await api.teamCommand(snapshot.run.id, "resume");
                 await refreshRuns();
               })
             }
@@ -1037,10 +1059,12 @@ function RunView({
   snapshot,
   pending,
   command,
+  raiseCap,
   openTerminal,
 }: {
   snapshot: RunSnapshot;
   pending: boolean;
+  raiseCap: (usd: number) => void;
   command: (
     command: Command,
     taskId?: string,
@@ -1050,6 +1074,7 @@ function RunView({
   openTerminal: (taskId: string) => void;
 }) {
   const { run, tasks, decisions, events } = snapshot;
+  const [newMaxCost, setNewMaxCost] = useState("");
   const [now, setNow] = useState(Date.now);
   const hasRunningTasks = tasks.some(
     (task) =>
@@ -1073,7 +1098,39 @@ function RunView({
         <p>
           Run branch <code>{run.runBranch}</code>
         </p>
+        {run.budget.maxCostUsd !== undefined && (
+          <p>
+            Spend {formatUsd(runCostUsd(run.plannerUsage, tasks))} of{" "}
+            {formatUsd(run.budget.maxCostUsd)}
+          </p>
+        )}
         {run.pausedReason && <p>{run.pausedReason}</p>}
+        {run.state === "paused" &&
+          run.pausedReason?.startsWith("Spending cap reached") && (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                raiseCap(Number(newMaxCost));
+              }}
+            >
+              <label className="agent-team-field">
+                New maximum spend (USD)
+                <input
+                  type="number"
+                  min={0.01}
+                  max={100000}
+                  step={0.01}
+                  required
+                  disabled={pending}
+                  value={newMaxCost}
+                  onChange={(event) => setNewMaxCost(event.target.value)}
+                />
+              </label>
+              <button type="submit" disabled={pending}>
+                Raise cap and resume
+              </button>
+            </form>
+          )}
         {run.checkCommand && (
           <p>
             Test command <code>{run.checkCommand}</code>

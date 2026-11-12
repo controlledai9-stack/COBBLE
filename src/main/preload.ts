@@ -25,6 +25,8 @@ const api: DesktopApi = {
   applyRevert: (id, token) =>
     ipcRenderer.invoke("cobble:apply-revert", id, token),
   integrateMain: (id) => ipcRenderer.invoke("cobble:integrate-main", id),
+  setTeamMaxCost: (runId, usd) =>
+    ipcRenderer.invoke("cobble:team-set-max-cost", runId, usd),
   teamRoles: () => ipcRenderer.invoke("cobble:team-roles"),
   setTeamRole: (role, agent) =>
     ipcRenderer.invoke("cobble:team-set-role", role, agent),
