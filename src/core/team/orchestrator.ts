@@ -160,6 +160,7 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly ticks = new Map<string, Promise<void>>();
   private readonly plannerBusy = new Set<string>();
   private readonly running = new Map<string, AbortController>();
+  private readonly runInflight = new Map<string, Set<Promise<unknown>>>();
   private readonly inflight = new Set<Promise<unknown>>();
   private readonly retryTimers = new Map<string, unknown>();
   private closed = false;
@@ -220,6 +221,7 @@ export class TeamOrchestrator extends EventEmitter {
     budget: Partial<TeamBudget> = {},
     policy: Partial<ApprovalPolicy> = {},
     extras: {
+      maxActiveRuns?: number;
       checkCommand?: string;
       /** Branch the run starts from (default: the workspace's HEAD). */
       baseRef?: string;
@@ -232,6 +234,13 @@ export class TeamOrchestrator extends EventEmitter {
     } = {},
   ): Promise<TeamRun> {
     if (this.closed) throw new Error("Cobble is closing");
+    const maxActiveRuns = extras.maxActiveRuns ?? 1;
+    if (
+      !Number.isInteger(maxActiveRuns) ||
+      maxActiveRuns < 1 ||
+      maxActiveRuns > 4
+    )
+      throw new Error("maxActiveRuns must be a whole number from 1 to 4");
     const checkCommand = validCheckCommand(extras.checkCommand);
     if (extras.retryAfterMinutes !== undefined)
       validRetryAfter(extras.retryAfterMinutes);
@@ -264,7 +273,7 @@ export class TeamOrchestrator extends EventEmitter {
     }
     // Atomic across processes: the check and the reservation share one
     // database transaction, so two starters cannot both pass (finding 7).
-    this.store.reserveRunStart(teamId, this.ownerId, this.now());
+    this.store.reserveRunStart(teamId, this.ownerId, this.now(), maxActiveRuns);
     try {
       return await this.createRun(
         teamId,
@@ -1155,6 +1164,15 @@ export class TeamOrchestrator extends EventEmitter {
     }
   }
 
+  async runIdle(runId: string) {
+    for (;;) {
+      const busy = [...(this.runInflight.get(runId) ?? [])];
+      const tick = this.ticks.get(runId);
+      if (!busy.length && !tick) return;
+      await Promise.allSettled([...busy, tick]);
+    }
+  }
+
   // ---------------------------------------------------------------- loop
 
   private require(runId: string): TeamRun {
@@ -1181,6 +1199,10 @@ export class TeamOrchestrator extends EventEmitter {
 
   private track<T>(runId: string, promise: Promise<T>) {
     this.inflight.add(promise);
+    const runPromises =
+      this.runInflight.get(runId) ?? new Set<Promise<unknown>>();
+    runPromises.add(promise);
+    this.runInflight.set(runId, runPromises);
     this.active.set(runId, (this.active.get(runId) ?? 0) + 1);
     if (!this.leaseTimer) {
       this.leaseTimer = setInterval(() => this.heartbeat(), LEASE_MS / 3);
@@ -1188,6 +1210,8 @@ export class TeamOrchestrator extends EventEmitter {
     }
     void promise.finally(() => {
       this.inflight.delete(promise);
+      runPromises.delete(promise);
+      if (!runPromises.size) this.runInflight.delete(runId);
       this.active.set(runId, (this.active.get(runId) ?? 1) - 1);
       if (![...this.active.values()].some((n) => n > 0)) {
         clearInterval(this.leaseTimer);
