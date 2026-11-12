@@ -20,7 +20,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AdapterResult, AdapterRunInput, AgentAdapter } from "./adapters";
-import { ADAPTER_LIMITS } from "./adapters";
+import { clipReply } from "./adapters";
 import {
   ROOM_LIMITS,
   TASK_BRANCH,
@@ -247,7 +247,7 @@ export class TeammateAdapter implements AgentAdapter {
     }
     return {
       exitCode: result.exitCode,
-      finalText: result.finalText.slice(-ADAPTER_LIMITS.finalText),
+      finalText: clipReply(result.finalText),
       ...(result.sessionId ? { sessionId: result.sessionId } : {}),
       ...(result.rateLimited ? { rateLimited: true } : {}),
       ...(result.authRequired

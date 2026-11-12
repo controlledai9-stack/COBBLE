@@ -27,7 +27,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AdapterResult, AdapterRunInput, AgentAdapter } from "./adapters";
-import { ADAPTER_LIMITS } from "./adapters";
+import { clipReply } from "./adapters";
 import type { AgentDetection, TeamAgentId, TeamUsage } from "./types";
 import { emptyUsage } from "./usage";
 import { WorkspaceTools, type ToolDefinition } from "./workspace-tools";
@@ -264,9 +264,7 @@ function systemPrompt(input: AdapterRunInput, tools: ToolDefinition[]) {
 }
 
 function clipFinal(text: string) {
-  return text.length <= ADAPTER_LIMITS.finalText
-    ? text
-    : text.slice(-ADAPTER_LIMITS.finalText);
+  return clipReply(text);
 }
 
 const MAX_STEPS = 120;
