@@ -224,6 +224,7 @@ export class TeamOrchestrator extends EventEmitter {
       shareDependencies?: boolean;
       /** Override the team's saved full-access roles for this run. */
       fullAccessRoles?: TeamRole[];
+      detach?: boolean;
       retryAfterMinutes?: number;
     } = {},
   ): Promise<TeamRun> {
@@ -286,6 +287,7 @@ export class TeamOrchestrator extends EventEmitter {
       baseRef?: string;
       shareDependencies?: boolean;
       fullAccessRoles?: TeamRole[];
+      detach?: boolean;
       retryAfterMinutes?: number;
     },
     checkCommand: string | undefined,
@@ -335,6 +337,14 @@ export class TeamOrchestrator extends EventEmitter {
       createdAt: stamp,
       updatedAt: stamp,
     };
+    if (extras.detach) {
+      run.state = "paused";
+      run.pausedReason = "Handed to the Cobble daemon";
+      markIdle(run, this.now());
+      run.daemonHandoff = stamp;
+      run.ownerId = undefined;
+      run.ownerSeen = undefined;
+    }
     this.store.saveRun(run);
     this.log(run, "run", `Run started: ${cleanGoal.slice(0, 200)}`);
     this.say(run, {
@@ -343,9 +353,9 @@ export class TeamOrchestrator extends EventEmitter {
       to: "planner",
       text: cleanGoal,
     });
-    this.startInboxTimer();
+    if (!extras.detach) this.startInboxTimer();
     this.store.prune(teamId);
-    this.schedule(id);
+    if (!extras.detach) this.schedule(id);
     return run;
   }
 
@@ -636,6 +646,102 @@ export class TeamOrchestrator extends EventEmitter {
     return run;
   }
 
+  handOff(runId: string, daemonId?: string): TeamRun {
+    let run = this.require(runId);
+    if (["done", "failed", "stopped"].includes(run.state))
+      throw new Error("This run has ended");
+    if (daemonId && run.ownerId === daemonId) {
+      run.daemonHandoff = new Date(this.now()).toISOString();
+      run.wakeRequested = true;
+      this.store.saveRun(run);
+      this.changed(runId);
+      return run;
+    }
+    if (this.leasedElsewhere(run))
+      throw new Error(
+        "Another Cobble process is driving this run. Stop it there, or wait a minute.",
+      );
+    if (
+      !this.active.get(runId) &&
+      (run.state === "running" ||
+        this.store.tasks(runId).some((t) => t.state === "running"))
+    ) {
+      this.recover(new Set([runId]));
+      run = this.require(runId);
+    }
+    run.daemonHandoff = new Date(this.now()).toISOString();
+    this.store.saveRun(run);
+    this.changed(runId);
+    return run;
+  }
+
+  adoptHandoffs(alsoOwnedBy?: string): string[] {
+    const adopted: string[] = [];
+    for (let run of this.store.runsInState([
+      "running",
+      "needs_human",
+      "paused",
+    ])) {
+      if (
+        this.leasedElsewhere(run) ||
+        !(run.daemonHandoff || (alsoOwnedBy && run.ownerId === alsoOwnedBy))
+      )
+        continue;
+      try {
+        if (run.ownerId === this.ownerId) {
+          run.daemonHandoff = undefined;
+          this.store.saveRun(run);
+          this.schedule(run.id);
+        } else {
+          if (
+            run.state === "running" ||
+            this.store.tasks(run.id).some((t) => t.state === "running")
+          ) {
+            this.recover(new Set([run.id]));
+            run = this.require(run.id);
+          }
+          this.adopt(run);
+        }
+        adopted.push(run.id);
+      } catch (error) {
+        const message = `Daemon adoption failed: ${error instanceof Error ? error.message : String(error)}`;
+        this.log(run, "daemon", message);
+        this.emit("diagnostic", message);
+      }
+    }
+    return adopted;
+  }
+
+  private adopt(run: TeamRun) {
+    this.clearRetry(run.id);
+    if (
+      !run.idleSince &&
+      run.retryPausedAt &&
+      Number.isFinite(Date.parse(run.retryPausedAt))
+    )
+      markIdle(run, this.now(), Date.parse(run.retryPausedAt));
+    run.retryAt = undefined;
+    run.retryPausedAt = undefined;
+    this.resumeRun(run);
+    this.log(run, "daemon", "Adopted by the Cobble daemon");
+  }
+
+  keepLeases(): string[] {
+    const kept: string[] = [];
+    for (const candidate of this.store.runsInState([
+      "running",
+      "needs_human",
+      "paused",
+    ])) {
+      const run = this.store.run(candidate.id);
+      if (!run || run.ownerId !== this.ownerId) continue;
+      run.ownerSeen = new Date(this.now()).toISOString();
+      this.store.saveRun(run);
+      kept.push(run.id);
+    }
+    return kept;
+  }
+
   private resumeRun(run: TeamRun) {
     const runId = run.id;
     this.claim(run);
@@ -675,9 +781,14 @@ export class TeamOrchestrator extends EventEmitter {
     return run;
   }
 
-  armRetries(): void {
+  armRetries(opts: { ownedOnly?: boolean } = {}): void {
     for (const run of this.store.runsInState(["paused"]))
-      if (run.retryAt && !this.leasedElsewhere(run)) this.armRetry(run);
+      if (
+        run.retryAt &&
+        !this.leasedElsewhere(run) &&
+        (!opts.ownedOnly || run.ownerId === this.ownerId)
+      )
+        this.armRetry(run);
   }
 
   private clearRetry(runId: string) {
@@ -966,6 +1077,7 @@ export class TeamOrchestrator extends EventEmitter {
         "Another Cobble process (the desktop app or a terminal) is driving this run. Use that one, or close it and wait a minute.",
       );
     this.startInboxTimer();
+    run.daemonHandoff = undefined;
     run.ownerId = this.ownerId;
     run.ownerSeen = new Date(this.now()).toISOString();
   }

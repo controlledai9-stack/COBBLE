@@ -47,6 +47,7 @@ import {
   TeamOrchestrator,
   type GateAnswer,
 } from "./team/orchestrator";
+import { DAEMON_STALE_MS } from "./team/daemon";
 import {
   defaultAdapters,
   withUnavailable,
@@ -2089,6 +2090,7 @@ export class CobbleService extends EventEmitter {
     budget?: Partial<TeamBudget>,
     policy?: Partial<ApprovalPolicy>,
     options?: {
+      detach?: boolean;
       checkCommand?: string;
       baseRef?: string;
       shareDependencies?: boolean;
@@ -2109,6 +2111,7 @@ export class CobbleService extends EventEmitter {
         sanitizeBudget(budget),
         sanitizePolicy(policy),
         {
+          detach: o.detach === true,
           checkCommand: o.checkCommand as string | undefined,
           ...(typeof o.retryAfterMinutes === "number"
             ? { retryAfterMinutes: o.retryAfterMinutes }
@@ -2123,6 +2126,17 @@ export class CobbleService extends EventEmitter {
       this.startingTeamRuns.delete(teamId);
     }
   }
+  handOffTeamRun(runId: string) {
+    this.teamRun(runId);
+    const lock = this.teamStore.daemonLock();
+    return this.agentTeam.handOff(
+      runId,
+      lock && Date.now() - lock.heartbeat < DAEMON_STALE_MS
+        ? lock.id
+        : undefined,
+    );
+  }
+
   private idleAutopilot(teamId: string): AutopilotStatus {
     return {
       active: false,
