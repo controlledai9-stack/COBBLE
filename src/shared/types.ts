@@ -365,7 +365,21 @@ export interface MonitoringStatus {
   reconciliationPending: boolean;
   reconcileIntervalMs: number;
 }
+export interface TeamGuardEntry {
+  id: string;
+  runId: string;
+  taskId: string;
+  taskTitle: string;
+  kind: "drift" | "secret" | "check";
+  passed?: boolean;
+  title: string;
+  detail: string;
+  paths: string[];
+  createdAt: string;
+}
+
 export interface AppState {
+  teamGuard?: TeamGuardEntry[];
   review?: {
     mode: "not-configured" | "preflight-only";
     resourceControl?: "windows-appcontainer-configured" | "process-only";
