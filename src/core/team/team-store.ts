@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { TeamChatMessage } from "./types";
 import type { Store } from "../store";
 import type {
+  DaemonLock,
   QueuedInboxItem,
   TeamInboxItem,
   RunSnapshot,
@@ -46,6 +47,56 @@ export class TeamStore {
       CREATE TABLE IF NOT EXISTS team_inbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, created_at TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS team_inbox_run ON team_inbox(run_id,seq);
       INSERT OR IGNORE INTO migrations VALUES(6);`);
+  }
+
+  daemonLock(): DaemonLock | null {
+    return this.store.setting<DaemonLock | null>("teamDaemonLock", null);
+  }
+
+  acquireDaemonLock(
+    owner: { id: string; pid: number },
+    now: number,
+    staleMs: number,
+  ): DaemonLock | null {
+    return this.store.transaction(() => {
+      const held = this.daemonLock();
+      if (held && held.id !== owner.id && now - held.heartbeat < staleMs)
+        throw new Error(
+          `A Cobble daemon is already running for this data folder (pid ${held.pid}).`,
+        );
+      this.store.set("teamDaemonLock", {
+        ...owner,
+        startedAt: now,
+        heartbeat: now,
+      });
+      return held;
+    });
+  }
+
+  heartbeatDaemonLock(id: string, now: number): DaemonLock | null {
+    return this.store.transaction(() => {
+      const held = this.daemonLock();
+      if (!held || held.id !== id) return null;
+      held.heartbeat = now;
+      this.store.set("teamDaemonLock", held);
+      return held;
+    });
+  }
+
+  releaseDaemonLock(id: string): void {
+    this.store.transaction(() => {
+      if (this.daemonLock()?.id === id) this.store.set("teamDaemonLock", null);
+    });
+  }
+
+  requestDaemonStop(): DaemonLock | null {
+    return this.store.transaction(() => {
+      const held = this.daemonLock();
+      if (!held) return null;
+      held.stopRequested = true;
+      this.store.set("teamDaemonLock", held);
+      return held;
+    });
   }
 
   queueInbox(runId: string, item: TeamInboxItem): QueuedInboxItem {
