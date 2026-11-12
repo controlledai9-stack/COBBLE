@@ -18,6 +18,7 @@ import {
   AgentConnections,
 } from "./collaboration-panel";
 import { TeamPanel } from "./team-panel";
+import { TeamGuardActivity } from "./plan-guard-activity";
 import { RevertDialog } from "./revert-dialog";
 import {
   IconAgents,
@@ -555,7 +556,7 @@ function App() {
                       </button>
                     </div>
                   </div>
-                  {!state.activities.length ? (
+                  {!state.activities.length && !state.teamGuard?.length ? (
                     <div className="empty">
                       <span className="empty-mark">
                         <IconEmpty />
@@ -659,6 +660,7 @@ function App() {
                       ))}
                     </div>
                   )}
+                  <TeamGuardActivity entries={state.teamGuard ?? []} />
                 </section>
                 <div className="bottom-grid">
                   <section className="panel">
