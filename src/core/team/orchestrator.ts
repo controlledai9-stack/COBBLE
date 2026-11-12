@@ -9,30 +9,8 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { Team } from "../../shared/types";
-import { assess } from "../engine";
-import { runCheck, validCheckCommand } from "./checks";
-import {
-  reportFromReply,
-  parsePlannerReply,
-  parseTaskReport,
-  plannerProse,
-  type PlannerAction,
-} from "./actions";
-import {
-  withUnavailable,
-  type AgentAdapter,
-  type AdapterResult,
-} from "./adapters";
-import { addUsage, emptyUsage, runCostUsd, formatUsd } from "./usage";
-import {
-  autonomyPolicy,
-  plannerTakeoverContext,
-  plannerRepairPrompt,
-  plannerStartPrompt,
-  plannerWakePrompt,
-  workerPrompt,
-} from "./prompts";
-import { TeamStore } from "./team-store";
+import { validCheckCommand } from "./checks";
+import { withUnavailable, type AgentAdapter } from "./adapters";
 import {
   markIdle,
   endIdle,
@@ -44,48 +22,30 @@ import {
   DEFAULT_POLICY,
   FULL_ACCESS_ROLES,
   TERMINAL_TASK_STATES,
-  WRITING_ROLES,
   type BridgeResult,
   type TeamInboxItem,
   type ApprovalPolicy,
   type TeamChatMessage,
-  type HumanGateKind,
   type RunSnapshot,
   type TeamAgentId,
   type TeamBudget,
   type TeamRole,
   type TeamRun,
-  type TeamTask,
-  type UserQuestion,
 } from "./types";
 import { Worktrees } from "./worktrees";
 import {
-  APPROVE_REFUSED,
-  USER_NOTE,
-  TEAMMATE_NOTE,
   PLANNER_KEY,
   LEASE_MS,
   DAEMON_HANDOFF_REASON,
-  RESTART_REASON,
-  TASK_QUESTION_LIMIT,
   type GateAnswer,
   type OrchestratorOptions,
   type OrchestratorContext,
 } from "./orchestrator-context";
 import * as budgets from "./budgets";
-import {
-  validRetryAfter,
-  validMaxCost,
-  DEFAULT_RETRY_AFTER_MINUTES,
-  MAX_AUTO_RETRIES,
-} from "./budgets";
-
+import { validRetryAfter, validMaxCost } from "./budgets";
 import { plannerTurn, apply } from "./planner-turn";
-
 import * as taskRunner from "./task-runner";
-
 import * as gates from "./gates";
-
 import * as leases from "./leases";
 
 export {
@@ -140,39 +100,43 @@ export class TeamOrchestrator extends EventEmitter {
       snapshot: (runId) => this.snapshot(runId),
       isLeasedElsewhere: (runId) => this.isLeasedElsewhere(runId),
       ownsRun: (runId) => this.ownsRun(runId),
-      checkBridgeItem: (run, item) => this.checkBridgeItem(run, item),
-      applyBridgeItem: (runId, item) => this.applyBridgeItem(runId, item),
+      checkBridgeItem: (run, item) =>
+        leases.checkBridgeItem(this.ctx, run, item),
+      applyBridgeItem: (runId, item) =>
+        leases.applyBridgeItem(this.ctx, runId, item),
       bridge: (runId, item, opts) => this.bridge(runId, item, opts),
       drainInbox: (runId, opts) => this.drainInbox(runId, opts),
       drainOwned: () => this.drainOwned(),
       drainOrphans: () => this.drainOrphans(),
-      startInboxTimer: () => this.startInboxTimer(),
+      startInboxTimer: () => leases.startInboxTimer(this.ctx),
       userMessage: (runId, text, teammate) =>
         this.userMessage(runId, text, teammate),
       pause: (runId) => this.pause(runId),
       resume: (runId) => this.resume(runId),
       handOff: (runId, daemonId) => this.handOff(runId, daemonId),
       adoptHandoffs: (alsoOwnedBy) => this.adoptHandoffs(alsoOwnedBy),
-      adopt: (run) => this.adopt(run),
+      adopt: (run) => leases.adopt(this.ctx, run),
       keepLeases: () => this.keepLeases(),
-      resumeRun: (run) => this.resumeRun(run),
+      resumeRun: (run) => leases.resumeRun(this.ctx, run),
       setMaxCost: (runId, usd) => this.setMaxCost(runId, usd),
       setRetryAfter: (runId, minutes) => this.setRetryAfter(runId, minutes),
       armRetries: (opts) => this.armRetries(opts),
-      clearRetry: (runId) => this.clearRetry(runId),
-      armRetry: (run) => this.armRetry(run),
-      autoResume: (runId, armedRetryAt) => this.autoResume(runId, armedRetryAt),
+      clearRetry: (runId) => budgets.clearRetry(this.ctx, runId),
+      armRetry: (run) => budgets.armRetry(this.ctx, run),
+      autoResume: (runId, armedRetryAt) =>
+        budgets.autoResume(this.ctx, runId, armedRetryAt),
       stop: (runId) => this.stop(runId),
       resolveGate: (runId, answer, taskId, note, answers) =>
         this.resolveGate(runId, answer, taskId, note, answers),
       recover: (only) => this.recover(only),
       usableBackup: (teamId, role, current) =>
-        this.usableBackup(teamId, role, current),
-      acceptRefusal: (task) => this.acceptRefusal(task),
-      acceptTask: (run, task, why) => this.acceptTask(run, task, why),
-      leasedElsewhere: (run) => this.leasedElsewhere(run),
-      claim: (run) => this.claim(run),
-      heartbeat: () => this.heartbeat(),
+        taskRunner.usableBackup(this.ctx, teamId, role, current),
+      acceptRefusal: (task) => taskRunner.acceptRefusal(this.ctx, task),
+      acceptTask: (run, task, why) =>
+        taskRunner.acceptTask(this.ctx, run, task, why),
+      leasedElsewhere: (run) => leases.leasedElsewhere(this.ctx, run),
+      claim: (run) => leases.claim(this.ctx, run),
+      heartbeat: () => leases.heartbeat(this.ctx),
       cleanup: (runId) => this.cleanup(runId),
       close: () => this.close(),
       idle: (runId) => this.idle(runId),
@@ -181,15 +145,15 @@ export class TeamOrchestrator extends EventEmitter {
       schedule: (runId) => this.schedule(runId),
       track: (runId, promise) => this.track(runId, promise),
       tick: (runId) => this.tick(runId),
-      capReached: (run) => this.capReached(run),
-      pauseForCap: (runId) => this.pauseForCap(runId),
-      pauseFor: (run, reason) => this.pauseFor(run, reason),
+      capReached: (run) => budgets.capReached(this.ctx, run),
+      pauseForCap: (runId) => budgets.pauseForCap(this.ctx, runId),
+      pauseFor: (run, reason) => budgets.pauseFor(this.ctx, run, reason),
       plannerTurn: (runId) => this.plannerTurn(runId),
       mergeDependencies: (run, task, tasks) =>
-        this.mergeDependencies(run, task, tasks),
+        taskRunner.mergeDependencies(this.ctx, run, task, tasks),
       gateRun: (run, kind, message, questions) =>
-        this.gateRun(run, kind, message, questions),
-      apply: (run, action, roles) => this.apply(run, action, roles),
+        gates.gateRun(this.ctx, run, kind, message, questions),
+      apply: (run, action, roles) => apply(this.ctx, run, action, roles),
       runTask: (runId, taskId) => this.runTask(runId, taskId),
     };
   }
@@ -386,7 +350,7 @@ export class TeamOrchestrator extends EventEmitter {
       to: "planner",
       text: cleanGoal,
     });
-    if (!extras.detach) this.startInboxTimer();
+    if (!extras.detach) leases.startInboxTimer(this.ctx);
     this.store.prune(teamId);
     if (!extras.detach) this.schedule(id);
     return run;
@@ -401,14 +365,6 @@ export class TeamOrchestrator extends EventEmitter {
   }
   ownsRun(runId: string): boolean {
     return leases.ownsRun(this.ctx, runId);
-  }
-
-  private checkBridgeItem(run: TeamRun, item: TeamInboxItem) {
-    return leases.checkBridgeItem(this.ctx, run, item);
-  }
-
-  private applyBridgeItem(runId: string, item: TeamInboxItem) {
-    return leases.applyBridgeItem(this.ctx, runId, item);
   }
 
   bridge(
@@ -429,10 +385,6 @@ export class TeamOrchestrator extends EventEmitter {
 
   drainOrphans(): number {
     return leases.drainOrphans(this.ctx);
-  }
-
-  private startInboxTimer() {
-    return leases.startInboxTimer(this.ctx);
   }
 
   /**
@@ -477,7 +429,7 @@ export class TeamOrchestrator extends EventEmitter {
       (run.state === "running" ||
         this.store.tasks(runId).some((t) => t.state === "running"));
     if (orphaned && !["done", "failed", "stopped"].includes(run.state)) {
-      if (this.leasedElsewhere(run))
+      if (leases.leasedElsewhere(this.ctx, run))
         throw new Error(
           "Another Cobble window or terminal is driving this run. Resume it there, or close it first.",
         );
@@ -485,7 +437,7 @@ export class TeamOrchestrator extends EventEmitter {
       run = this.require(runId);
     }
     if (run.state !== "paused") return run;
-    this.clearRetry(runId);
+    budgets.clearRetry(this.ctx, runId);
     if (
       !run.idleSince &&
       run.retryPausedAt &&
@@ -494,7 +446,7 @@ export class TeamOrchestrator extends EventEmitter {
       markIdle(run, this.now(), Date.parse(run.retryPausedAt));
     run.retryAt = undefined;
     run.retryPausedAt = undefined;
-    this.resumeRun(run);
+    leases.resumeRun(this.ctx, run);
     this.log(run, "run", "Resumed");
     return run;
   }
@@ -507,16 +459,8 @@ export class TeamOrchestrator extends EventEmitter {
     return leases.adoptHandoffs(this.ctx, alsoOwnedBy);
   }
 
-  private adopt(run: TeamRun) {
-    return leases.adopt(this.ctx, run);
-  }
-
   keepLeases(): string[] {
     return leases.keepLeases(this.ctx);
-  }
-
-  private resumeRun(run: TeamRun) {
-    return leases.resumeRun(this.ctx, run);
   }
 
   setMaxCost(runId: string, usd: number | null): TeamRun {
@@ -531,22 +475,10 @@ export class TeamOrchestrator extends EventEmitter {
     return budgets.armRetries(this.ctx, opts);
   }
 
-  private clearRetry(runId: string) {
-    return budgets.clearRetry(this.ctx, runId);
-  }
-
-  private armRetry(run: TeamRun) {
-    return budgets.armRetry(this.ctx, run);
-  }
-
-  private autoResume(runId: string, armedRetryAt: string) {
-    return budgets.autoResume(this.ctx, runId, armedRetryAt);
-  }
-
   stop(runId: string) {
     const run = this.require(runId);
     if (["done", "failed", "stopped"].includes(run.state)) return run;
-    this.clearRetry(runId);
+    budgets.clearRetry(this.ctx, runId);
     run.retryAt = undefined;
     run.retryPausedAt = undefined;
     // Also abort an in-flight planner turn so its late reply cannot act.
@@ -590,46 +522,6 @@ export class TeamOrchestrator extends EventEmitter {
     return leases.recover(this.ctx, only);
   }
 
-  /**
-   * The team's backup agent for a role, if one is set, differs from the agent
-   * that hit its usage limit, and is installed.
-   */
-  private async usableBackup(
-    teamId: string,
-    role: TeamRole,
-    current: TeamAgentId,
-  ): Promise<TeamAgentId | null> {
-    return taskRunner.usableBackup(this.ctx, teamId, role, current);
-  }
-
-  /**
-   * Why a failed task may not be accepted, or null when it may: it must be a
-   * writing task whose changes passed Cobble's own check command, with no
-   * plan-drift alert. The worker's own verdict is only a claim.
-   */
-  private acceptRefusal(task: TeamTask): string | null {
-    return taskRunner.acceptRefusal(this.ctx, task);
-  }
-
-  private acceptTask(run: TeamRun, task: TeamTask, why: string) {
-    return taskRunner.acceptTask(this.ctx, run, task, why);
-  }
-
-  /** True when another Cobble process holds a live lease on this run. */
-  private leasedElsewhere(run: TeamRun) {
-    return leases.leasedElsewhere(this.ctx, run);
-  }
-
-  /** Claims (or refreshes) this process's lease on a run it drives. */
-  private claim(run: TeamRun) {
-    return leases.claim(this.ctx, run);
-  }
-
-  /** Keeps leases fresh while this process has work in flight. */
-  private heartbeat() {
-    return leases.heartbeat(this.ctx);
-  }
-
   async cleanup(runId: string) {
     const run = this.require(runId);
     if (!["done", "failed", "stopped"].includes(run.state))
@@ -640,7 +532,7 @@ export class TeamOrchestrator extends EventEmitter {
 
   async close() {
     for (const runId of this.ctx.state.retryTimers.keys())
-      this.clearRetry(runId);
+      budgets.clearRetry(this.ctx, runId);
     this.ctx.state.closed = true;
     clearInterval(this.ctx.state.leaseTimer);
     clearInterval(this.ctx.state.inboxTimer);
@@ -713,7 +605,7 @@ export class TeamOrchestrator extends EventEmitter {
     );
     if (!this.ctx.state.leaseTimer) {
       this.ctx.state.leaseTimer = setInterval(
-        () => this.heartbeat(),
+        () => leases.heartbeat(this.ctx),
         LEASE_MS / 3,
       );
       this.ctx.state.leaseTimer.unref?.();
@@ -739,24 +631,24 @@ export class TeamOrchestrator extends EventEmitter {
     let run = this.store.run(runId);
     if (!run || !["running", "needs_human"].includes(run.state)) return;
     // Only the process holding the lease drives a run (review finding 7).
-    if (this.leasedElsewhere(run)) return;
+    if (leases.leasedElsewhere(this.ctx, run)) return;
     if (run.ownerId !== this.ownerId) {
       if (run.state === "running" && run.ownerId) {
         const now = this.now();
         markIdle(run, now, crashIdleStart(run, now));
         endIdle(run, now);
       }
-      this.claim(run);
+      leases.claim(this.ctx, run);
       this.store.saveRun(run);
     }
     this.drainInbox(runId);
     run = this.require(runId);
     if (activeElapsedMs(run, this.now()) > run.budget.wallClockMs) {
-      this.pauseFor(run, "Time budget used up");
+      budgets.pauseFor(this.ctx, run, "Time budget used up");
       return;
     }
-    if (this.capReached(run)) {
-      this.pauseForCap(runId);
+    if (budgets.capReached(this.ctx, run)) {
+      budgets.pauseForCap(this.ctx, runId);
       return;
     }
     const tasks = this.store.tasks(runId);
@@ -791,9 +683,14 @@ export class TeamOrchestrator extends EventEmitter {
         );
         if (!ready) continue;
         // Dependents must see their dependencies' files: merge them first.
-        const blocked = await this.mergeDependencies(run, task, tasks);
-        if (this.capReached(this.require(runId))) {
-          this.pauseForCap(runId);
+        const blocked = await taskRunner.mergeDependencies(
+          this.ctx,
+          run,
+          task,
+          tasks,
+        );
+        if (budgets.capReached(this.ctx, this.require(runId))) {
+          budgets.pauseForCap(this.ctx, runId);
           return;
         }
         if (blocked) {
@@ -845,46 +742,8 @@ export class TeamOrchestrator extends EventEmitter {
     }
   }
 
-  private capReached(run: TeamRun): { cost: number; cap: number } | undefined {
-    return budgets.capReached(this.ctx, run);
-  }
-
-  private pauseForCap(runId: string) {
-    return budgets.pauseForCap(this.ctx, runId);
-  }
-
-  private pauseFor(run: TeamRun, reason: string) {
-    return budgets.pauseFor(this.ctx, run, reason);
-  }
-
   private async plannerTurn(runId: string) {
     return plannerTurn(this.ctx, runId);
-  }
-
-  /** Merges finished, unmerged dependencies; returns a reason when blocked. */
-  private async mergeDependencies(
-    run: TeamRun,
-    task: TeamTask,
-    tasks: TeamTask[],
-  ): Promise<string | null> {
-    return taskRunner.mergeDependencies(this.ctx, run, task, tasks);
-  }
-
-  private gateRun(
-    run: TeamRun,
-    kind: HumanGateKind,
-    message: string,
-    questions?: UserQuestion[],
-  ) {
-    return gates.gateRun(this.ctx, run, kind, message, questions);
-  }
-
-  private async apply(
-    run: TeamRun,
-    action: PlannerAction,
-    roles: Partial<Record<TeamRole, TeamAgentId>>,
-  ) {
-    return apply(this.ctx, run, action, roles);
   }
 
   private async runTask(runId: string, taskId: string) {
