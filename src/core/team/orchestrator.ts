@@ -86,7 +86,7 @@ import * as taskRunner from "./task-runner";
 
 import * as gates from "./gates";
 
-// import: leases
+import * as leases from "./leases";
 
 export {
   APPROVE_REFUSED,
@@ -397,65 +397,18 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   isLeasedElsewhere(runId: string): boolean {
-    return this.leasedElsewhere(this.require(runId));
+    return leases.isLeasedElsewhere(this.ctx, runId);
   }
   ownsRun(runId: string): boolean {
-    return this.store.run(runId)?.ownerId === this.ownerId;
+    return leases.ownsRun(this.ctx, runId);
   }
 
   private checkBridgeItem(run: TeamRun, item: TeamInboxItem) {
-    if (["done", "failed", "stopped"].includes(run.state))
-      throw new Error("This run has ended. Start a new run to continue.");
-    if (item.kind === "say") {
-      const clean = item.text.trim();
-      if (!clean) throw new Error("Type a message first");
-      if (clean.length > 4000)
-        throw new Error("Messages can be at most 4000 characters");
-      const mention = clean.match(/^@([\w-]{1,40})[\s,:]+([\s\S]+)$/);
-      const name = mention?.[1]?.toLowerCase();
-      if (
-        name &&
-        name !== "planner" &&
-        !this.store
-          .tasks(run.id)
-          .some(
-            (t) =>
-              t.id.toLowerCase() === name ||
-              t.agent === name ||
-              t.role === name,
-          )
-      )
-        throw new Error(
-          `Nobody called @${mention![1]} works in this run. Write to the planner instead.`,
-        );
-      return;
-    }
-    if (String(item.answer).toLowerCase() === "approve")
-      throw new Error(APPROVE_REFUSED);
-    if (!["done", "skip", "deny"].includes(item.answer))
-      throw new Error("Answer must be done, skip or deny");
-    if ((item.note?.length ?? 0) > 1000)
-      throw new Error("Notes can be at most 1000 characters");
-    let gate = run.gate;
-    if (item.taskId) {
-      const task = this.store.tasks(run.id).find((t) => t.id === item.taskId);
-      if (!task || task.state !== "needs_human" || !task.gate)
-        throw new Error("That task is not waiting for you");
-      gate = task.gate;
-    } else if (run.state !== "needs_human" || !gate)
-      throw new Error("The run is not waiting for you");
-    if (!item.taskId && gate?.kind === "questions" && item.answer === "done")
-      throw new Error(
-        "Answer the planner's questions in the Cobble app or with the cobble_answer_questions MCP tool; from here you can only skip or deny them.",
-      );
-    if (gate?.kind === "approval" && item.answer === "done")
-      throw new Error("Use Approve or Deny for an approval request");
+    return leases.checkBridgeItem(this.ctx, run, item);
   }
 
   private applyBridgeItem(runId: string, item: TeamInboxItem) {
-    this.checkBridgeItem(this.require(runId), item);
-    if (item.kind === "say") this.userMessage(runId, item.text);
-    else this.resolveGate(runId, item.answer, item.taskId, item.note ?? "");
+    return leases.applyBridgeItem(this.ctx, runId, item);
   }
 
   bridge(
@@ -463,88 +416,23 @@ export class TeamOrchestrator extends EventEmitter {
     item: TeamInboxItem,
     opts: { schedule?: boolean } = {},
   ): BridgeResult {
-    if (opts.schedule === false) this.ctx.state.quiet++;
-    try {
-      const run = this.require(runId);
-      this.checkBridgeItem(run, item);
-      const queued = this.leasedElsewhere(run);
-      if (queued) {
-        this.store.queueInbox(runId, item);
-        this.log(
-          run,
-          "inbox",
-          `Queued for the process driving this run: ${item.kind === "say" ? item.text.trim() : item.answer}`,
-        );
-        this.changed(runId);
-      } else {
-        this.drainInbox(runId, { force: true });
-        this.applyBridgeItem(runId, item);
-      }
-      return { runId, queued, state: this.require(runId).state };
-    } finally {
-      if (opts.schedule === false) this.ctx.state.quiet--;
-    }
+    return leases.bridge(this.ctx, runId, item, opts);
   }
 
   drainInbox(runId?: string, opts: { force?: boolean } = {}): number {
-    let applied = 0;
-    for (const id of runId ? [runId] : this.store.inboxRunIds()) {
-      if (!opts.force && !this.ownsRun(id)) continue;
-      for (const { item } of this.store.takeInbox(id)) {
-        try {
-          this.applyBridgeItem(id, item);
-          applied++;
-        } catch (error) {
-          const run = this.require(id);
-          const message = `A queued message could not be applied: ${error instanceof Error ? error.message : String(error)}`;
-          this.log(run, "inbox", message);
-          this.say(run, { author: "cobble", kind: "message", text: message });
-          this.emit("diagnostic", message);
-        }
-      }
-    }
-    return applied;
+    return leases.drainInbox(this.ctx, runId, opts);
   }
 
   drainOwned() {
-    if (this.ctx.state.closed) return;
-    for (const id of this.store.inboxRunIds()) {
-      const run = this.store.run(id);
-      if (
-        run &&
-        this.ownsRun(id) &&
-        ["running", "needs_human", "paused"].includes(run.state)
-      )
-        this.drainInbox(id);
-    }
+    return leases.drainOwned(this.ctx);
   }
 
   drainOrphans(): number {
-    this.ctx.state.quiet++;
-    try {
-      let applied = 0;
-      for (const id of this.store.inboxRunIds()) {
-        const run = this.require(id);
-        if (["done", "failed", "stopped"].includes(run.state)) {
-          this.store.takeInbox(id);
-          this.log(run, "inbox", "Dropped queued messages for an ended run");
-        } else if (!this.leasedElsewhere(run))
-          applied += this.drainInbox(id, { force: true });
-      }
-      return applied;
-    } finally {
-      this.ctx.state.quiet--;
-    }
+    return leases.drainOrphans(this.ctx);
   }
 
   private startInboxTimer() {
-    if (!this.ctx.state.inboxTimer) {
-      this.ctx.state.inboxTimer = setInterval(
-        () => this.drainOwned(),
-        LEASE_MS / 3,
-      );
-      this.ctx.state.inboxTimer.unref?.();
-    }
+    return leases.startInboxTimer(this.ctx);
   }
 
   /**
@@ -612,139 +500,23 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   handOff(runId: string, daemonId?: string): TeamRun {
-    let run = this.require(runId);
-    if (["done", "failed", "stopped"].includes(run.state))
-      throw new Error("This run has ended");
-    if (daemonId && run.ownerId === daemonId) {
-      run.daemonHandoff = new Date(this.now()).toISOString();
-      run.wakeRequested = true;
-      this.store.saveRun(run);
-      this.changed(runId);
-      return run;
-    }
-    if (this.leasedElsewhere(run))
-      throw new Error(
-        "Another Cobble process is driving this run. Stop it there, or wait a minute.",
-      );
-    if (
-      !this.ctx.state.active.get(runId) &&
-      (run.state === "running" ||
-        this.store.tasks(runId).some((t) => t.state === "running"))
-    ) {
-      this.recover(new Set([runId]));
-      run = this.require(runId);
-    }
-    run.daemonHandoff = new Date(this.now()).toISOString();
-    this.store.saveRun(run);
-    this.changed(runId);
-    return run;
+    return leases.handOff(this.ctx, runId, daemonId);
   }
 
   adoptHandoffs(alsoOwnedBy?: string): string[] {
-    const adopted: string[] = [];
-    for (let run of this.store.runsInState([
-      "running",
-      "needs_human",
-      "paused",
-    ])) {
-      if (
-        this.leasedElsewhere(run) ||
-        !(run.daemonHandoff || (alsoOwnedBy && run.ownerId === alsoOwnedBy))
-      )
-        continue;
-      try {
-        if (run.ownerId === this.ownerId) {
-          run.daemonHandoff = undefined;
-          if (run.state === "paused") this.adopt(run);
-          else {
-            run.wakeRequested = true;
-            this.store.saveRun(run);
-            this.schedule(run.id);
-          }
-        } else {
-          if (
-            run.state === "running" ||
-            this.store.tasks(run.id).some((t) => t.state === "running")
-          ) {
-            this.recover(new Set([run.id]));
-            run = this.require(run.id);
-          }
-          if (!run.daemonHandoff && run.state === "paused") {
-            if (run.retryAt) {
-              this.claim(run);
-              this.store.saveRun(run);
-              adopted.push(run.id);
-              continue;
-            }
-            if (
-              run.pausedReason !== DAEMON_HANDOFF_REASON &&
-              run.pausedReason !== RESTART_REASON
-            ) {
-              run.ownerId = undefined;
-              run.ownerSeen = undefined;
-              this.store.saveRun(run);
-              continue;
-            }
-          }
-          this.adopt(run);
-        }
-        adopted.push(run.id);
-      } catch (error) {
-        const message = `Daemon adoption failed: ${error instanceof Error ? error.message : String(error)}`;
-        this.log(run, "daemon", message);
-        this.emit("diagnostic", message);
-      }
-    }
-    return adopted;
+    return leases.adoptHandoffs(this.ctx, alsoOwnedBy);
   }
 
   private adopt(run: TeamRun) {
-    this.clearRetry(run.id);
-    if (
-      !run.idleSince &&
-      run.retryPausedAt &&
-      Number.isFinite(Date.parse(run.retryPausedAt))
-    )
-      markIdle(run, this.now(), Date.parse(run.retryPausedAt));
-    run.retryAt = undefined;
-    run.retryPausedAt = undefined;
-    this.resumeRun(run);
-    this.log(run, "daemon", "Adopted by the Cobble daemon");
+    return leases.adopt(this.ctx, run);
   }
 
   keepLeases(): string[] {
-    const kept: string[] = [];
-    for (const candidate of this.store.runsInState([
-      "running",
-      "needs_human",
-      "paused",
-    ])) {
-      const run = this.store.run(candidate.id);
-      if (!run || run.ownerId !== this.ownerId) continue;
-      run.ownerSeen = new Date(this.now()).toISOString();
-      this.store.saveRun(run);
-      kept.push(run.id);
-    }
-    return kept;
+    return leases.keepLeases(this.ctx);
   }
 
   private resumeRun(run: TeamRun) {
-    const runId = run.id;
-    this.claim(run);
-    for (const task of this.store.tasks(runId))
-      if (task.state === "interrupted") {
-        task.state = "queued";
-        this.store.saveTask(task);
-      }
-    run.state = run.gate ? "needs_human" : "running";
-    if (run.state === "running") endIdle(run, this.now());
-    run.pausedReason = undefined;
-    run.wakeRequested ||= this.store
-      .tasks(runId)
-      .every((t) => t.delivered || !TERMINAL_TASK_STATES.has(t.state));
-    this.store.saveRun(run);
-    this.schedule(runId);
-    return run;
+    return leases.resumeRun(this.ctx, run);
   }
 
   setMaxCost(runId: string, usd: number | null): TeamRun {
@@ -815,40 +587,7 @@ export class TeamOrchestrator extends EventEmitter {
    * Cobble process (e.g. a CLI status call) never pauses another's run.
    */
   recover(only?: ReadonlySet<string>) {
-    // Paused runs are included: a task can still be "running" in a run that
-    // was paused while the worker was busy (review finding 11).
-    for (const run of this.store.runsInState([
-      "running",
-      "needs_human",
-      "paused",
-    ])) {
-      if (only && !only.has(run.id)) continue;
-      // Never take over a run another live Cobble process is driving.
-      if (!only && this.leasedElsewhere(run)) continue;
-      for (const task of this.store.tasks(run.id))
-        if (task.state === "running") {
-          task.state = "interrupted";
-          task.error = "Cobble closed while this task was running";
-          this.store.saveTask(task);
-        }
-      if (run.state === "running") {
-        const now = this.now();
-        markIdle(
-          run,
-          now,
-          run.ownerId && run.ownerId !== this.ownerId
-            ? crashIdleStart(run, now)
-            : now,
-        );
-        run.state = "paused";
-        run.pausedReason = RESTART_REASON;
-      }
-      if (run.ownerId === this.ownerId || !this.leasedElsewhere(run)) {
-        run.ownerId = undefined;
-        run.ownerSeen = undefined;
-      }
-      this.store.saveRun(run);
-    }
+    return leases.recover(this.ctx, only);
   }
 
   /**
@@ -878,35 +617,17 @@ export class TeamOrchestrator extends EventEmitter {
 
   /** True when another Cobble process holds a live lease on this run. */
   private leasedElsewhere(run: TeamRun) {
-    return (
-      !!run.ownerId &&
-      run.ownerId !== this.ownerId &&
-      this.now() - Date.parse(run.ownerSeen ?? "") < LEASE_MS
-    );
+    return leases.leasedElsewhere(this.ctx, run);
   }
 
   /** Claims (or refreshes) this process's lease on a run it drives. */
   private claim(run: TeamRun) {
-    if (this.leasedElsewhere(run))
-      throw new Error(
-        "Another Cobble process (the desktop app or a terminal) is driving this run. Use that one, or close it and wait a minute.",
-      );
-    this.startInboxTimer();
-    run.daemonHandoff = undefined;
-    run.ownerId = this.ownerId;
-    run.ownerSeen = new Date(this.now()).toISOString();
+    return leases.claim(this.ctx, run);
   }
 
   /** Keeps leases fresh while this process has work in flight. */
   private heartbeat() {
-    for (const [runId, n] of this.ctx.state.active) {
-      if (n <= 0) continue;
-      const run = this.store.run(runId);
-      if (!run || run.ownerId !== this.ownerId) continue;
-      run.ownerSeen = new Date(this.now()).toISOString();
-      this.store.saveRun(run);
-      this.drainInbox(runId);
-    }
+    return leases.heartbeat(this.ctx);
   }
 
   async cleanup(runId: string) {
