@@ -2302,7 +2302,8 @@ export class CobbleService extends EventEmitter {
     note?: string,
     opts?: { schedule?: boolean },
   ): BridgeResult {
-    if (answer.toLowerCase() === "approve") throw new Error(APPROVE_REFUSED);
+    answer = answer.trim().toLowerCase();
+    if (answer === "approve") throw new Error(APPROVE_REFUSED);
     const id = runId ?? this.teamRuns()[0]?.id;
     if (!id) throw new Error("No team runs yet");
     this.teamRun(id);

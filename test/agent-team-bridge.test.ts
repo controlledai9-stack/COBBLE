@@ -121,7 +121,7 @@ test("idle owner timer drains while paused without in-flight work", async (t) =>
 test("approve and invalid input are rejected before queueing", async () => {
   const f = fixture();
   try {
-    for (const answer of ["approve", "APPROVE", "Approve"])
+    for (const answer of ["approve", "APPROVE", "Approve", " APPROVE "])
       assert.throws(() => f.b.teamAnswer("run", answer), {
         message: APPROVE_REFUSED,
       });
@@ -195,6 +195,77 @@ test("gate validation and queued stale gate errors continue to later messages", 
   }
 });
 
+test("questions gates reject done before queueing or saving", async () => {
+  const f = fixture();
+  try {
+    f.run.state = "needs_human";
+    f.run.gate = {
+      kind: "questions",
+      message: "Choose a color",
+      questions: [{ question: "Which color?" }],
+    };
+    for (const ownerId of [f.a.agentTeam.ownerId, undefined]) {
+      f.run.ownerId = ownerId;
+      f.a.teamStore.saveRun(f.run);
+      const before = f.a.teamStore.snapshot("run");
+      const answers = f.a.store.setting(
+        `teamUserAnswers:${f.run.teamId}`,
+        null,
+      );
+      assert.throws(
+        () =>
+          f.b.teamAnswer("run", "done", undefined, undefined, {
+            schedule: false,
+          }),
+        {
+          message:
+            "Answer the planner's questions in the Cobble app or with the cobble_answer_questions MCP tool; from here you can only skip or deny them.",
+        },
+      );
+      assert.deepEqual(f.a.teamStore.inboxRunIds(), []);
+      assert.deepEqual(f.a.teamStore.snapshot("run"), before);
+      assert.deepEqual(
+        f.a.store.setting(`teamUserAnswers:${f.run.teamId}`, null),
+        answers,
+      );
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test("skip and deny clear questions gates through the bridge", async () => {
+  const f = fixture();
+  try {
+    for (const answer of ["skip", "SKIP", " Deny "]) {
+      f.run.ownerId = undefined;
+      f.run.state = "needs_human";
+      f.run.gate = {
+        kind: "questions",
+        message: "Choose a color",
+        questions: [{ question: "Which color?" }],
+      };
+      f.a.teamStore.saveRun(f.run);
+      assert.equal(
+        f.b.teamAnswer("run", answer, undefined, undefined, { schedule: false })
+          .queued,
+        false,
+      );
+      const run = f.a.teamStore.run("run")!;
+      assert.equal(run.gate, undefined);
+      assert.equal(run.state, "running");
+      assert.ok(
+        run.pendingNotes.some((note) =>
+          note.includes("skipped your questions"),
+        ),
+      );
+    }
+    assert.equal(f.prompts.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test("inbox limit, atomic take, and orphan draining", async () => {
   const f = fixture();
   try {
@@ -239,7 +310,10 @@ test("task answers apply through existing gates and queued approve is never appl
       attempt: 1,
       createdAt: f.run.createdAt,
     });
-    assert.equal(f.b.teamAnswer("run", "done", "T1", "signed in").queued, true);
+    assert.equal(
+      f.b.teamAnswer("run", " DONE ", "T1", "signed in").queued,
+      true,
+    );
     f.a.teamStore.queueInbox("run", {
       kind: "answer",
       answer: "approve",
