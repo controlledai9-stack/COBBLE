@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { CobbleService } from "./core/service";
+import { validRetryAfter } from "./core/team/orchestrator";
 import { parseTeamSayArgs, parseTeamAnswerArgs } from "./core/team/bridge-args";
 
 async function main() {
@@ -21,6 +22,7 @@ async function main() {
       "from-transcript": { type: "boolean" },
       "max-tasks": { type: "string" },
       "max-turns": { type: "string" },
+      "retry-after": { type: "string" },
       check: { type: "string" },
       base: { type: "string" },
       backlog: { type: "string" },
@@ -43,8 +45,9 @@ async function main() {
   cobble team roles                  show role assignments
   cobble team role ROLE AGENT|none   e.g. team role planner claude
   cobble team test AGENT             one-line headless round trip
-  cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"]
-  cobble team resume [RUN_ID] [--max-turns N]
+  cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"] [--retry-after MINUTES]
+  cobble team resume [RUN_ID] [--max-turns N] [--retry-after MINUTES]
+  --retry-after MINUTES (5-720, default 60): after a usage limit, resume automatically, at most 6 times (each retry uses a planner turn)
   cobble team say [RUN_ID] "message"  send a Team Chat message to the planner
   cobble team answer [RUN_ID] [TASK_ID] done|skip|deny ["note"]
   cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
@@ -86,6 +89,14 @@ Agent hook installation is not yet automatic.`);
       )
         throw new Error(`--${flag} must be a whole number from 1 to ${limit}`);
     }
+  }
+  if (
+    command === "team" &&
+    ["run", "resume"].includes(positionals[1]) &&
+    values["retry-after"] !== undefined
+  ) {
+    const value = values["retry-after"];
+    validRetryAfter(/^\d+$/.test(value) ? Number(value) : NaN);
   }
   const data = resolve(
     values.data ??
@@ -378,6 +389,8 @@ async function teamCommand(
           service.teamStore.saveRun(stored);
         }
       }
+      if (values["retry-after"] !== undefined)
+        service.agentTeam.setRetryAfter(id, Number(values["retry-after"]));
       run = (await service.teamRunCommand(id, "resume")).run;
       console.log(`Resumed run ${run.id} (${run.state}) on ${run.runBranch}`);
     } else {
@@ -481,6 +494,9 @@ async function teamCommand(
 function runOptions(values: Record<string, unknown>) {
   return {
     checkCommand: typeof values.check === "string" ? values.check : undefined,
+    ...(typeof values["retry-after"] === "string"
+      ? { retryAfterMinutes: Number(values["retry-after"]) }
+      : {}),
     ...(typeof values.base === "string" ? { baseRef: values.base } : {}),
     ...(values["share-deps"] === true ? { shareDependencies: true } : {}),
   };
@@ -624,6 +640,33 @@ async function followRun(service: CobbleService, runId: string) {
       }
       if (snap.run.state === "paused" && snap.run.pausedReason)
         console.log(`Paused: ${snap.run.pausedReason}`);
+      if (snap.run.state === "paused" && snap.run.retryAt) {
+        console.log(
+          `Waiting for the automatic retry at ${new Date(snap.run.retryAt).toLocaleString()} (Ctrl+C to leave; it is kept for later).`,
+        );
+        let interval: ReturnType<typeof setInterval> | undefined;
+        let onUpdate: (() => void) | undefined;
+        try {
+          await new Promise<void>((resolve, reject) => {
+            onUpdate = () => {
+              try {
+                const run = service.teamRun(runId).run;
+                if (run.state !== "paused" || !run.retryAt) resolve();
+              } catch (error) {
+                reject(error);
+              }
+            };
+            service.agentTeam.on("update", onUpdate);
+            // Keep the CLI alive even though the orchestrator's retry timer is unref'd.
+            interval = setInterval(onUpdate, 5_000);
+            onUpdate();
+          });
+        } finally {
+          if (onUpdate) service.agentTeam.off("update", onUpdate);
+          if (interval) clearInterval(interval);
+        }
+        continue;
+      }
       if (snap.run.summary) console.log(`\nSummary: ${snap.run.summary}`);
       console.log(
         `Run state: ${snap.run.state}. Work is on branch ${snap.run.runBranch}.`,

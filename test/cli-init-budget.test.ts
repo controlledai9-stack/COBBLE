@@ -270,3 +270,39 @@ test("documented team detect, roles and status work on an isolated --data databa
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+for (const command of ["run", "resume"]) {
+  test(`team ${command} validates retry delay before starting agents`, () => {
+    const dir = mkdtempSync(join(tmpdir(), "cobble-cli-retry-"));
+    const message =
+      "--retry-after must be a whole number of minutes from 5 to 720";
+    try {
+      for (const value of ["4", "721", "1.5", "x"]) {
+        const data = join(dir, `invalid-${value}.db`);
+        const result = cli(data, ["team", command, "--retry-after", value]);
+        assert.equal(result.status, 1, result.stderr);
+        assert.equal(result.stderr.trim(), message);
+        assert.equal(existsSync(data), false);
+      }
+      for (const value of ["5", "720"]) {
+        // No goal/run exists: reach command validation without invoking any agent.
+        const result = cli(join(dir, `valid-${value}.db`), [
+          "team",
+          command,
+          "--retry-after",
+          value,
+        ]);
+        assert.equal(result.status, 1, result.stderr);
+        assert.equal(
+          result.stderr.trim(),
+          command === "run"
+            ? 'Usage: cobble team run "GOAL"'
+            : "Choose a team first",
+        );
+      }
+      assert.equal(existsSync(join(dir, "team-worktrees")), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
