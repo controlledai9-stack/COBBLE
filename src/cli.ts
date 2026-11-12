@@ -4,6 +4,12 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { CobbleService } from "./core/service";
+import { daemonStatus, TeamDaemon } from "./core/team/daemon";
+import {
+  daemonLogFile,
+  launchDaemon,
+  waitUntil,
+} from "./core/team/daemon-launch";
 import { validRetryAfter } from "./core/team/orchestrator";
 import { parseTeamSayArgs, parseTeamAnswerArgs } from "./core/team/bridge-args";
 
@@ -26,6 +32,7 @@ async function main() {
       file: { type: "string" },
       stdin: { type: "boolean" },
       json: { type: "boolean" },
+      detach: { type: "boolean" },
       "from-transcript": { type: "boolean" },
       "max-tasks": { type: "string" },
       "max-turns": { type: "string" },
@@ -53,8 +60,10 @@ async function main() {
   cobble team roles                  show role assignments
   cobble team role ROLE AGENT|none   e.g. team role planner claude
   cobble team test AGENT             one-line headless round trip
-  cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"] [--retry-after MINUTES] [--max-cost USD]
-  cobble team resume [RUN_ID] [--max-turns N] [--retry-after MINUTES] [--max-cost USD]
+  cobble team run "GOAL" [--detach] [--max-tasks N] [--max-turns N] [--check "npm test"] [--retry-after MINUTES] [--max-cost USD]
+  cobble team resume [RUN_ID] [--max-turns N] [--retry-after MINUTES] [--max-cost USD] [--detach]
+  --detach: hand run/resume to the background daemon and return
+  cobble team daemon [status|stop]    run, inspect or stop the daemon for --data
   --retry-after MINUTES (5-720, default 60): after a usage limit, resume automatically, at most 6 times (each retry uses a planner turn)
   cobble team say [RUN_ID] "message"  send a Team Chat message to the planner
   cobble team answer [RUN_ID] [TASK_ID] done|skip|deny ["note"]
@@ -223,7 +232,7 @@ Agent hook installation is not yet automatic.`);
       await service.monitor();
       console.log(JSON.stringify(await service.ingest(input), null, 2));
     } else if (command === "team") {
-      await teamCommand(service, positionals.slice(1), values);
+      await teamCommand(service, positionals.slice(1), values, data);
     } else if (command === "report") {
       const report = service.report();
       const directory = join(
@@ -247,9 +256,65 @@ async function teamCommand(
   service: CobbleService,
   args: string[],
   values: Record<string, unknown>,
+  data: string,
 ) {
   const [sub, ...rest] = args;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  if (sub === "daemon") {
+    if (rest.length > 1 || (rest[0] && !["status", "stop"].includes(rest[0])))
+      throw new Error("Usage: cobble team daemon [status|stop]");
+    if (rest[0] === "status") {
+      const status = daemonStatus(service.teamStore);
+      return print({
+        running: status.running,
+        stopping: status.stopping,
+        pid: status.lock?.pid ?? null,
+        startedAt: status.lock?.startedAt ?? null,
+        heartbeatAgeMs: status.heartbeatAgeMs ?? null,
+        runs: status.lock
+          ? service.teamStore
+              .runsInState(["running", "needs_human", "paused"])
+              .filter((run) => run.ownerId === status.lock!.id)
+              .map((run) => run.id)
+          : [],
+      });
+    }
+    if (rest[0] === "stop") {
+      const status = daemonStatus(service.teamStore);
+      if (!status.running && !status.stopping)
+        return console.log("No Cobble daemon is running.");
+      const lock = service.teamStore.requestDaemonStop();
+      if (!lock) return console.log("Cobble daemon stopped.");
+      const stopped = await waitUntil(
+        () => service.teamStore.daemonLock()?.id !== lock.id,
+        20_000,
+      );
+      return console.log(
+        stopped
+          ? "Cobble daemon stopped."
+          : "Cobble daemon has not stopped yet. Stop requested; check cobble team daemon status.",
+      );
+    }
+    const daemon = new TeamDaemon({
+      orchestrator: service.agentTeam,
+      teamStore: service.teamStore,
+      log: console.log,
+    });
+    const stop = () => {
+      void daemon.stop();
+    };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    try {
+      await daemon.start();
+      console.log(`Cobble daemon running (pid ${process.pid}).`);
+      await daemon.done;
+    } finally {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+    }
+    return;
+  }
   if (sub === "say" || sub === "answer") {
     const result = (() => {
       if (sub === "say") {
@@ -409,8 +474,11 @@ async function teamCommand(
         service.agentTeam.setRetryAfter(id, Number(values["retry-after"]));
       if (values["max-cost"] !== undefined)
         service.setTeamMaxCost(id, Number(values["max-cost"]));
-      run = (await service.teamRunCommand(id, "resume")).run;
-      console.log(`Resumed run ${run.id} (${run.state}) on ${run.runBranch}`);
+      run = values.detach
+        ? service.handOffTeamRun(id)
+        : (await service.teamRunCommand(id, "resume")).run;
+      if (!values.detach)
+        console.log(`Resumed run ${run.id} (${run.state}) on ${run.runBranch}`);
     } else {
       const goal = rest.join(" ").trim();
       if (!goal) throw new Error('Usage: cobble team run "GOAL"');
@@ -428,9 +496,22 @@ async function teamCommand(
             : {}),
         },
         undefined,
-        runOptions(values),
+        { ...runOptions(values), ...(values.detach ? { detach: true } : {}) },
       );
       console.log(`Run ${run.id} on branch ${run.runBranch}`);
+    }
+    if (values.detach) {
+      const pid = await ensureDaemon(service, data);
+      console.log(
+        `Handed run ${run.id} on branch ${run.runBranch} to the Cobble daemon (pid ${pid ?? "unavailable"}).`,
+      );
+      console.log(
+        `Follow: cobble team status ${run.id} | cobble team chat ${run.id}`,
+      );
+      console.log(
+        "Stop daemon: cobble team daemon stop (use the same --data PATH).",
+      );
+      return;
     }
     await followRun(service, run.id);
     return;
@@ -511,8 +592,37 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|say|answer|stop|access|backup|decisions|autopilot|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|daemon|say|answer|stop|access|backup|decisions|autopilot|notify|status",
   );
+}
+
+async function ensureDaemon(service: CobbleService, data: string) {
+  const status = () => daemonStatus(service.teamStore);
+  const warn = () =>
+    console.warn(
+      `Cobble daemon did not become ready. See ${daemonLogFile(data)} or run cobble team daemon --data ${JSON.stringify(data)}.`,
+    );
+  if (status().stopping) {
+    const stopped = await waitUntil(() => !status().stopping, 20_000);
+    if (!stopped) {
+      warn();
+      return undefined;
+    }
+  }
+  if (!status().running) {
+    try {
+      launchDaemon(data);
+    } catch (error) {
+      console.warn(String(error));
+      warn();
+      return undefined;
+    }
+  }
+  if (!(await waitUntil(() => status().running, 15_000))) {
+    warn();
+    return undefined;
+  }
+  return status().lock?.pid;
 }
 
 function runOptions(values: Record<string, unknown>) {
