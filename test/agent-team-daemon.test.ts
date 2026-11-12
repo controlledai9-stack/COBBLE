@@ -194,6 +194,105 @@ test("live lock refuses a second daemon including while stopping; stop releases 
   }
 });
 
+test("a handoff wakes a daemon-owned run paused by the user", async () => {
+  const f = await fixture();
+  try {
+    const a = f.make();
+    const d = f.daemon(a.orchestrator);
+    await d.start();
+    const run = await a.orchestrator.startRun(
+      f.team.id,
+      "Resume owned pause",
+      {},
+      {},
+      { detach: true },
+    );
+    f.teamStore.saveRun({
+      ...run,
+      daemonHandoff: undefined,
+      pausedReason: "Paused by you",
+      ownerId: d.id,
+      ownerSeen: new Date(f.now()).toISOString(),
+    });
+    a.orchestrator.handOff(run.id, d.id);
+    d.tick();
+    await a.orchestrator.idle(run.id);
+    const resumed = f.teamStore.run(run.id)!;
+    assert.equal(resumed.state, "done");
+    assert.equal(resumed.daemonHandoff, undefined);
+    assert.equal(resumed.pausedReason, undefined);
+    assert.equal(a.planner.calls.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("takeover ticks preserve unflagged user and retry pauses", async () => {
+  const f = await fixture();
+  const timers = new Map<object, () => void>();
+  try {
+    const staleId = "stale-daemon";
+    f.teamStore.acquireDaemonLock(
+      { id: staleId, pid: 101 },
+      f.now(),
+      DAEMON_STALE_MS,
+    );
+    f.advance(DAEMON_STALE_MS);
+    const a = f.make(undefined, {
+      set(fn) {
+        const handle = {};
+        timers.set(handle, fn);
+        return handle;
+      },
+      clear(handle) {
+        timers.delete(handle as object);
+      },
+    });
+    const d = f.daemon(a.orchestrator);
+    await d.start();
+    const retryAt = new Date(f.now() + 300_000).toISOString();
+    const retryPausedAt = new Date(f.now()).toISOString();
+    // Surface unflagged replaced-owner runs to the post-start takeover tick.
+    for (const retry of [false, true]) {
+      const team = f.store.createTeam("Paused team", "Plan", f.team.workspace);
+      f.teamStore.setRole(team.id, "planner", "claude");
+      f.teamStore.setRole(team.id, "coder", "codex");
+      const run = await a.orchestrator.startRun(
+        team.id,
+        retry ? "Keep retry paused" : "Keep user paused",
+        {},
+        {},
+        { detach: true },
+      );
+      f.teamStore.saveRun({
+        ...run,
+        daemonHandoff: undefined,
+        pausedReason: retry ? "Agent usage limit" : "Paused by you",
+        ownerId: staleId,
+        ownerSeen: new Date(f.now() - DAEMON_STALE_MS).toISOString(),
+        retryAt: retry ? retryAt : undefined,
+        retryPausedAt: retry ? retryPausedAt : undefined,
+      });
+      d.tick();
+      await a.orchestrator.idle(run.id);
+      const paused = f.teamStore.run(run.id)!;
+      assert.equal(paused.state, "paused");
+      assert.equal(paused.ownerId, retry ? d.id : undefined);
+      assert.equal(
+        paused.ownerSeen,
+        retry ? new Date(f.now()).toISOString() : undefined,
+      );
+      assert.equal(paused.retryAt, retry ? retryAt : undefined);
+      assert.equal(paused.retryPausedAt, retry ? retryPausedAt : undefined);
+    }
+    assert.equal(timers.size, 1);
+    assert.equal(a.planner.calls.length, 0);
+    assert.equal(a.coder.calls.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test("stale daemon lock is replaced and its unflagged run is adopted", async () => {
   const f = await fixture();
   try {
