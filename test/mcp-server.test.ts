@@ -186,6 +186,7 @@ test(
       assert.deepEqual(
         list.map((tool: any) => tool.name),
         [
+          "cobble_send_message",
           "cobble_team_overview",
           "cobble_list_runs",
           "cobble_run_status",

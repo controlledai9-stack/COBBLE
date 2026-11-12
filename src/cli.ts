@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { CobbleService } from "./core/service";
+import { parseTeamSayArgs, parseTeamAnswerArgs } from "./core/team/bridge-args";
 
 async function main() {
   const { values, positionals } = parseArgs({
@@ -44,6 +45,8 @@ async function main() {
   cobble team test AGENT             one-line headless round trip
   cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"]
   cobble team resume [RUN_ID] [--max-turns N]
+  cobble team say [RUN_ID] "message"  send a Team Chat message to the planner
+  cobble team answer [RUN_ID] [TASK_ID] done|skip|deny ["note"]
   cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
   cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps]
       works through "- [ ] item" lines one run at a time on branch cobble/autopilot
@@ -220,6 +223,28 @@ async function teamCommand(
 ) {
   const [sub, ...rest] = args;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  if (sub === "say" || sub === "answer") {
+    const result = (() => {
+      if (sub === "say") {
+        const { runId, text } = parseTeamSayArgs(rest);
+        return service.teamSay(runId, text, { schedule: false });
+      }
+      const { runId, taskId, answer, note } = parseTeamAnswerArgs(
+        rest,
+        (s) => !!service.teamStore.run(s),
+      );
+      return service.teamAnswer(runId, answer, taskId, note, {
+        schedule: false,
+      });
+    })();
+    return console.log(
+      result.queued
+        ? "Queued: the Cobble process driving this run will apply it within a minute."
+        : result.state === "paused"
+          ? `Saved. Resume the run to continue: cobble team resume ${result.runId}`
+          : "Saved. The planner reads it on its next turn (open Cobble or follow the run with cobble team resume).",
+    );
+  }
   if (sub === "detect") return print(await service.detectTeamAgents());
   if (sub === "roles") return print(service.teamRoles());
   if (sub === "role") {
@@ -449,7 +474,7 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|stop|access|backup|decisions|autopilot|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|say|answer|stop|access|backup|decisions|autopilot|notify|status",
   );
 }
 

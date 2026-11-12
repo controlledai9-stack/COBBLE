@@ -37,6 +37,12 @@ const object = (
 });
 const definitions = [
   [
+    "cobble_send_message",
+    "Send message",
+    "Send a Team Chat message to the run's planner (@agent or @T2 to address a task). Queued when another Cobble process drives the run. Never approves or signs in.",
+    object({ runId: string(), text: string(4000) }, ["text"]),
+  ],
+  [
     "cobble_team_overview",
     "Team overview",
     "Read the active team and its configuration and latest run.",
@@ -189,6 +195,8 @@ async function call(
   name: string,
   args: Record<string, any>,
 ): Promise<unknown> {
+  if (name === "cobble_send_message" && !args.text.trim())
+    throw new Error("text must not be blank");
   switch (name) {
     case "cobble_team_overview": {
       const team = service.activeTeam();
@@ -241,6 +249,10 @@ async function call(
     args.runId ??
     (service.activeTeam() ? service.teamRuns()[0]?.id : undefined);
   if (!id) throw new Error("No team runs yet");
+  if (name === "cobble_send_message")
+    return service.teamSay(id, args.text, {
+      schedule: service.agentTeam.ownsRun(id),
+    });
   const snap = service.teamRun(id);
   if (name === "cobble_run_status") {
     const r = snap.run;
