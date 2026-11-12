@@ -186,15 +186,32 @@ team_events(id, run_id, task_id, kind, payload_json, created_at)   -- audit log,
 - Add these tables to the encrypted backup. They are **device-local**: do not send them to teammates through the host and do not put them in handover snapshots. A short run summary may be shared as an ordinary activity.
 - On restart, `running` tasks become `interrupted`, and the run pauses with a "Resume run?" prompt. Never auto-relaunch agents after a crash.
 
+## Agent Team architecture
+
+All modules below live in `src/core/team/`. Extracted operations are free functions with `OrchestratorContext` as their first parameter; hooks connect operations across modules without importing the orchestrator class.
+
+- `orchestrator.ts` owns the public `TeamOrchestrator` facade, run setup, scheduling, lifecycle and event forwarding.
+- `orchestrator-context.ts` owns shared options, mutable state, hook contracts and constants.
+- `budgets.ts` owns cost caps, budget pauses, retry settings and automatic retry timers.
+- `planner-turn.ts` owns planner prompting, reply parsing, repair, takeover and action dispatch.
+- `task-runner.ts` owns worker execution, capture, checks, plan guards, reports, dependency merges and task acceptance.
+- `gates.ts` owns human gates, gate answers and user messages.
+- `leases.ts` owns run leases, ownership, handoffs, recovery and the bridge inbox.
+
 ## 10. Code layout
 
 ```
 src/core/team/
-  orchestrator.ts      run loop, scheduling, budgets, state transitions
+  orchestrator.ts      public facade, run setup, scheduling and lifecycle
+  orchestrator-context.ts  shared options, mutable state, hooks and constants
+  budgets.ts           cost caps, pauses and automatic retries
+  planner-turn.ts      planner turns, repair, takeover and action dispatch
+  task-runner.ts       worker execution, checks, reports and dependency merges
+  leases.ts            run ownership, recovery, handoffs and bridge inbox
   actions.ts           planner JSON parse/validate
   prompts.ts           planner/worker/wake-up prompt builders
   worktrees.ts         create/merge/cleanup task worktrees (uses git-main helpers)
-  gates.ts             human-gate + approval policy
+  gates.ts             human gates, answers and user messages
   adapters/{claude,codex,gemini,index}.ts
 src/renderer/team-panel.tsx   roles, run view (task board + decision log), gates
 src/cli.ts                    `cobble team run "<goal>"`, `team status`, `team stop`
