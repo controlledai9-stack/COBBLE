@@ -346,6 +346,10 @@ export class TeamOrchestrator extends EventEmitter {
       gate = task.gate;
     } else if (run.state !== "needs_human" || !gate)
       throw new Error("The run is not waiting for you");
+    if (!item.taskId && gate?.kind === "questions" && item.answer === "done")
+      throw new Error(
+        "Answer the planner's questions in the Cobble app or with the cobble_answer_questions MCP tool; from here you can only skip or deny them.",
+      );
     if (gate?.kind === "approval" && item.answer === "done")
       throw new Error("Use Approve or Deny for an approval request");
   }
