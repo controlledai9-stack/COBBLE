@@ -256,12 +256,12 @@ export class TeamStore {
    * (BEGIN IMMEDIATE, so another Cobble process cannot pass at the same time).
    * A reservation older than two minutes is treated as abandoned.
    */
-  reserveRunStart(teamId: string, owner: string, now: number) {
+  reserveRunStart(teamId: string, owner: string, now: number, maxActive = 1) {
     this.store.transaction(() => {
       if (
-        this.runsInState(["running", "needs_human", "paused"]).some(
+        this.runsInState(["running", "needs_human", "paused"]).filter(
           (r) => r.teamId === teamId,
-        )
+        ).length >= maxActive
       )
         throw new Error(
           "Finish or stop the current team run before starting another",
