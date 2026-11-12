@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/core/store";
 import { TeamStore } from "../src/core/team/team-store";
+import { Worktrees } from "../src/core/team/worktrees";
 import { TeamOrchestrator, validMaxCost } from "../src/core/team/orchestrator";
 import type {
   AdapterRunInput,
@@ -41,7 +42,7 @@ function setup(
   roles: Partial<Record<TeamRole, TeamAgentId>>,
   geminiInstalled = true,
 ) {
-  const root = mkdtempSync(join(tmpdir(), "cobble-backup-"));
+  const root = mkdtempSync(join(tmpdir(), "cobble-budget-cap-"));
   const work = join(root, "work");
   mkdirSync(work);
   writeFileSync(join(work, "README.md"), "hi\n");
@@ -184,31 +185,105 @@ test("cost helpers and maximum spend validation", () => {
     assert.throws(() => validMaxCost(value), /Maximum spend must be between/);
 });
 
-test("cap reached while preparing requeues without consuming attempt or resume note", async () => {
+test("cap reached while preparing requeues without consuming attempt or resume note", async (t) => {
   const f = fixture();
   try {
     const run = await f.orchestrator.startRun(f.team.id, "x", {
       maxCostUsd: 1,
     });
     await f.orchestrator.idle(run.id);
+    const running = f.teamStore.run(run.id)!;
+    running.state = "running";
+    running.pausedReason = undefined;
+    f.teamStore.saveRun(running);
     const task = f.teamStore.tasks(run.id)[0];
     task.state = "running";
+    task.role = "coder";
+    task.agent = "gemini";
+    task.usage = undefined;
     task.attempt = 2;
     task.resumeNote = "The user answered: keep this answer";
     task.startedAt = new Date().toISOString();
     f.teamStore.saveTask(task);
-    // Exercise the preparation guard directly with the already reached cap.
+    assert.equal(runCostUsd(running.plannerUsage, [task]), 0.5);
+    const prepareTask = Worktrees.prototype.prepareTask;
+    t.mock.method(Worktrees.prototype, "prepareTask", async function (
+      this: Worktrees,
+      runId: string,
+      taskId: string,
+    ) {
+      const prepared = await prepareTask.call(this, runId, taskId);
+      assert.equal(f.teamStore.run(runId)!.state, "running");
+      // Deterministically record late usage and a fresh answer during preparation.
+      const latest = f.teamStore.tasks(runId)[0];
+      latest.usage = usage;
+      latest.resumeNote = "The user answered during preparation: keep this answer";
+      f.teamStore.saveTask(latest);
+      return prepared;
+    });
+    // Bypass the scheduler guard to exercise runTask's own preparation guard.
     await (
       f.orchestrator as unknown as {
         runTask(runId: string, taskId: string): Promise<void>;
       }
     ).runTask(run.id, task.id);
+    // The preparation guard itself must pause, before any scheduler tick.
+    assert.equal(f.teamStore.run(run.id)!.state, "paused");
+    assert.equal(
+      f.teamStore.run(run.id)!.pausedReason,
+      "Spending cap reached: $1.00 of $1.00",
+    );
     const queued = f.teamStore.tasks(run.id)[0];
     assert.equal(queued.state, "queued");
     assert.equal(queued.attempt, 2);
-    assert.equal(queued.resumeNote, task.resumeNote);
+    assert.equal(
+      queued.resumeNote,
+      "The user answered during preparation: keep this answer",
+    );
     assert.equal(queued.startedAt, undefined);
     assert.equal(f.codex.length, 1);
+    assert.equal(f.gemini.length, 0);
+    await f.orchestrator.idle(run.id);
+    const paused = f.teamStore.run(run.id)!;
+    assert.equal(paused.state, "paused");
+    assert.equal(paused.pausedReason, "Spending cap reached: $1.00 of $1.00");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("worker usage reaching the cap blocks the planner wake turn without consuming a turn", async () => {
+  const f = fixture();
+  try {
+    const run = await f.orchestrator.startRun(f.team.id, "x", {
+      maxCostUsd: 1,
+    });
+    await f.orchestrator.idle(run.id);
+    const before = f.teamStore.run(run.id)!;
+    assert.equal(before.plannerTurns, 1);
+    assert.equal(f.claude.length, 1);
+    assert.equal(f.codex.length, 1);
+    assert.equal(f.teamStore.tasks(run.id)[0].usage?.costUsd, 0.5);
+    // Enter the wake turn directly so the scheduler cap guard cannot mask it.
+    before.state = "running";
+    before.pausedReason = undefined;
+    before.wakeRequested = true;
+    f.teamStore.saveRun(before);
+    await (
+      f.orchestrator as unknown as {
+        plannerTurn(runId: string): Promise<void>;
+      }
+    ).plannerTurn(run.id);
+    // Check before idle so a scheduler guard cannot hide a missing planner guard.
+    assert.equal(f.teamStore.run(run.id)!.state, "paused");
+    assert.equal(f.teamStore.run(run.id)!.plannerTurns, before.plannerTurns);
+    assert.equal(f.claude.length, 1);
+    await f.orchestrator.idle(run.id);
+    const paused = f.teamStore.run(run.id)!;
+    assert.equal(paused.state, "paused");
+    assert.equal(paused.pausedReason, "Spending cap reached: $1.00 of $1.00");
+    assert.equal(paused.plannerTurns, before.plannerTurns);
+    assert.equal(f.claude.length, 1);
   } finally {
     await f.cleanup();
   }

@@ -655,10 +655,11 @@ function TeamPanelContent({
                 await refreshRuns();
               })
             }
-            raiseCap={(usd) =>
+            raiseCap={(usd, onSuccess) =>
               void perform(async () => {
                 await api.setTeamMaxCost(snapshot.run.id, usd);
                 await api.teamCommand(snapshot.run.id, "resume");
+                onSuccess();
                 await refreshRuns();
               })
             }
@@ -1064,7 +1065,7 @@ function RunView({
 }: {
   snapshot: RunSnapshot;
   pending: boolean;
-  raiseCap: (usd: number) => void;
+  raiseCap: (usd: number, onSuccess: () => void) => void;
   command: (
     command: Command,
     taskId?: string,
@@ -1110,7 +1111,7 @@ function RunView({
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                raiseCap(Number(newMaxCost));
+                raiseCap(Number(newMaxCost), () => setNewMaxCost(""));
               }}
             >
               <label className="agent-team-field">
