@@ -39,6 +39,8 @@ import {
   FULL_ACCESS_ROLES,
   TERMINAL_TASK_STATES,
   WRITING_ROLES,
+  type BridgeResult,
+  type TeamInboxItem,
   type ApprovalPolicy,
   type TeamChatMessage,
   type HumanGateKind,
@@ -69,6 +71,8 @@ export interface OrchestratorOptions {
   ) => string | undefined;
 }
 
+export const APPROVE_REFUSED =
+  "approve is not available here: approve production deploys in the Cobble app, on your phone, or in a terminal following the run (cobble team run/resume).";
 export type GateAnswer = "done" | "approve" | "skip" | "deny";
 /** Key of the planner's abort controller in `running`. */
 /** Prefix of planner notes that carry a Team Chat message from the user. */
@@ -110,6 +114,8 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly running = new Map<string, AbortController>();
   private readonly inflight = new Set<Promise<unknown>>();
   private closed = false;
+  private quiet = 0;
+  private inboxTimer?: ReturnType<typeof setInterval>;
 
   private readonly adapters: Record<TeamAgentId, AgentAdapter>;
   constructor(private readonly options: OrchestratorOptions) {
@@ -282,6 +288,7 @@ export class TeamOrchestrator extends EventEmitter {
       to: "planner",
       text: cleanGoal,
     });
+    this.startInboxTimer();
     this.store.prune(teamId);
     this.schedule(id);
     return run;
@@ -289,6 +296,154 @@ export class TeamOrchestrator extends EventEmitter {
 
   snapshot(runId: string): RunSnapshot | null {
     return this.store.snapshot(runId);
+  }
+
+  isLeasedElsewhere(runId: string): boolean {
+    return this.leasedElsewhere(this.require(runId));
+  }
+  ownsRun(runId: string): boolean {
+    return this.store.run(runId)?.ownerId === this.ownerId;
+  }
+
+  private checkBridgeItem(run: TeamRun, item: TeamInboxItem) {
+    if (["done", "failed", "stopped"].includes(run.state))
+      throw new Error("This run has ended. Start a new run to continue.");
+    if (item.kind === "say") {
+      const clean = item.text.trim();
+      if (!clean) throw new Error("Type a message first");
+      if (clean.length > 4000)
+        throw new Error("Messages can be at most 4000 characters");
+      const mention = clean.match(/^@([\w-]{1,40})[\s,:]+([\s\S]+)$/);
+      const name = mention?.[1]?.toLowerCase();
+      if (
+        name &&
+        name !== "planner" &&
+        !this.store
+          .tasks(run.id)
+          .some(
+            (t) =>
+              t.id.toLowerCase() === name ||
+              t.agent === name ||
+              t.role === name,
+          )
+      )
+        throw new Error(
+          `Nobody called @${mention![1]} works in this run. Write to the planner instead.`,
+        );
+      return;
+    }
+    if (String(item.answer).toLowerCase() === "approve")
+      throw new Error(APPROVE_REFUSED);
+    if (!["done", "skip", "deny"].includes(item.answer))
+      throw new Error("Answer must be done, skip or deny");
+    if ((item.note?.length ?? 0) > 1000)
+      throw new Error("Notes can be at most 1000 characters");
+    let gate = run.gate;
+    if (item.taskId) {
+      const task = this.store.tasks(run.id).find((t) => t.id === item.taskId);
+      if (!task || task.state !== "needs_human" || !task.gate)
+        throw new Error("That task is not waiting for you");
+      gate = task.gate;
+    } else if (run.state !== "needs_human" || !gate)
+      throw new Error("The run is not waiting for you");
+    if (!item.taskId && gate?.kind === "questions" && item.answer === "done")
+      throw new Error(
+        "Answer the planner's questions in the Cobble app or with the cobble_answer_questions MCP tool; from here you can only skip or deny them.",
+      );
+    if (gate?.kind === "approval" && item.answer === "done")
+      throw new Error("Use Approve or Deny for an approval request");
+  }
+
+  private applyBridgeItem(runId: string, item: TeamInboxItem) {
+    this.checkBridgeItem(this.require(runId), item);
+    if (item.kind === "say") this.userMessage(runId, item.text);
+    else this.resolveGate(runId, item.answer, item.taskId, item.note ?? "");
+  }
+
+  bridge(
+    runId: string,
+    item: TeamInboxItem,
+    opts: { schedule?: boolean } = {},
+  ): BridgeResult {
+    if (opts.schedule === false) this.quiet++;
+    try {
+      const run = this.require(runId);
+      this.checkBridgeItem(run, item);
+      const queued = this.leasedElsewhere(run);
+      if (queued) {
+        this.store.queueInbox(runId, item);
+        this.log(
+          run,
+          "inbox",
+          `Queued for the process driving this run: ${item.kind === "say" ? item.text.trim() : item.answer}`,
+        );
+        this.changed(runId);
+      } else {
+        this.drainInbox(runId, { force: true });
+        this.applyBridgeItem(runId, item);
+      }
+      return { runId, queued, state: this.require(runId).state };
+    } finally {
+      if (opts.schedule === false) this.quiet--;
+    }
+  }
+
+  drainInbox(runId?: string, opts: { force?: boolean } = {}): number {
+    let applied = 0;
+    for (const id of runId ? [runId] : this.store.inboxRunIds()) {
+      if (!opts.force && !this.ownsRun(id)) continue;
+      for (const { item } of this.store.takeInbox(id)) {
+        try {
+          this.applyBridgeItem(id, item);
+          applied++;
+        } catch (error) {
+          const run = this.require(id);
+          const message = `A queued message could not be applied: ${error instanceof Error ? error.message : String(error)}`;
+          this.log(run, "inbox", message);
+          this.say(run, { author: "cobble", kind: "message", text: message });
+          this.emit("diagnostic", message);
+        }
+      }
+    }
+    return applied;
+  }
+
+  drainOwned() {
+    if (this.closed) return;
+    for (const id of this.store.inboxRunIds()) {
+      const run = this.store.run(id);
+      if (
+        run &&
+        this.ownsRun(id) &&
+        ["running", "needs_human", "paused"].includes(run.state)
+      )
+        this.drainInbox(id);
+    }
+  }
+
+  drainOrphans(): number {
+    this.quiet++;
+    try {
+      let applied = 0;
+      for (const id of this.store.inboxRunIds()) {
+        const run = this.require(id);
+        if (["done", "failed", "stopped"].includes(run.state)) {
+          this.store.takeInbox(id);
+          this.log(run, "inbox", "Dropped queued messages for an ended run");
+        } else if (!this.leasedElsewhere(run))
+          applied += this.drainInbox(id, { force: true });
+      }
+      return applied;
+    } finally {
+      this.quiet--;
+    }
+  }
+
+  private startInboxTimer() {
+    if (!this.inboxTimer) {
+      this.inboxTimer = setInterval(() => this.drainOwned(), LEASE_MS / 3);
+      this.inboxTimer.unref?.();
+    }
   }
 
   /**
@@ -627,6 +782,7 @@ export class TeamOrchestrator extends EventEmitter {
       throw new Error(
         "Another Cobble process (the desktop app or a terminal) is driving this run. Use that one, or close it and wait a minute.",
       );
+    this.startInboxTimer();
     run.ownerId = this.ownerId;
     run.ownerSeen = new Date(this.now()).toISOString();
   }
@@ -639,6 +795,7 @@ export class TeamOrchestrator extends EventEmitter {
       if (!run || run.ownerId !== this.ownerId) continue;
       run.ownerSeen = new Date(this.now()).toISOString();
       this.store.saveRun(run);
+      this.drainInbox(runId);
     }
   }
 
@@ -653,6 +810,7 @@ export class TeamOrchestrator extends EventEmitter {
   async close() {
     this.closed = true;
     clearInterval(this.leaseTimer);
+    clearInterval(this.inboxTimer);
     this.interruptedOnClose = new Set(
       [...this.active].filter(([, n]) => n > 0).map(([id]) => id),
     );
@@ -687,6 +845,7 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   schedule(runId: string) {
+    if (this.quiet) return;
     if (this.closed) return;
     const prior = this.ticks.get(runId) ?? Promise.resolve();
     const next = prior
@@ -721,7 +880,7 @@ export class TeamOrchestrator extends EventEmitter {
 
   private async tick(runId: string) {
     if (this.closed) return;
-    const run = this.store.run(runId);
+    let run = this.store.run(runId);
     if (!run || !["running", "needs_human"].includes(run.state)) return;
     // Only the process holding the lease drives a run (review finding 7).
     if (this.leasedElsewhere(run)) return;
@@ -729,6 +888,8 @@ export class TeamOrchestrator extends EventEmitter {
       this.claim(run);
       this.store.saveRun(run);
     }
+    this.drainInbox(runId);
+    run = this.require(runId);
     if (this.now() - Date.parse(run.createdAt) > run.budget.wallClockMs) {
       this.pauseFor(run, "Time budget used up");
       return;
@@ -935,6 +1096,7 @@ export class TeamOrchestrator extends EventEmitter {
       }
       if (result.rateLimited) {
         const backup = await this.usableBackup(run.teamId, "planner", agent);
+        run = this.require(runId);
         if (backup && !run.plannerSwitchedFrom) {
           run.plannerAgent = backup;
           run.plannerSwitchedFrom = agent;
