@@ -1623,6 +1623,7 @@ export class TeamOrchestrator extends EventEmitter {
         );
         const assessment = assess(team, changes);
         patch.drift = {
+          ...(blocked.length > 0 ? { blocked: blocked.slice(0, 50) } : {}),
           classification: assessment.classification,
           alert: assessment.alert || blocked.length > 0,
           explanation: blocked.length

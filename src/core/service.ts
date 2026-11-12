@@ -30,6 +30,7 @@ import { buildReviewPacket } from "./review/packet";
 import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { TeamStore } from "./team/team-store";
+import { planGuardEntries } from "./team/plan-guard";
 import {
   AUTOPILOT_BRANCH,
   Autopilot,
@@ -714,6 +715,14 @@ export class CobbleService extends EventEmitter {
       activeTeamId: team?.id ?? null,
       members: team ? this.store.members(team.id) : [],
       activities: team ? this.store.activities(team.id) : [],
+      teamGuard: team
+        ? planGuardEntries(
+            this.teamStore.runs(team.id, 20).map((run) => ({
+              run,
+              tasks: this.teamStore.tasks(run.id),
+            })),
+          )
+        : [],
       messages: team && profile ? this.store.messages(team.id, profile.id) : [],
       invites:
         team && team.ownerId === profile?.id ? this.store.invites(team.id) : [],
