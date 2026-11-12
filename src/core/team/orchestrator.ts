@@ -34,6 +34,12 @@ import {
 } from "./prompts";
 import { TeamStore } from "./team-store";
 import {
+  markIdle,
+  endIdle,
+  activeElapsedMs,
+  crashIdleStart,
+} from "./time-budget";
+import {
   DEFAULT_BUDGET,
   DEFAULT_POLICY,
   FULL_ACCESS_ROLES,
@@ -589,6 +595,7 @@ export class TeamOrchestrator extends EventEmitter {
   pause(runId: string) {
     const run = this.require(runId);
     if (run.state !== "running") return run;
+    markIdle(run, this.now());
     run.state = "paused";
     run.pausedReason = "Paused by you";
     this.store.saveRun(run);
@@ -616,6 +623,12 @@ export class TeamOrchestrator extends EventEmitter {
     }
     if (run.state !== "paused") return run;
     this.clearRetry(runId);
+    if (
+      !run.idleSince &&
+      run.retryPausedAt &&
+      Number.isFinite(Date.parse(run.retryPausedAt))
+    )
+      markIdle(run, this.now(), Date.parse(run.retryPausedAt));
     run.retryAt = undefined;
     run.retryPausedAt = undefined;
     this.resumeRun(run);
@@ -632,6 +645,7 @@ export class TeamOrchestrator extends EventEmitter {
         this.store.saveTask(task);
       }
     run.state = run.gate ? "needs_human" : "running";
+    if (run.state === "running") endIdle(run, this.now());
     run.pausedReason = undefined;
     run.wakeRequested ||= this.store
       .tasks(runId)
@@ -700,9 +714,12 @@ export class TeamOrchestrator extends EventEmitter {
       )
         return;
       run.autoRetries = (run.autoRetries ?? 0) + 1;
-      run.retryWaitMs =
-        (run.retryWaitMs ?? 0) +
-        Math.max(0, this.now() - Date.parse(run.retryPausedAt ?? run.retryAt));
+      if (
+        !run.idleSince &&
+        run.retryPausedAt &&
+        Number.isFinite(Date.parse(run.retryPausedAt))
+      )
+        markIdle(run, this.now(), Date.parse(run.retryPausedAt));
       run.retryAt = undefined;
       run.retryPausedAt = undefined;
       run.wakeRequested = true;
@@ -737,6 +754,7 @@ export class TeamOrchestrator extends EventEmitter {
         this.store.saveTask(task);
       }
     }
+    endIdle(run, this.now());
     run.state = "stopped";
     run.gate = undefined;
     this.store.saveRun(run);
@@ -817,6 +835,7 @@ export class TeamOrchestrator extends EventEmitter {
         run.gate = undefined;
         run.state = "running";
         run.wakeRequested = true;
+        endIdle(run, this.now());
         this.store.saveRun(run);
         this.schedule(runId);
         return this.store.snapshot(runId)!;
@@ -829,6 +848,7 @@ export class TeamOrchestrator extends EventEmitter {
       run.gate = undefined;
       run.state = "running";
       run.wakeRequested = true;
+      endIdle(run, this.now());
       this.store.saveRun(run);
       this.log(run, "gate", `Run gate: ${answer}`);
     }
@@ -859,6 +879,14 @@ export class TeamOrchestrator extends EventEmitter {
           this.store.saveTask(task);
         }
       if (run.state === "running") {
+        const now = this.now();
+        markIdle(
+          run,
+          now,
+          run.ownerId && run.ownerId !== this.ownerId
+            ? crashIdleStart(run, now)
+            : now,
+        );
         run.state = "paused";
         run.pausedReason =
           "Cobble restarted. Resume the run when you are ready.";
@@ -1041,15 +1069,17 @@ export class TeamOrchestrator extends EventEmitter {
     // Only the process holding the lease drives a run (review finding 7).
     if (this.leasedElsewhere(run)) return;
     if (run.ownerId !== this.ownerId) {
+      if (run.state === "running" && run.ownerId) {
+        const now = this.now();
+        markIdle(run, now, crashIdleStart(run, now));
+        endIdle(run, now);
+      }
       this.claim(run);
       this.store.saveRun(run);
     }
     this.drainInbox(runId);
     run = this.require(runId);
-    if (
-      this.now() - Date.parse(run.createdAt) - (run.retryWaitMs ?? 0) >
-      run.budget.wallClockMs
-    ) {
+    if (activeElapsedMs(run, this.now()) > run.budget.wallClockMs) {
       this.pauseFor(run, "Time budget used up");
       return;
     }
@@ -1162,6 +1192,7 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   private pauseFor(run: TeamRun, reason: string) {
+    markIdle(run, this.now());
     run.state = "paused";
     run.pausedReason = reason;
     this.store.saveRun(run);
@@ -1427,6 +1458,7 @@ export class TeamOrchestrator extends EventEmitter {
     message: string,
     questions?: UserQuestion[],
   ) {
+    markIdle(run, this.now());
     run.state = "needs_human";
     run.gate = { kind, message, ...(questions ? { questions } : {}) };
     this.store.saveRun(run);
