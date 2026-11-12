@@ -394,7 +394,22 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   resume(runId: string) {
-    const run = this.require(runId);
+    let run = this.require(runId);
+    // A run left "running" by a Cobble process that is gone (crash, closed
+    // terminal): recover it like app startup does, then resume normally.
+    // Otherwise `team resume` saw "running", did nothing and exited.
+    const orphaned =
+      !this.active.get(runId) &&
+      (run.state === "running" ||
+        this.store.tasks(runId).some((t) => t.state === "running"));
+    if (orphaned && !["done", "failed", "stopped"].includes(run.state)) {
+      if (this.leasedElsewhere(run))
+        throw new Error(
+          "Another Cobble window or terminal is driving this run. Resume it there, or close it first.",
+        );
+      this.recover(new Set([runId]));
+      run = this.require(runId);
+    }
     if (run.state !== "paused") return run;
     this.claim(run);
     for (const task of this.store.tasks(runId))
