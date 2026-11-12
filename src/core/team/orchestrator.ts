@@ -23,7 +23,7 @@ import {
   type AgentAdapter,
   type AdapterResult,
 } from "./adapters";
-import { addUsage, emptyUsage } from "./usage";
+import { addUsage, emptyUsage, runCostUsd, formatUsd } from "./usage";
 import {
   autonomyPolicy,
   plannerTakeoverContext,
@@ -69,6 +69,12 @@ export function validRetryAfter(minutes: unknown): number {
       "--retry-after must be a whole number of minutes from 5 to 720",
     );
   return minutes;
+}
+
+export function validMaxCost(usd: number): number {
+  if (!Number.isFinite(usd) || usd < 0.01 || usd > 100000)
+    throw new Error("Maximum spend must be between $0.01 and $100000");
+  return Math.round(usd * 100) / 100;
 }
 
 export interface RetryTimers {
@@ -219,6 +225,8 @@ export class TeamOrchestrator extends EventEmitter {
     const checkCommand = validCheckCommand(extras.checkCommand);
     if (extras.retryAfterMinutes !== undefined)
       validRetryAfter(extras.retryAfterMinutes);
+    if (budget.maxCostUsd !== undefined)
+      budget = { ...budget, maxCostUsd: validMaxCost(budget.maxCostUsd) };
     const team = this.options.team(teamId);
     if (!team) throw new Error("Choose a team first");
     if (!team.workspace) throw new Error("Choose a workspace folder first");
@@ -615,6 +623,16 @@ export class TeamOrchestrator extends EventEmitter {
       .every((t) => t.delivered || !TERMINAL_TASK_STATES.has(t.state));
     this.store.saveRun(run);
     this.schedule(runId);
+    return run;
+  }
+
+  setMaxCost(runId: string, usd: number | null): TeamRun {
+    const run = this.require(runId);
+    if (["done", "failed", "stopped"].includes(run.state))
+      throw new Error("This run has ended");
+    if (usd === null) delete run.budget.maxCostUsd;
+    else run.budget.maxCostUsd = validMaxCost(usd);
+    this.store.saveRun(run);
     return run;
   }
 
@@ -1020,6 +1038,10 @@ export class TeamOrchestrator extends EventEmitter {
       this.pauseFor(run, "Time budget used up");
       return;
     }
+    if (this.capReached(run)) {
+      this.pauseForCap(runId);
+      return;
+    }
     const tasks = this.store.tasks(runId);
     // 1. Cancel tasks whose dependencies can no longer succeed.
     for (const task of tasks) {
@@ -1053,6 +1075,10 @@ export class TeamOrchestrator extends EventEmitter {
         if (!ready) continue;
         // Dependents must see their dependencies' files: merge them first.
         const blocked = await this.mergeDependencies(run, task, tasks);
+        if (this.capReached(this.require(runId))) {
+          this.pauseForCap(runId);
+          return;
+        }
         if (blocked) {
           task.state = "cancelled";
           task.error = blocked;
@@ -1100,6 +1126,24 @@ export class TeamOrchestrator extends EventEmitter {
         }),
       );
     }
+  }
+
+  private capReached(run: TeamRun): { cost: number; cap: number } | undefined {
+    const cap = run.budget.maxCostUsd;
+    if (cap === undefined) return undefined;
+    const cost = runCostUsd(run.plannerUsage, this.store.tasks(run.id));
+    return cost >= cap ? { cost, cap } : undefined;
+  }
+
+  private pauseForCap(runId: string) {
+    const fresh = this.require(runId);
+    if (fresh.state !== "running" && fresh.state !== "needs_human") return;
+    const reached = this.capReached(fresh);
+    if (reached)
+      this.pauseFor(
+        fresh,
+        `Spending cap reached: ${formatUsd(reached.cost)} of ${formatUsd(reached.cap)}`,
+      );
   }
 
   private pauseFor(run: TeamRun, reason: string) {
@@ -1164,6 +1208,11 @@ export class TeamOrchestrator extends EventEmitter {
     const wt = this.worktrees(run);
     let parsed: ReturnType<typeof parsePlannerReply> | null = null;
     for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+      run = this.require(runId);
+      if (this.capReached(run)) {
+        this.pauseForCap(runId);
+        return;
+      }
       run.plannerTurns++;
       this.store.saveRun(run);
       this.log(
@@ -1667,7 +1716,6 @@ export class TeamOrchestrator extends EventEmitter {
           error: "The team is no longer available",
         });
       const resuming = !!task.resumeNote;
-      if (!resuming) task.attempt++;
       const writing = WRITING_ROLES.has(task.role);
       const wt = this.worktrees(run);
       let cwd = wt.runPath(run.id);
@@ -1684,6 +1732,16 @@ export class TeamOrchestrator extends EventEmitter {
       }
       const latest = this.store.tasks(runId).find((t) => t.id === taskId);
       if (latest?.state !== "running") return; // stopped while preparing
+      if (this.capReached(this.require(runId))) {
+        latest.state = "queued";
+        latest.startedAt = undefined;
+        this.store.saveTask(latest);
+        this.pauseForCap(runId);
+        return;
+      }
+      task.attempt = latest.attempt;
+      task.resumeNote = latest.resumeNote;
+      if (!resuming) task.attempt++;
       // A report from an earlier invocation must never decide this one.
       if (writing) await wt.clearReport(cwd);
       const note = task.resumeNote;

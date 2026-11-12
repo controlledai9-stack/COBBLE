@@ -35,3 +35,14 @@ export function totalUsage(
   for (const task of tasks) addUsage(total, task.usage);
   return total;
 }
+
+export function runCostUsd(
+  planner: TeamUsage | undefined,
+  tasks: { usage?: TeamUsage }[],
+): number {
+  return totalUsage(planner, tasks)?.costUsd ?? 0;
+}
+
+export function formatUsd(value: number): string {
+  return "$" + value.toFixed(2);
+}
