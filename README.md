@@ -177,7 +177,7 @@ When the workspace is hosted or joined (Workspace & Plan → Workspace & Hosting
 3. It commits the work without secret files and pushes it back to the same branch.
 4. Your Cobble fetches it, accepts only a fast-forward with no secret files, and then runs your usual checks, plan guard and merge.
 
-Each person pays for their own agents, and `main` is never touched. Both of you need push access to the repository. If Git asks for a sign-in, the task pauses with a "sign in" card.
+Each person pays for their own agents, and `main` is never touched. To try it on two computers, follow [the two-PC test](docs/TWO-PC-TEST.md). Both of you need push access to the repository. If Git asks for a sign-in, the task pauses with a "sign in" card.
 
 ### Without an AI subscription: API and free models
 
