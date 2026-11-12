@@ -134,6 +134,7 @@ export interface TaskReport {
 }
 
 export interface TaskDrift {
+  blocked?: string[];
   classification: string;
   alert: boolean;
   explanation: string;
