@@ -142,7 +142,7 @@ test("usage limits pause, resume automatically six times, then exhaust retries",
       saved = f.teamStore.run(run.id)!;
       assert.equal(saved.autoRetries, n);
       assert.equal(saved.state, "paused");
-      assert.equal(saved.retryWaitMs, n * 60 * MINUTE);
+      assert.equal(saved.idleMs, n * 60 * MINUTE);
       if (n < 6)
         assert.match(saved.pausedReason!, new RegExp(`retry ${n + 1} of 6`));
     }
@@ -220,6 +220,7 @@ test("manual resume and stop cancel timers, and stale callbacks do nothing", asy
     await f.orchestrator.idle(run.id);
     assert.equal(f.calls.length, 2);
     assert.equal(f.teamStore.run(run.id)!.autoRetries, undefined);
+    assert.equal(f.teamStore.run(run.id)!.idleMs, MINUTE);
     assert.equal(f.teamStore.run(run.id)!.retryWaitMs, undefined);
     const current = f.live()[0];
     f.orchestrator.stop(run.id);
@@ -256,7 +257,7 @@ test("restart re-arms persisted retries, including overdue retries", async () =>
     await f.orchestrator.idle(run.id);
     assert.equal(f.calls.length, 2);
     assert.equal(f.teamStore.run(run.id)!.autoRetries, 1);
-    assert.equal(f.teamStore.run(run.id)!.retryWaitMs, 61 * MINUTE);
+    assert.equal(f.teamStore.run(run.id)!.idleMs, 61 * MINUTE);
   } finally {
     await f.cleanup();
   }
