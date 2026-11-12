@@ -247,8 +247,12 @@ export interface TeamRun {
   retryAt?: string;
   /** ISO time the run paused for the scheduled retry. */
   retryPausedAt?: string;
-  /** Time spent waiting for automatic retries; not counted against wallClockMs. */
+  /** @deprecated Legacy (pre-idleMs) retry wait; still subtracted for old runs, no longer written. */
   retryWaitMs?: number;
+  /** Total closed idle time; not counted against wallClockMs. */
+  idleMs?: number;
+  /** ISO time when the current idle span started; unset while active. */
+  idleSince?: string;
   /** Messages for the planner's next wake-up (gate answers, merge failures). */
   pendingNotes: string[];
   /** Set when the planner must be woken even without finished tasks. */
