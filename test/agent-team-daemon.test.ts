@@ -293,6 +293,73 @@ test("takeover ticks preserve unflagged user and retry pauses", async () => {
   }
 });
 
+for (const pausedReason of [
+  "Paused by you",
+  "Time budget reached",
+  "Cost cap reached",
+  "Handed to the Cobble daemon",
+]) {
+  test(`startup takeover preserves stale-owner pause: ${pausedReason}`, async () => {
+    const f = await fixture();
+    const timers = new Map<object, () => void>();
+    try {
+      const dead = f.make();
+      const run = await dead.orchestrator.startRun(
+        f.team.id,
+        "Preserve pause",
+        {},
+        {},
+        { detach: true },
+      );
+      const retryAt =
+        pausedReason === "Handed to the Cobble daemon"
+          ? new Date(f.now() + 300_000).toISOString()
+          : undefined;
+      f.teamStore.saveRun({
+        ...run,
+        daemonHandoff: undefined,
+        pausedReason,
+        retryAt,
+        ownerId: dead.orchestrator.ownerId,
+        ownerSeen: new Date(f.now()).toISOString(),
+      });
+      f.teamStore.acquireDaemonLock(
+        { id: dead.orchestrator.ownerId, pid: 101 },
+        f.now(),
+        DAEMON_STALE_MS,
+      );
+      f.advance(DAEMON_STALE_MS);
+      const replacement = f.make(undefined, {
+        set(fn) {
+          const handle = {};
+          timers.set(handle, fn);
+          return handle;
+        },
+        clear(handle) {
+          timers.delete(handle as object);
+        },
+      });
+      const d = f.daemon(replacement.orchestrator);
+      await d.start();
+      d.tick();
+      await replacement.orchestrator.idle(run.id);
+      const paused = f.teamStore.run(run.id)!;
+      assert.equal(paused.state, "paused");
+      assert.equal(paused.pausedReason, pausedReason);
+      assert.equal(paused.daemonHandoff, undefined);
+      assert.equal(paused.ownerId, undefined);
+      assert.equal(paused.retryAt, retryAt);
+      assert.equal(timers.size, retryAt ? 1 : 0);
+      assert.equal(dead.planner.calls.length, 0);
+      assert.equal(dead.coder.calls.length, 0);
+      assert.equal(replacement.planner.calls.length, 0);
+      assert.equal(replacement.coder.calls.length, 0);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
 test("stale daemon lock is replaced and its unflagged run is adopted", async () => {
   const f = await fixture();
   try {
@@ -334,6 +401,7 @@ test("stale daemon lock is replaced and its unflagged run is adopted", async () 
     const b = f.make();
     const d = f.daemon(b.orchestrator);
     await d.start();
+    d.tick();
     assert.equal(f.teamStore.run(run.id)!.ownerId, d.id);
     assert.equal(f.teamStore.tasks(run.id)[0]!.state, "queued");
     f.teamStore.releaseDaemonLock(a.orchestrator.ownerId);

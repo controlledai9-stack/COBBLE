@@ -150,6 +150,9 @@ export function asksForProduction(text: string): boolean {
 }
 /** A run lease older than this belongs to a process that is gone. */
 export const LEASE_MS = 45_000;
+export const DAEMON_HANDOFF_REASON = "Handed to the Cobble daemon";
+export const RESTART_REASON =
+  "Cobble restarted. Resume the run when you are ready.";
 /** A task may ask the planner this many questions before it fails. */
 export const TASK_QUESTION_LIMIT = 3;
 
@@ -339,7 +342,7 @@ export class TeamOrchestrator extends EventEmitter {
     };
     if (extras.detach) {
       run.state = "paused";
-      run.pausedReason = "Handed to the Cobble daemon";
+      run.pausedReason = DAEMON_HANDOFF_REASON;
       markIdle(run, this.now());
       run.daemonHandoff = stamp;
       run.ownerId = undefined;
@@ -712,9 +715,8 @@ export class TeamOrchestrator extends EventEmitter {
               continue;
             }
             if (
-              run.pausedReason !== "Handed to the Cobble daemon" &&
-              run.pausedReason !==
-                "Cobble restarted. Resume the run when you are ready."
+              run.pausedReason !== DAEMON_HANDOFF_REASON &&
+              run.pausedReason !== RESTART_REASON
             ) {
               run.ownerId = undefined;
               run.ownerSeen = undefined;
@@ -1021,8 +1023,7 @@ export class TeamOrchestrator extends EventEmitter {
             : now,
         );
         run.state = "paused";
-        run.pausedReason =
-          "Cobble restarted. Resume the run when you are ready.";
+        run.pausedReason = RESTART_REASON;
       }
       if (run.ownerId === this.ownerId || !this.leasedElsewhere(run)) {
         run.ownerId = undefined;

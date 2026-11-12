@@ -1,4 +1,9 @@
-import { LEASE_MS, type TeamOrchestrator } from "./orchestrator";
+import {
+  DAEMON_HANDOFF_REASON,
+  LEASE_MS,
+  RESTART_REASON,
+  type TeamOrchestrator,
+} from "./orchestrator";
 import type { TeamStore } from "./team-store";
 import type { DaemonLock } from "./types";
 
@@ -75,6 +80,10 @@ export class TeamDaemon {
         ])) {
           if (
             run.ownerId !== replaced.id ||
+            (run.state === "paused" &&
+              (run.retryAt ||
+                (run.pausedReason !== DAEMON_HANDOFF_REASON &&
+                  run.pausedReason !== RESTART_REASON))) ||
             this.o.orchestrator.isLeasedElsewhere(run.id)
           )
             continue;
