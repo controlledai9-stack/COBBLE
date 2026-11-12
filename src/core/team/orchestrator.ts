@@ -1223,6 +1223,11 @@ export class TeamOrchestrator extends EventEmitter {
       if (result.rateLimited) {
         const backup = await this.usableBackup(run.teamId, "planner", agent);
         run = this.require(runId);
+        if (
+          controller.signal.aborted ||
+          ["done", "failed", "stopped", "paused"].includes(run.state)
+        )
+          return;
         if (backup && !run.plannerSwitchedFrom) {
           run.plannerAgent = backup;
           run.plannerSwitchedFrom = agent;
@@ -1252,11 +1257,11 @@ export class TeamOrchestrator extends EventEmitter {
             now +
               (run.retryAfterMinutes ?? DEFAULT_RETRY_AFTER_MINUTES) * 60_000,
           ).toISOString();
-          text = `Planner (${agent}) hit a usage limit. Cobble retries automatically at ${run.retryAt} (retry ${(run.autoRetries ?? 0) + 1} of 6). Resume or stop to cancel.`;
+          text = `Planner (${agent}) hit a usage limit. Cobble retries automatically at ${run.retryAt} (retry ${(run.autoRetries ?? 0) + 1} of ${MAX_AUTO_RETRIES}). Resume or stop to cancel.`;
         } else {
           run.retryAt = undefined;
           run.retryPausedAt = undefined;
-          text = `Planner (${agent}) hit a usage limit. Automatic retries used up (6 of 6). Resume the run when the limit resets.`;
+          text = `Planner (${agent}) hit a usage limit. Automatic retries used up (${MAX_AUTO_RETRIES} of ${MAX_AUTO_RETRIES}). Resume the run when the limit resets.`;
         }
         this.pauseFor(run, text);
         this.say(run, { author: "cobble", kind: "message", text });

@@ -17,7 +17,7 @@ const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 
 const MINUTE = 60_000;
-function setup() {
+function setup(backupDetect?: AgentAdapter["detect"]) {
   const root = mkdtempSync(join(tmpdir(), "cobble-retry-"));
   const work = join(root, "work");
   mkdirSync(work);
@@ -64,9 +64,11 @@ function setup() {
     cleared: boolean;
     fired: boolean;
   }[] = [];
+  const backup = fake("gemini");
+  if (backupDetect) backup.detect = backupDetect;
   const options = {
     teamStore,
-    adapters: { claude: fake("claude"), codex: fake("codex") },
+    adapters: { claude: fake("claude"), codex: fake("codex"), gemini: backup },
     worktreeRoot: join(root, "trees"),
     team: (id: string) => store.team(id),
     now: () => clock,
@@ -280,6 +282,39 @@ test("another process's live lease prevents arming and automatic resume", async 
     assert.equal(f.handles.length, 1, "live lease prevents a new timer");
     assert.equal(f.teamStore.run(run.id)!.autoRetries, undefined);
   } finally {
+    await f.cleanup();
+  }
+});
+
+test("stop during the backup check leaves no automatic retry armed", async () => {
+  let release!: () => void;
+  let checking!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    checking = resolve;
+  });
+  const f = setup(async () => {
+    checking();
+    await pending;
+    return { agent: "gemini", installed: false };
+  });
+  try {
+    f.teamStore.setBackupAgent(f.team.id, "planner", "gemini");
+    const run = await f.orchestrator.startRun(f.team.id, "x", {
+      maxPlannerTurns: 20,
+    });
+    await started;
+    f.orchestrator.stop(run.id);
+    release();
+    await f.orchestrator.idle(run.id);
+    const saved = f.teamStore.run(run.id)!;
+    assert.equal(saved.state, "stopped");
+    assert.equal(saved.retryAt, undefined);
+    assert.equal(f.live().length, 0);
+  } finally {
+    release();
     await f.cleanup();
   }
 });
