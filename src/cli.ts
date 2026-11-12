@@ -42,6 +42,7 @@ async function main() {
       base: { type: "string" },
       backlog: { type: "string" },
       "max-runs": { type: "string" },
+      parallel: { type: "string" },
       "share-deps": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
@@ -68,8 +69,8 @@ async function main() {
   cobble team say [RUN_ID] "message"  send a Team Chat message to the planner
   cobble team answer [RUN_ID] [TASK_ID] done|skip|deny ["note"]
   cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
-  cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps] [--max-cost USD]
-      works through "- [ ] item" lines one run at a time on branch cobble/autopilot
+  cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--parallel 1-4] [--check CMD] [--share-deps] [--max-cost USD]
+      works through "- [ ] item" lines up to N runs at a time on branch cobble/autopilot
   run/autopilot options: --base BRANCH (start from it), --share-deps (link node_modules)
   cobble team stop [RUN_ID]
   cobble team access [ROLE...|none]   roles with FULL ACCESS (no agent sandbox), e.g. access deployer
@@ -106,6 +107,7 @@ Agent hook installation is not yet automatic.`);
       ["max-tasks", 100],
       ["max-turns", 50],
       ["max-runs", 20],
+      ["parallel", 4],
     ] as const) {
       const value = values[flag];
       if (
@@ -528,6 +530,78 @@ async function teamCommand(
     console.log(
       `Autopilot on branch ${prepared.branch}${prepared.created ? " (new, from your current HEAD)" : ""}; worktree ${prepared.path}`,
     );
+    const parallel = number(values.parallel) ?? 1;
+    if (parallel > 1) {
+      const result = await service.autopilot.runParallel(teamId, backlog, {
+        parallel,
+        maxRuns,
+        start: {
+          budget: {
+            ...(values["max-cost"] !== undefined
+              ? { maxCostUsd: Number(values["max-cost"]) }
+              : {}),
+            ...(number(values["max-tasks"])
+              ? { maxTasks: number(values["max-tasks"]) }
+              : {}),
+            ...(number(values["max-turns"])
+              ? { maxPlannerTurns: number(values["max-turns"]) }
+              : {}),
+          },
+          checkCommand:
+            typeof values.check === "string" ? values.check : undefined,
+          shareDependencies: values["share-deps"] === true,
+        },
+        onEvent: async (event) => {
+          if (event.kind === "started") {
+            console.log(
+              `Run ${event.run.id} on branch ${event.run.runBranch} (item: ${event.item.text})`,
+            );
+            return;
+          }
+          const { run, item, outcome } = event;
+          console.log(`Autopilot: ${outcome.message}`);
+          await service.phone.notify({
+            runId: run.id,
+            kind: outcome.status === "merged" ? "finished" : "needs_you",
+            message: `Autopilot ${outcome.status === "merged" ? "finished" : "flagged"} "${item.text.slice(0, 120)}": ${outcome.message}`,
+          });
+        },
+      });
+      let message: string;
+      let notification: string;
+      let kind: "finished" | "paused" | "needs_you" = "paused";
+      switch (result.stoppedReason) {
+        case "empty":
+          message = "Backlog is empty. Autopilot finished.";
+          notification = `Autopilot finished: no open items left in ${backlog}.`;
+          kind = "finished";
+          break;
+        case "flagged_twice":
+          message = "Two items in a row needed attention. Autopilot stopped.";
+          notification = "Autopilot stopped: two items in a row needed attention.";
+          break;
+        case "max_runs":
+          message = `Reached --max-runs ${maxRuns}. Autopilot stopped.`;
+          notification = `Autopilot stopped after ${maxRuns} runs (--max-runs). Review branch cobble/autopilot.`;
+          break;
+        case "not_done": {
+          const runs = result.outcomes
+            .filter(({ outcome }) => outcome.status === "not_done")
+            .map(({ runId }) => runId);
+          message = `Autopilot stopped: runs ${runs.join(", ")} need attention. Check ${runs.map((id) => `cobble team status ${id}`).join("; ")}; use cobble team answer and cobble team resume.`;
+          notification = message;
+          kind = "needs_you";
+          break;
+        }
+      }
+      console.log(message);
+      await service.phone.notify({
+        runId: "autopilot",
+        kind,
+        message: notification,
+      });
+      return;
+    }
     let flagged = 0;
     for (let n = 1; n <= maxRuns; n++) {
       const item = await service.autopilot.next(teamId, backlog);
