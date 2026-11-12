@@ -342,3 +342,50 @@ test("scripted run exposes persisted drift, refused secrets and a passing check"
     await f.cleanup();
   }
 });
+
+// Renderer coverage is kept alongside the plan-guard derivation and run tests.
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TeamGuardActivity } from "../src/renderer/plan-guard-activity";
+
+test("Agent Team guard activity renders warnings, files and check outcomes", () => {
+  const renderRun = { ...run, id: "12345678-rest-of-run" };
+  const entries = planGuardEntries([
+    {
+      run: renderRun,
+      tasks: [
+        task({
+          runId: renderRun.id,
+          drift: { ...drift, blocked: ["secrets.json"] },
+          check: { command: "npm test", passed: false, output: "failed" },
+        }),
+        task({
+          id: "T2",
+          runId: renderRun.id,
+          check: { command: "npm test", passed: true, output: "ok" },
+        }),
+      ],
+    },
+  ]);
+  const html = renderToStaticMarkup(
+    React.createElement(TeamGuardActivity, { entries }),
+  );
+  assert.match(html, /From Agent Team runs/);
+  assert.match(html, /T1 may be off plan/);
+  assert.match(html, /Run 12345678/);
+  assert.doesNotMatch(html, /12345678-rest-of-run/);
+  assert.match(html, /Task T1/);
+  assert.match(html, /Task T2/);
+  assert.match(html, /T1: secret files refused/);
+  assert.match(
+    html,
+    /<details><summary>View files<\/summary><pre>secrets.json<\/pre><\/details>/,
+  );
+  assert.match(html, /<span>Failed<\/span>/);
+  assert.match(html, /<span>Passed<\/span>/);
+  assert.equal((html.match(/needs-review/g) ?? []).length, 3);
+  assert.equal(
+    renderToStaticMarkup(React.createElement(TeamGuardActivity, { entries: [] })),
+    "",
+  );
+});
