@@ -8,7 +8,14 @@ import { validRetryAfter } from "./core/team/orchestrator";
 import { parseTeamSayArgs, parseTeamAnswerArgs } from "./core/team/bridge-args";
 
 async function main() {
+  const args = process.argv.slice(2);
+  // Let the dollar-amount validator report negative values consistently.
+  for (let index = 0; index < args.length - 1; index++) {
+    if (args[index] === "--max-cost" && /^-\d/.test(args[index + 1]))
+      args.splice(index, 2, `--max-cost=${args[index + 1]}`);
+  }
   const { values, positionals } = parseArgs({
+    args,
     allowPositionals: true,
     options: {
       data: { type: "string" },
@@ -23,6 +30,7 @@ async function main() {
       "max-tasks": { type: "string" },
       "max-turns": { type: "string" },
       "retry-after": { type: "string" },
+      "max-cost": { type: "string" },
       check: { type: "string" },
       base: { type: "string" },
       backlog: { type: "string" },
@@ -45,13 +53,13 @@ async function main() {
   cobble team roles                  show role assignments
   cobble team role ROLE AGENT|none   e.g. team role planner claude
   cobble team test AGENT             one-line headless round trip
-  cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"] [--retry-after MINUTES]
-  cobble team resume [RUN_ID] [--max-turns N] [--retry-after MINUTES]
+  cobble team run "GOAL" [--max-tasks N] [--max-turns N] [--check "npm test"] [--retry-after MINUTES] [--max-cost USD]
+  cobble team resume [RUN_ID] [--max-turns N] [--retry-after MINUTES] [--max-cost USD]
   --retry-after MINUTES (5-720, default 60): after a usage limit, resume automatically, at most 6 times (each retry uses a planner turn)
   cobble team say [RUN_ID] "message"  send a Team Chat message to the planner
   cobble team answer [RUN_ID] [TASK_ID] done|skip|deny ["note"]
   cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
-  cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps]
+  cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--check CMD] [--share-deps] [--max-cost USD]
       works through "- [ ] item" lines one run at a time on branch cobble/autopilot
   run/autopilot options: --base BRANCH (start from it), --share-deps (link node_modules)
   cobble team stop [RUN_ID]
@@ -77,6 +85,14 @@ Agent hook installation is not yet automatic.`);
     command === "team" &&
     ["run", "resume", "autopilot"].includes(positionals[1])
   ) {
+    const maxCost = values["max-cost"];
+    if (
+      maxCost !== undefined &&
+      (!/^\d+(\.\d{1,2})?$/.test(maxCost) ||
+        Number(maxCost) < 0.01 ||
+        Number(maxCost) > 100000)
+    )
+      throw new Error("--max-cost must be a dollar amount from 0.01 to 100000");
     for (const [flag, limit] of [
       ["max-tasks", 100],
       ["max-turns", 50],
@@ -391,6 +407,8 @@ async function teamCommand(
       }
       if (values["retry-after"] !== undefined)
         service.agentTeam.setRetryAfter(id, Number(values["retry-after"]));
+      if (values["max-cost"] !== undefined)
+        service.setTeamMaxCost(id, Number(values["max-cost"]));
       run = (await service.teamRunCommand(id, "resume")).run;
       console.log(`Resumed run ${run.id} (${run.state}) on ${run.runBranch}`);
     } else {
@@ -399,6 +417,9 @@ async function teamCommand(
       run = await service.startTeamRun(
         goal,
         {
+          ...(values["max-cost"] !== undefined
+            ? { maxCostUsd: Number(values["max-cost"]) }
+            : {}),
           ...(number(values["max-tasks"])
             ? { maxTasks: number(values["max-tasks"]) }
             : {}),
@@ -441,6 +462,9 @@ async function teamCommand(
       console.log(`\n=== Item ${n}/${maxRuns}: ${item.text}`);
       const run = await service.autopilot.start(teamId, item, backlog, {
         budget: {
+          ...(values["max-cost"] !== undefined
+            ? { maxCostUsd: Number(values["max-cost"]) }
+            : {}),
           ...(number(values["max-tasks"])
             ? { maxTasks: number(values["max-tasks"]) }
             : {}),

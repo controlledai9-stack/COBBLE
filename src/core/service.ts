@@ -2359,6 +2359,11 @@ export class CobbleService extends EventEmitter {
     this.agentTeam.userMessage(run.id, text);
     return { runId: run.id, started: false };
   }
+  setTeamMaxCost(runId: string, usd: number | null) {
+    this.teamRun(runId); // ownership check
+    this.agentTeam.setMaxCost(runId, usd);
+    return this.teamRun(runId);
+  }
   async teamRunCommand(
     runId: string,
     command: "pause" | "resume" | "stop" | "cleanup" | GateAnswer,
@@ -2557,7 +2562,10 @@ export class CobbleService extends EventEmitter {
 function sanitizeBudget(budget?: Partial<TeamBudget>): Partial<TeamBudget> {
   if (!budget || typeof budget !== "object") return {};
   const out: Partial<TeamBudget> = {};
-  const bounds: Record<keyof TeamBudget, [number, number]> = {
+  const bounds: Record<
+    Exclude<keyof TeamBudget, "maxCostUsd">,
+    [number, number]
+  > = {
     maxTasks: [1, 100],
     maxPlannerTurns: [1, 50],
     maxParallel: [1, 6],
@@ -2566,13 +2574,17 @@ function sanitizeBudget(budget?: Partial<TeamBudget>): Partial<TeamBudget> {
     taskTimeoutMs: [60_000, 3 * 3_600_000],
   };
   for (const [key, [min, max]] of Object.entries(bounds) as [
-    keyof TeamBudget,
+    Exclude<keyof TeamBudget, "maxCostUsd">,
     [number, number],
   ][]) {
     const value = budget[key];
     if (typeof value === "number" && Number.isFinite(value))
       out[key] = Math.min(max, Math.max(min, Math.round(value)));
   }
+  const usd = budget.maxCostUsd;
+  if (typeof usd === "number" && Number.isFinite(usd))
+    out.maxCostUsd =
+      Math.round(Math.min(100000, Math.max(0.01, usd)) * 100) / 100;
   return out;
 }
 function sanitizePolicy(

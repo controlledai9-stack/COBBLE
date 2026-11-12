@@ -412,6 +412,11 @@ else {
           throw new Error("Invalid team request");
         return value;
       };
+      handle("team-set-max-cost", (_, runId: unknown, usd: unknown) => {
+        if (usd !== null && (typeof usd !== "number" || !Number.isFinite(usd)))
+          throw new Error("Maximum spend must be a finite number or null");
+        return service.setTeamMaxCost(text(runId, 64), usd);
+      });
       handle("team-roles", () => service.teamRoles());
       handle("team-set-role", (_, role: unknown, agent: unknown) =>
         service.setTeamRole(
@@ -505,6 +510,15 @@ else {
           typeof shareDependencies !== "boolean"
         )
           throw new Error("Share node_modules must be a boolean");
+        const positiveCost = (input: unknown) => {
+          if (
+            typeof input !== "number" ||
+            !Number.isFinite(input) ||
+            input <= 0
+          )
+            throw new Error("Maximum spend must be a positive finite number");
+          return input;
+        };
         const limits =
           budget === undefined
             ? undefined
@@ -517,8 +531,14 @@ else {
                     "maxAttempts",
                     "wallClockMs",
                     "taskTimeoutMs",
+                    "maxCostUsd",
                   ]),
-                ).map(([key, limit]) => [key, positiveInteger(limit)]),
+                ).map(([key, limit]) => [
+                  key,
+                  key === "maxCostUsd"
+                    ? positiveCost(limit)
+                    : positiveInteger(limit),
+                ]),
               );
         return service.startAutopilot({
           backlogPath:
