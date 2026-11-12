@@ -237,6 +237,16 @@ export interface TeamRun {
   plannerSwitchedFrom?: TeamAgentId;
   invalidPlannerReplies: number;
   pausedReason?: string;
+  /** Minutes to wait before an automatic resume after a usage limit (5-720, default 60). */
+  retryAfterMinutes?: number;
+  /** Automatic resumes used so far in this run (max 6). */
+  autoRetries?: number;
+  /** ISO time of the scheduled automatic resume; unset when none is armed. */
+  retryAt?: string;
+  /** ISO time the run paused for the scheduled retry. */
+  retryPausedAt?: string;
+  /** Time spent waiting for automatic retries; not counted against wallClockMs. */
+  retryWaitMs?: number;
   /** Messages for the planner's next wake-up (gate answers, merge failures). */
   pendingNotes: string[];
   /** Set when the planner must be woken even without finished tasks. */
