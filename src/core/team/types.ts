@@ -202,7 +202,16 @@ export interface TeamDecision {
   createdAt: string;
 }
 
+export interface DaemonLock {
+  id: string;
+  pid: number;
+  startedAt: number;
+  heartbeat: number;
+  stopRequested?: boolean;
+}
+
 export interface TeamRun {
+  daemonHandoff?: string;
   id: string;
   teamId: string;
   goal: string;
