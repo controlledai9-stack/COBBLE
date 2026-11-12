@@ -690,8 +690,12 @@ export class TeamOrchestrator extends EventEmitter {
       try {
         if (run.ownerId === this.ownerId) {
           run.daemonHandoff = undefined;
-          this.store.saveRun(run);
-          this.schedule(run.id);
+          if (run.state === "paused") this.adopt(run);
+          else {
+            run.wakeRequested = true;
+            this.store.saveRun(run);
+            this.schedule(run.id);
+          }
         } else {
           if (
             run.state === "running" ||
@@ -699,6 +703,24 @@ export class TeamOrchestrator extends EventEmitter {
           ) {
             this.recover(new Set([run.id]));
             run = this.require(run.id);
+          }
+          if (!run.daemonHandoff && run.state === "paused") {
+            if (run.retryAt) {
+              this.claim(run);
+              this.store.saveRun(run);
+              adopted.push(run.id);
+              continue;
+            }
+            if (
+              run.pausedReason !== "Handed to the Cobble daemon" &&
+              run.pausedReason !==
+                "Cobble restarted. Resume the run when you are ready."
+            ) {
+              run.ownerId = undefined;
+              run.ownerSeen = undefined;
+              this.store.saveRun(run);
+              continue;
+            }
           }
           this.adopt(run);
         }
