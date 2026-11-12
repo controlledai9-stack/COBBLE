@@ -317,3 +317,19 @@ export interface AgentDetection {
   version?: string;
   error?: string;
 }
+
+export type BridgeAnswer = "done" | "skip" | "deny";
+export type TeamInboxItem =
+  | { kind: "say"; text: string }
+  | { kind: "answer"; answer: BridgeAnswer; taskId?: string; note?: string };
+export interface QueuedInboxItem {
+  seq: number;
+  runId: string;
+  createdAt: string;
+  item: TeamInboxItem;
+}
+export interface BridgeResult {
+  runId: string;
+  queued: boolean;
+  state: string;
+}
