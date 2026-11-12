@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import type { TeamChatMessage } from "./types";
 import type { Store } from "../store";
 import type {
+  QueuedInboxItem,
+  TeamInboxItem,
   RunSnapshot,
   TeamAgentId,
   TeamDecision,
@@ -19,6 +21,7 @@ import { FULL_ACCESS_ROLES, TEAM_AGENTS, TEAM_ROLES } from "./types";
 import { totalUsage } from "./usage";
 
 export const TEAM_STORE_LIMITS = Object.freeze({
+  inboxPerRun: 100,
   runsPerTeam: 200,
   eventsPerRun: 2_000,
   chatPerRun: 1_000,
@@ -40,7 +43,47 @@ export class TeamStore {
       CREATE INDEX IF NOT EXISTS team_event_run ON team_events(run_id,seq);
       CREATE TABLE IF NOT EXISTS team_chat(seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS team_chat_run ON team_chat(run_id,seq);
+      CREATE TABLE IF NOT EXISTS team_inbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, created_at TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS team_inbox_run ON team_inbox(run_id,seq);
       INSERT OR IGNORE INTO migrations VALUES(6);`);
+  }
+
+  queueInbox(runId: string, item: TeamInboxItem): QueuedInboxItem {
+    return this.store.transaction(() => {
+      const row = this.store.db
+        .prepare("SELECT COUNT(*) AS n FROM team_inbox WHERE run_id=?")
+        .get(runId) as { n: number };
+      if (row.n >= TEAM_STORE_LIMITS.inboxPerRun)
+        throw new Error("Too many queued messages for this run");
+      const createdAt = new Date().toISOString();
+      const result = this.store.db
+        .prepare("INSERT INTO team_inbox(run_id,created_at,data) VALUES(?,?,?)")
+        .run(runId, createdAt, JSON.stringify(item));
+      return { seq: Number(result.lastInsertRowid), runId, createdAt, item };
+    });
+  }
+  takeInbox(runId: string): QueuedInboxItem[] {
+    return this.store.transaction(() => {
+      const rows = this.store.db
+        .prepare(
+          "SELECT seq, created_at, data FROM team_inbox WHERE run_id=? ORDER BY seq",
+        )
+        .all(runId) as { seq: number; created_at: string; data: string }[];
+      this.store.db.prepare("DELETE FROM team_inbox WHERE run_id=?").run(runId);
+      return rows.map((r) => ({
+        seq: r.seq,
+        runId,
+        createdAt: r.created_at,
+        item: JSON.parse(r.data) as TeamInboxItem,
+      }));
+    });
+  }
+  inboxRunIds(): string[] {
+    return (
+      this.store.db.prepare("SELECT DISTINCT run_id FROM team_inbox").all() as {
+        run_id: string;
+      }[]
+    ).map((r) => r.run_id);
   }
 
   roles(teamId: string): Partial<Record<TeamRole, TeamAgentId>> {

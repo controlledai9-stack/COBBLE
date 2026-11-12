@@ -41,7 +41,11 @@ import {
   type AttentionEvent,
   type PhoneNotifyView,
 } from "./team/notify";
-import { TeamOrchestrator, type GateAnswer } from "./team/orchestrator";
+import {
+  APPROVE_REFUSED,
+  TeamOrchestrator,
+  type GateAnswer,
+} from "./team/orchestrator";
 import {
   defaultAdapters,
   withUnavailable,
@@ -69,6 +73,8 @@ import {
 import {
   TEAM_AGENTS,
   TEAM_ROLES,
+  type BridgeResult,
+  type BridgeAnswer,
   type AgentDetection,
   type ApprovalPolicy,
   type TeamAgentId,
@@ -620,6 +626,7 @@ export class CobbleService extends EventEmitter {
   async start() {
     // Runs left "running" by a previous process are paused, never relaunched.
     this.agentTeam.recover();
+    this.agentTeam.drainOrphans();
     await this.bridge.start();
     try {
       await this.network.resume();
@@ -2274,6 +2281,38 @@ export class CobbleService extends EventEmitter {
       signal.addEventListener("abort", abort, { once: true });
       update(runId);
     });
+  }
+
+  teamSay(
+    runId: string | null | undefined,
+    text: string,
+    opts?: { schedule?: boolean },
+  ): BridgeResult {
+    const id = runId ?? this.teamRuns()[0]?.id;
+    if (!id) throw new Error("No team runs yet");
+    this.teamRun(id);
+    const result = this.agentTeam.bridge(id, { kind: "say", text }, opts);
+    this.emit("team", id);
+    return result;
+  }
+  teamAnswer(
+    runId: string | null | undefined,
+    answer: string,
+    taskId?: string,
+    note?: string,
+    opts?: { schedule?: boolean },
+  ): BridgeResult {
+    if (answer.toLowerCase() === "approve") throw new Error(APPROVE_REFUSED);
+    const id = runId ?? this.teamRuns()[0]?.id;
+    if (!id) throw new Error("No team runs yet");
+    this.teamRun(id);
+    const result = this.agentTeam.bridge(
+      id,
+      { kind: "answer", answer: answer as BridgeAnswer, taskId, note },
+      opts,
+    );
+    this.emit("team", id);
+    return result;
   }
 
   teamRuns() {
