@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { CobbleService } from "../src/core/service";
 import { APPROVE_REFUSED, LEASE_MS } from "../src/core/team/orchestrator";
 import {
@@ -65,6 +66,7 @@ function fixture() {
   };
   a.teamStore.saveRun(run);
   return {
+    file,
     a,
     b,
     run,
@@ -286,4 +288,59 @@ test("pure bridge argument parsers", () => {
     assert.throws(() => parse(args), /Usage:/);
   for (const answer of ["approve", "APPROVE"])
     assert.throws(() => parse(["run", answer]), { message: APPROVE_REFUSED });
+});
+
+test("MCP lists send message, rejects missing or blank text, and applies unowned messages", async () => {
+  const f = fixture();
+  try {
+    f.run.ownerId = undefined;
+    f.a.teamStore.saveRun(f.run);
+    const requests = [
+      { method: "tools/list" },
+      ...[{}, { text: "   " }, { text: "MCP bridge message" }].map((args) => ({
+        method: "tools/call",
+        params: { name: "cobble_send_message", arguments: args },
+      })),
+    ];
+    const child = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "src/cli.ts", "--data", f.file, "mcp"],
+      {
+        cwd: resolve(import.meta.dirname, ".."),
+        encoding: "utf8",
+        timeout: 30000,
+        input:
+          requests
+            .map((request, id) =>
+              JSON.stringify({ jsonrpc: "2.0", id, ...request }),
+            )
+            .join("\n") + "\n",
+      },
+    );
+    assert.equal(child.status, 0, child.stderr);
+    const replies = child.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.ok(
+      replies[0].result.tools.some(
+        (t: { name: string }) => t.name === "cobble_send_message",
+      ),
+    );
+    assert.equal(replies[1].result.isError, true);
+    assert.match(replies[1].result.structuredContent.error, /text/);
+    assert.equal(replies[2].result.isError, true);
+    assert.match(replies[2].result.structuredContent.error, /blank/);
+    assert.equal(replies[3].result.isError, undefined);
+    assert.equal(replies[3].result.structuredContent.queued, false);
+    assert.ok(
+      f.a.teamStore
+        .chatMessages("run")
+        .some((m) => m.text === "MCP bridge message"),
+    );
+    assert.equal(f.a.agentTeam.ownsRun("run"), false);
+    assert.equal(f.prompts.length, 0);
+  } finally {
+    await f.close();
+  }
 });
