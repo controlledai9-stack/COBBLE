@@ -6,6 +6,16 @@ Electron's main process owns SQLite, workspace reads, OS secure storage, HTTPS t
 
 `src/shared/types.ts` is the boundary contract. `src/core/service.ts` coordinates actions, state snapshots, observation, and persistence. The same core powers the CLI. `src/core/store.ts` uses prepared SQLite statements and transactions. Numbered migrations cover the initial schema, private change batches/notices/receipts, and collaboration proposals/completions.
 
+## Headless daemon
+
+`cobble team daemon` drives handed-off Agent Team runs independently of the desktop window or originating terminal. There is one daemon per resolved `--data` file. A transactional `teamDaemonLock` setting records its orchestrator owner ID, PID, start time and heartbeat. Fresh locks prevent a second daemon from starting, including while stopping; a stale lock can be taken over. Heartbeats run every five seconds and locks become stale after the run lease duration plus fifteen seconds.
+
+On startup the daemon acquires the lock, recovers orphaned runs, arms retries and drains the orphan inbox. Each tick refreshes the lock, adopts handoffs (including runs owned by a replaced daemon), renews owned run leases, drains their inbox and arms their retry timers. Losing the lock or receiving a stop request ends the daemon loop. The CLI closes the service after the daemon finishes.
+
+`cobble team run GOAL --detach` saves a paused run for handoff; `cobble team resume ID --detach` hands an existing run over. Both return after ensuring a daemon is available, with status/chat follow hints. The launcher uses the current runtime, runtime arguments and CLI script, preserves the environment (including `ELECTRON_RUN_AS_NODE`), and starts a detached, hidden process with stdin ignored and stdout/stderr appended to `${data}.daemon.log`. It unreferences the child and closes the parent's log descriptor so the daemon survives the launching process exiting.
+
+`cobble team daemon status` reports running/stopping state, PID, start time, heartbeat age and owned active run IDs. `cobble team daemon stop` requests a cooperative stop and waits for the lock to be released. Detached commands wait for a stopping daemon before launching another and report the log path and foreground daemon command if startup times out.
+
 ## Plan and evaluation pipeline
 
 Team creation atomically stores the original plan, initial version, source-linked pieces, creator membership, and active-team selection. Each edit checks the expected version. The host owns authoritative plan edits; clients receive the source and pieces together.
