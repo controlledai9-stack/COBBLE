@@ -90,6 +90,8 @@ export type HumanGateKind =
   | "questions";
 
 export interface TeamBudget {
+  /** Stop starting agent turns once total cost reaches this, in USD; unset = no cap. */
+  maxCostUsd?: number;
   maxTasks: number;
   maxPlannerTurns: number;
   maxParallel: number;
