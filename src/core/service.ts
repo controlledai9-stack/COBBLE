@@ -627,6 +627,7 @@ export class CobbleService extends EventEmitter {
   async start() {
     // Runs left "running" by a previous process are paused, never relaunched.
     this.agentTeam.recover();
+    this.agentTeam.armRetries();
     this.agentTeam.drainOrphans();
     await this.bridge.start();
     try {
@@ -2091,6 +2092,7 @@ export class CobbleService extends EventEmitter {
       checkCommand?: string;
       baseRef?: string;
       shareDependencies?: boolean;
+      retryAfterMinutes?: number;
     },
   ) {
     const teamId = this.teamId();
@@ -2108,6 +2110,9 @@ export class CobbleService extends EventEmitter {
         sanitizePolicy(policy),
         {
           checkCommand: o.checkCommand as string | undefined,
+          ...(typeof o.retryAfterMinutes === "number"
+            ? { retryAfterMinutes: o.retryAfterMinutes }
+            : {}),
           ...(typeof o.baseRef === "string" && o.baseRef
             ? { baseRef: o.baseRef }
             : {}),

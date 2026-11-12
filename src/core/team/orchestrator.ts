@@ -54,6 +54,38 @@ import {
 } from "./types";
 import { Worktrees } from "./worktrees";
 
+export const DEFAULT_RETRY_AFTER_MINUTES = 60;
+export const MAX_AUTO_RETRIES = 6;
+
+/** Returns the number, or throws for an invalid retry delay. */
+export function validRetryAfter(minutes: unknown): number {
+  if (
+    typeof minutes !== "number" ||
+    !Number.isInteger(minutes) ||
+    minutes < 5 ||
+    minutes > 720
+  )
+    throw new Error(
+      "--retry-after must be a whole number of minutes from 5 to 720",
+    );
+  return minutes;
+}
+
+export interface RetryTimers {
+  set(fn: () => void, ms: number): unknown;
+  clear(handle: unknown): void;
+}
+const defaultRetryTimers: RetryTimers = {
+  set(fn, ms) {
+    const handle = setTimeout(fn, ms);
+    handle.unref?.();
+    return handle;
+  },
+  clear(handle) {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
+
 export interface OrchestratorOptions {
   teamStore: TeamStore;
   /** Missing agent ids are treated as not installed. */
@@ -63,6 +95,7 @@ export interface OrchestratorOptions {
   gitBinary?: () => string;
   team(teamId: string): Team | null;
   now?: () => number;
+  timers?: RetryTimers;
   /** Display name for an agent in a role, e.g. "Rahul's Codex" for a teammate. */
   agentLabel?: (
     teamId: string,
@@ -113,6 +146,7 @@ export class TeamOrchestrator extends EventEmitter {
   private readonly plannerBusy = new Set<string>();
   private readonly running = new Map<string, AbortController>();
   private readonly inflight = new Set<Promise<unknown>>();
+  private readonly retryTimers = new Map<string, unknown>();
   private closed = false;
   private quiet = 0;
   private inboxTimer?: ReturnType<typeof setInterval>;
@@ -178,10 +212,13 @@ export class TeamOrchestrator extends EventEmitter {
       shareDependencies?: boolean;
       /** Override the team's saved full-access roles for this run. */
       fullAccessRoles?: TeamRole[];
+      retryAfterMinutes?: number;
     } = {},
   ): Promise<TeamRun> {
     if (this.closed) throw new Error("Cobble is closing");
     const checkCommand = validCheckCommand(extras.checkCommand);
+    if (extras.retryAfterMinutes !== undefined)
+      validRetryAfter(extras.retryAfterMinutes);
     const team = this.options.team(teamId);
     if (!team) throw new Error("Choose a team first");
     if (!team.workspace) throw new Error("Choose a workspace folder first");
@@ -235,6 +272,7 @@ export class TeamOrchestrator extends EventEmitter {
       baseRef?: string;
       shareDependencies?: boolean;
       fullAccessRoles?: TeamRole[];
+      retryAfterMinutes?: number;
     },
     checkCommand: string | undefined,
   ): Promise<TeamRun> {
@@ -270,6 +308,9 @@ export class TeamOrchestrator extends EventEmitter {
       workspace,
       briefVersion: 0,
       ...(checkCommand ? { checkCommand } : {}),
+      ...(extras.retryAfterMinutes !== undefined
+        ? { retryAfterMinutes: extras.retryAfterMinutes }
+        : {}),
       ...(extras.shareDependencies ? { shareDependencies: true } : {}),
       ...(extras.baseRef ? { baseRef: extras.baseRef } : {}),
       fullAccessRoles: (
@@ -551,6 +592,16 @@ export class TeamOrchestrator extends EventEmitter {
   resume(runId: string) {
     const run = this.require(runId);
     if (run.state !== "paused") return run;
+    this.clearRetry(runId);
+    run.retryAt = undefined;
+    run.retryPausedAt = undefined;
+    this.resumeRun(run);
+    this.log(run, "run", "Resumed");
+    return run;
+  }
+
+  private resumeRun(run: TeamRun) {
+    const runId = run.id;
     this.claim(run);
     for (const task of this.store.tasks(runId))
       if (task.state === "interrupted") {
@@ -563,14 +614,85 @@ export class TeamOrchestrator extends EventEmitter {
       .tasks(runId)
       .every((t) => t.delivered || !TERMINAL_TASK_STATES.has(t.state));
     this.store.saveRun(run);
-    this.log(run, "run", "Resumed");
     this.schedule(runId);
     return run;
+  }
+
+  setRetryAfter(runId: string, minutes: number): TeamRun {
+    const delay = validRetryAfter(minutes);
+    const run = this.require(runId);
+    if (["done", "failed", "stopped"].includes(run.state))
+      throw new Error("This run has ended");
+    run.retryAfterMinutes = delay;
+    this.store.saveRun(run);
+    return run;
+  }
+
+  armRetries(): void {
+    for (const run of this.store.runsInState(["paused"]))
+      if (run.retryAt && !this.leasedElsewhere(run)) this.armRetry(run);
+  }
+
+  private clearRetry(runId: string) {
+    if (this.retryTimers.has(runId))
+      (this.options.timers ?? defaultRetryTimers).clear(
+        this.retryTimers.get(runId),
+      );
+    this.retryTimers.delete(runId);
+  }
+
+  private armRetry(run: TeamRun) {
+    if (this.closed || !run.retryAt) return;
+    this.clearRetry(run.id);
+    const at = run.retryAt;
+    const handle = (this.options.timers ?? defaultRetryTimers).set(
+      () => {
+        if (this.retryTimers.get(run.id) === handle)
+          this.autoResume(run.id, at);
+      },
+      Math.max(0, Date.parse(at) - this.now()),
+    );
+    this.retryTimers.set(run.id, handle);
+  }
+
+  private autoResume(runId: string, armedRetryAt: string) {
+    this.retryTimers.delete(runId);
+    if (this.closed) return;
+    try {
+      const run = this.require(runId);
+      if (
+        run.state !== "paused" ||
+        run.retryAt !== armedRetryAt ||
+        this.leasedElsewhere(run)
+      )
+        return;
+      run.autoRetries = (run.autoRetries ?? 0) + 1;
+      run.retryWaitMs =
+        (run.retryWaitMs ?? 0) +
+        Math.max(0, this.now() - Date.parse(run.retryPausedAt ?? run.retryAt));
+      run.retryAt = undefined;
+      run.retryPausedAt = undefined;
+      run.wakeRequested = true;
+      this.resumeRun(run);
+      const text = `Auto-resumed after a usage limit (retry ${run.autoRetries} of ${MAX_AUTO_RETRIES})`;
+      this.log(run, "run", text);
+      this.say(run, { author: "cobble", kind: "message", text });
+      this.changed(runId);
+      this.schedule(runId);
+    } catch (error) {
+      this.emit(
+        "diagnostic",
+        `Automatic retry failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   stop(runId: string) {
     const run = this.require(runId);
     if (["done", "failed", "stopped"].includes(run.state)) return run;
+    this.clearRetry(runId);
+    run.retryAt = undefined;
+    run.retryPausedAt = undefined;
     // Also abort an in-flight planner turn so its late reply cannot act.
     this.running.get(`${runId}:${PLANNER_KEY}`)?.abort();
     for (const task of this.store.tasks(runId)) {
@@ -808,6 +930,7 @@ export class TeamOrchestrator extends EventEmitter {
   }
 
   async close() {
+    for (const runId of this.retryTimers.keys()) this.clearRetry(runId);
     this.closed = true;
     clearInterval(this.leaseTimer);
     clearInterval(this.inboxTimer);
@@ -890,7 +1013,10 @@ export class TeamOrchestrator extends EventEmitter {
     }
     this.drainInbox(runId);
     run = this.require(runId);
-    if (this.now() - Date.parse(run.createdAt) > run.budget.wallClockMs) {
+    if (
+      this.now() - Date.parse(run.createdAt) - (run.retryWaitMs ?? 0) >
+      run.budget.wallClockMs
+    ) {
       this.pauseFor(run, "Time budget used up");
       return;
     }
@@ -1097,6 +1223,11 @@ export class TeamOrchestrator extends EventEmitter {
       if (result.rateLimited) {
         const backup = await this.usableBackup(run.teamId, "planner", agent);
         run = this.require(runId);
+        if (
+          controller.signal.aborted ||
+          ["done", "failed", "stopped", "paused"].includes(run.state)
+        )
+          return;
         if (backup && !run.plannerSwitchedFrom) {
           run.plannerAgent = backup;
           run.plannerSwitchedFrom = agent;
@@ -1118,10 +1249,24 @@ export class TeamOrchestrator extends EventEmitter {
           });
           return;
         }
-        return this.pauseFor(
-          run,
-          `Planner (${agent}) hit a usage limit. Resume later.`,
-        );
+        let text: string;
+        if ((run.autoRetries ?? 0) < MAX_AUTO_RETRIES) {
+          const now = this.now();
+          run.retryPausedAt = new Date(now).toISOString();
+          run.retryAt = new Date(
+            now +
+              (run.retryAfterMinutes ?? DEFAULT_RETRY_AFTER_MINUTES) * 60_000,
+          ).toISOString();
+          text = `Planner (${agent}) hit a usage limit. Cobble retries automatically at ${run.retryAt} (retry ${(run.autoRetries ?? 0) + 1} of ${MAX_AUTO_RETRIES}). Resume or stop to cancel.`;
+        } else {
+          run.retryAt = undefined;
+          run.retryPausedAt = undefined;
+          text = `Planner (${agent}) hit a usage limit. Automatic retries used up (${MAX_AUTO_RETRIES} of ${MAX_AUTO_RETRIES}). Resume the run when the limit resets.`;
+        }
+        this.pauseFor(run, text);
+        this.say(run, { author: "cobble", kind: "message", text });
+        this.armRetry(run);
+        return;
       }
       if (result.timedOut)
         return this.pauseFor(run, `Planner (${agent}) timed out`);
