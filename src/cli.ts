@@ -588,7 +588,7 @@ async function teamCommand(
           const runs = result.outcomes
             .filter(({ outcome }) => outcome.status === "not_done")
             .map(({ runId }) => runId);
-          message = `Autopilot stopped: runs ${runs.join(", ")} need attention. Check ${runs.map((id) => `cobble team status ${id}`).join("; ")}; use cobble team answer and cobble team resume.`;
+          message = `Autopilot stopped: runs ${runs.join(", ")} need attention. Check ${runs.map((id) => `cobble team status ${id}`).join("; ")}. With --parallel above 1, Cobble does not ask questions in the terminal, so a run that needs your input (for example an approval or a question) pauses autopilot. Answer it with cobble team answer and resume with cobble team resume, then start autopilot again.`;
           notification = message;
           kind = "needs_you";
           break;

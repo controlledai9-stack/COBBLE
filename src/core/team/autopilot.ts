@@ -343,9 +343,9 @@ export class Autopilot {
           });
           started++;
           await event({ kind: "started", item, run });
-          const waiter = (
-            opts.waitForRun?.(run.id) ?? this.waitForRun(run.id)
-          ).then((run) => ({ key: item.line, run }));
+          const waiter = Promise.resolve()
+            .then(() => (opts.waitForRun ?? this.waitForRun.bind(this))(run.id))
+            .then((run) => ({ key: item.line, run }));
           // Attach a handler immediately, even while another start is pending.
           void waiter.catch(() => {});
           inFlight.set(item.line, { item, waiter });
