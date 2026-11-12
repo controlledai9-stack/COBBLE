@@ -227,6 +227,12 @@ test("cap reached while preparing requeues without consuming attempt or resume n
         runTask(runId: string, taskId: string): Promise<void>;
       }
     ).runTask(run.id, task.id);
+    // The preparation guard itself must pause, before any scheduler tick.
+    assert.equal(f.teamStore.run(run.id)!.state, "paused");
+    assert.equal(
+      f.teamStore.run(run.id)!.pausedReason,
+      "Spending cap reached: $1.00 of $1.00",
+    );
     const queued = f.teamStore.tasks(run.id)[0];
     assert.equal(queued.state, "queued");
     assert.equal(queued.attempt, 2);
@@ -268,6 +274,10 @@ test("worker usage reaching the cap blocks the planner wake turn without consumi
         plannerTurn(runId: string): Promise<void>;
       }
     ).plannerTurn(run.id);
+    // Check before idle so a scheduler guard cannot hide a missing planner guard.
+    assert.equal(f.teamStore.run(run.id)!.state, "paused");
+    assert.equal(f.teamStore.run(run.id)!.plannerTurns, before.plannerTurns);
+    assert.equal(f.claude.length, 1);
     await f.orchestrator.idle(run.id);
     const paused = f.teamStore.run(run.id)!;
     assert.equal(paused.state, "paused");
