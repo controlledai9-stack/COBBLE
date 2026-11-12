@@ -51,13 +51,18 @@ export type ItemOutcome =
 
 const OPEN = /^(\s*)[-*] \[ \] (.+?)\s*$/;
 
-export function nextBacklogItem(content: string): BacklogItem | null {
+export function openBacklogItems(content: string): BacklogItem[] {
+  const items: BacklogItem[] = [];
   const lines = content.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(OPEN);
-    if (match) return { line: i, text: match[2].slice(0, 1_000) };
+    if (match) items.push({ line: i, text: match[2].slice(0, 1_000) });
   }
-  return null;
+  return items;
+}
+
+export function nextBacklogItem(content: string): BacklogItem | null {
+  return openBacklogItems(content)[0] ?? null;
 }
 
 /** Ticks ("x") or flags ("!") the item on its line, keeping the rest intact. */
@@ -91,7 +96,24 @@ export function validBacklogPath(path: string) {
   return clean;
 }
 
+export type AutopilotEvent =
+  | { kind: "started"; item: BacklogItem; run: TeamRun }
+  | {
+      kind: "completed";
+      item: BacklogItem;
+      run: TeamRun;
+      outcome: ItemOutcome;
+    };
+
 export class Autopilot {
+  private chain: Promise<unknown> = Promise.resolve();
+
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const p = this.chain.then(fn, fn);
+    this.chain = p.catch(() => {});
+    return p;
+  }
+
   constructor(
     private readonly deps: {
       orchestrator: TeamOrchestrator;
@@ -160,6 +182,11 @@ export class Autopilot {
     return nextBacklogItem(await readFile(file, "utf8"));
   }
 
+  async open(teamId: string, backlogPath: string): Promise<BacklogItem[]> {
+    const file = await this.backlogFile(teamId, backlogPath);
+    return openBacklogItems(await readFile(file, "utf8"));
+  }
+
   /**
    * The backlog file, only if it is a tracked, regular file inside the
    * autopilot worktree with no link or junction anywhere on its path, so a
@@ -198,6 +225,7 @@ export class Autopilot {
     item: BacklogItem,
     backlogPath: string,
     options: {
+      maxActiveRuns?: number;
       budget?: Partial<TeamBudget>;
       policy?: Partial<ApprovalPolicy>;
       checkCommand?: string;
@@ -211,6 +239,7 @@ export class Autopilot {
       options.budget,
       options.policy,
       {
+        maxActiveRuns: options.maxActiveRuns,
         checkCommand: options.checkCommand,
         shareDependencies: options.shareDependencies,
         baseRef: AUTOPILOT_BRANCH,
@@ -218,8 +247,156 @@ export class Autopilot {
     );
   }
 
+  async waitForRun(runId: string): Promise<TeamRun> {
+    const orchestrator = this.deps.orchestrator;
+    for (;;) {
+      await orchestrator.runIdle(runId);
+      const snap = orchestrator.snapshot(runId);
+      if (snap && snap.run.state !== "running") return snap.run;
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          orchestrator.off("update", update);
+          clearTimeout(timer);
+          resolve();
+        };
+        const update = (id: string) => {
+          if (id === runId) done();
+        };
+        const timer = setTimeout(done, 250);
+        orchestrator.on("update", update);
+      });
+    }
+  }
+
+  async runParallel(
+    teamId: string,
+    backlogPath: string,
+    opts: {
+      parallel: number;
+      maxRuns: number;
+      start?: Omit<
+        NonNullable<Parameters<Autopilot["start"]>[3]>,
+        "maxActiveRuns"
+      >;
+      waitForRun?: (runId: string) => Promise<TeamRun>;
+      onEvent?: (e: AutopilotEvent) => void | Promise<void>;
+    },
+  ): Promise<{
+    outcomes: { item: BacklogItem; runId: string; outcome: ItemOutcome }[];
+    stoppedReason: "empty" | "max_runs" | "not_done" | "flagged_twice";
+  }> {
+    if (
+      !Number.isInteger(opts.parallel) ||
+      opts.parallel < 1 ||
+      opts.parallel > 4
+    )
+      throw new Error("--parallel must be a whole number from 1 to 4");
+    type Settled = { key: number; run: TeamRun };
+    const inFlight = new Map<
+      number,
+      { item: BacklogItem; waiter: Promise<Settled> }
+    >();
+    const attempted = new Set<number>();
+    const outcomes: {
+      item: BacklogItem;
+      runId: string;
+      outcome: ItemOutcome;
+    }[] = [];
+    let stoppedReason:
+      "empty" | "max_runs" | "not_done" | "flagged_twice" | undefined;
+    let started = 0;
+    let flagged = 0;
+    let firstError: unknown;
+    let failed = false;
+    const event = async (e: AutopilotEvent) => {
+      try {
+        await opts.onEvent?.(e);
+      } catch {
+        /* Observers cannot stop the queue. */
+      }
+    };
+    const fail = (error: unknown) => {
+      if (!failed) {
+        firstError = error;
+        failed = true;
+      }
+    };
+    for (;;) {
+      while (!failed && !stoppedReason && inFlight.size < opts.parallel) {
+        try {
+          const open = await this.serial(() => this.open(teamId, backlogPath));
+          const item = open.find(
+            (item) => !inFlight.has(item.line) && !attempted.has(item.line),
+          );
+          if (!item) {
+            stoppedReason = "empty";
+            break;
+          }
+          if (started >= opts.maxRuns) {
+            stoppedReason = "max_runs";
+            break;
+          }
+          attempted.add(item.line);
+          const run = await this.start(teamId, item, backlogPath, {
+            ...opts.start,
+            maxActiveRuns: opts.parallel,
+          });
+          started++;
+          await event({ kind: "started", item, run });
+          const waiter = (
+            opts.waitForRun?.(run.id) ?? this.waitForRun(run.id)
+          ).then((run) => ({ key: item.line, run }));
+          // Attach a handler immediately, even while another start is pending.
+          void waiter.catch(() => {});
+          inFlight.set(item.line, { item, waiter });
+        } catch (error) {
+          fail(error);
+        }
+      }
+      if (!inFlight.size) break;
+      // Keep the key when a waiter rejects so draining can still make progress.
+      const settled = await Promise.race(
+        [...inFlight].map(async ([key, entry]) => {
+          try {
+            return { key, run: (await entry.waiter).run };
+          } catch (error) {
+            return { key, error };
+          }
+        }),
+      );
+      const { item } = inFlight.get(settled.key)!;
+      inFlight.delete(settled.key);
+      if (!settled.run) {
+        fail(settled.error);
+        continue;
+      }
+      const run = settled.run;
+      try {
+        const outcome = await this.complete(teamId, run, item, backlogPath);
+        outcomes.push({ item, runId: run.id, outcome });
+        await event({ kind: "completed", item, run, outcome });
+        if (outcome.status === "not_done") stoppedReason ??= "not_done";
+        else if (outcome.status === "merged") flagged = 0;
+        else if (++flagged >= 2) stoppedReason ??= "flagged_twice";
+      } catch (error) {
+        fail(error);
+      }
+    }
+    if (failed) throw firstError;
+    return { outcomes, stoppedReason: stoppedReason ?? "empty" };
+  }
+
   /** Merges a finished run into the autopilot branch and updates the backlog. */
-  async complete(
+  complete(
+    teamId: string,
+    run: TeamRun,
+    item: BacklogItem,
+    backlogPath: string,
+  ): Promise<ItemOutcome> {
+    return this.serial(() => this.completeItem(teamId, run, item, backlogPath));
+  }
+
+  private async completeItem(
     teamId: string,
     run: TeamRun,
     item: BacklogItem,
