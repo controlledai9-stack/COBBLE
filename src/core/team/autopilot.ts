@@ -19,7 +19,16 @@ import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, isAbsolute } from "node:path";
-import type { Team } from "../../shared/types";
+import type { Team, RoadmapProposal } from "../../shared/types";
+import type { AgentAdapter } from "./adapters";
+import { roadmapPrompt } from "./prompts";
+import {
+  appendBacklogItems,
+  normaliseRoadmapItem,
+  parseRoadmapReply,
+  validRoadmapCount,
+  validRoadmapGoal,
+} from "./roadmap";
 import type { TeamOrchestrator } from "./orchestrator";
 import type { ApprovalPolicy, TeamBudget, TeamRun } from "./types";
 import { isInside } from "./worktrees";
@@ -120,6 +129,7 @@ export class Autopilot {
       team(teamId: string): Team | null;
       worktreeRoot: string;
       gitBinary?: () => string;
+      plannerAdapter?: (teamId: string) => AgentAdapter | null;
     },
   ) {}
 
@@ -180,6 +190,124 @@ export class Autopilot {
   async next(teamId: string, backlogPath: string): Promise<BacklogItem | null> {
     const file = await this.backlogFile(teamId, backlogPath);
     return nextBacklogItem(await readFile(file, "utf8"));
+  }
+
+  async planRoadmap(
+    teamId: string,
+    backlogPath: string,
+    goal: unknown,
+    count?: unknown,
+  ): Promise<RoadmapProposal> {
+    const cleanGoal = validRoadmapGoal(goal);
+    const max = validRoadmapCount(count);
+    const rel = validBacklogPath(backlogPath);
+    const adapter = this.deps.plannerAdapter?.(teamId);
+    if (!adapter) throw new Error("Assign a planner first");
+    const repo = this.workspace(teamId);
+    const hasWorktree = existsSync(this.path(teamId));
+    const text = await (
+      hasWorktree
+        ? this.backlogFile(teamId, rel).then((file) => readFile(file, "utf8"))
+        : this.git(repo, "show", `${AUTOPILOT_BRANCH}:${rel}`).catch(() =>
+            this.git(repo, "show", `HEAD:${rel}`),
+          )
+    ).catch(() => "");
+    const existing = text.split(/\r?\n/).flatMap((line) => {
+      const match = line.match(/^\s*[-*] \[[ xX!]\] (.+)$/);
+      return match ? [match[1]] : [];
+    });
+    const result = await adapter.run({
+      cwd: hasWorktree ? this.path(teamId) : repo,
+      prompt: roadmapPrompt(
+        cleanGoal,
+        max,
+        openBacklogItems(text).map((item) => item.text),
+      ),
+      readOnly: true,
+      network: false,
+      timeoutMs: 600_000,
+    });
+    if (result.authRequired)
+      throw new Error(
+        `Planner authentication required: ${result.authRequired.hint}`,
+      );
+    if (result.exitCode !== 0)
+      throw new Error(`Planner failed: ${result.finalText.slice(0, 300)}`);
+    const proposal = parseRoadmapReply(result.finalText, max, existing);
+    if (!proposal.items.length)
+      throw new Error(
+        `The planner proposed no valid items: ${proposal.rejected.map((r) => r.reason).join(", ")}`,
+      );
+    return { goal: cleanGoal, ...proposal };
+  }
+
+  async addRoadmap(
+    teamId: string,
+    backlogPath: string,
+    goal: unknown,
+    items: unknown,
+  ): Promise<{ commit: string; added: string[] }> {
+    const cleanGoal = validRoadmapGoal(goal);
+    if (!Array.isArray(items) || items.length < 1 || items.length > 15)
+      throw new Error(
+        'Refusing item without "done when": expected 1 to 15 strings',
+      );
+    const added = items.map((line: unknown) => {
+      const result =
+        typeof line === "string" ? normaliseRoadmapItem(line) : null;
+      if (!result || !("item" in result)) {
+        const reason =
+          result && "reason" in result ? result.reason : 'missing "done when"';
+        throw new Error(
+          `Refusing item without "done when": ${String(line)} (${reason})`,
+        );
+      }
+      return result.item;
+    });
+    return this.serial(async () => {
+      const { path } = await this.prepare(teamId);
+      if (await this.git(path, "status", "--porcelain"))
+        throw new Error("The autopilot worktree has uncommitted changes");
+      const merging = await this.git(
+        path,
+        "rev-parse",
+        "-q",
+        "--verify",
+        "MERGE_HEAD",
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (merging)
+        throw new Error("A merge is in progress on cobble/autopilot");
+      const file = await this.backlogFile(teamId, backlogPath);
+      const rel = validBacklogPath(backlogPath);
+      const content = await readFile(file, "utf8");
+      const existing = content
+        .split(/\r?\n/)
+        .filter((line) => /^\s*[-*] \[[ xX!]\] (.+)$/.test(line));
+      const parsed = parseRoadmapReply(added.join("\n"), 15, existing);
+      if (parsed.rejected.length)
+        throw new Error(`Refusing item: ${parsed.rejected[0].reason}`);
+      try {
+        await writeFile(file, appendBacklogItems(content, added), "utf8");
+        await this.git(path, "add", "--", rel);
+        await this.git(
+          path,
+          ...IDENTITY,
+          "commit",
+          "--no-verify",
+          "-q",
+          "-m",
+          `roadmap: ${cleanGoal.slice(0, 120)}`,
+        );
+      } catch (error) {
+        await this.git(path, "reset", "-q", "--", rel).catch(() => {});
+        await this.git(path, "checkout", "--", rel).catch(() => {});
+        throw error;
+      }
+      return { commit: await this.git(path, "rev-parse", "HEAD"), added };
+    });
   }
 
   async open(teamId: string, backlogPath: string): Promise<BacklogItem[]> {
