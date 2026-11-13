@@ -249,10 +249,8 @@ export class Autopilot {
   ): Promise<{ commit: string; added: string[] }> {
     const cleanGoal = validRoadmapGoal(goal);
     if (!Array.isArray(items) || items.length < 1 || items.length > 15)
-      throw new Error(
-        'Refusing item without "done when": expected 1 to 15 strings',
-      );
-    const added = items.map((line: unknown) => {
+      throw new Error("Add 1 to 15 items");
+    const normalised = items.map((line: unknown) => {
       const result =
         typeof line === "string" ? normaliseRoadmapItem(line) : null;
       if (!result || !("item" in result)) {
@@ -264,6 +262,8 @@ export class Autopilot {
       }
       return result.item;
     });
+    const added = parseRoadmapReply(normalised.join("\n"), 15).items;
+    const rel = validBacklogPath(backlogPath);
     return this.serial(async () => {
       const { path } = await this.prepare(teamId);
       if (await this.git(path, "status", "--porcelain"))
@@ -281,7 +281,6 @@ export class Autopilot {
       if (merging)
         throw new Error("A merge is in progress on cobble/autopilot");
       const file = await this.backlogFile(teamId, backlogPath);
-      const rel = validBacklogPath(backlogPath);
       const content = await readFile(file, "utf8");
       const existing = content
         .split(/\r?\n/)
