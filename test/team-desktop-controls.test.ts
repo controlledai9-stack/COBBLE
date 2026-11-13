@@ -223,3 +223,91 @@ test("parallel stop drains started runs without starting another item", async ()
     assert.equal(result.stoppedReason, "stopped");
   });
 });
+
+// Ignore the renderer stylesheet when loading components in Node.
+import { registerHooks } from "node:module";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import type {
+  AutopilotStatus,
+  RunSnapshot,
+  TeamDaemonStatusView,
+} from "../src/shared/types";
+
+const rendererHooks = registerHooks({
+  load(url, context, nextLoad) {
+    if (url.endsWith(".css"))
+      return { format: "module", source: "", shortCircuit: true };
+    return nextLoad(url, context);
+  },
+});
+const { AutopilotCard, RetryNotice, RetryAfterField } =
+  await import("../src/renderer/team-panel");
+rendererHooks.deregister();
+
+test("Autopilot card shows parallel controls and background daemon", () => {
+  const status = {
+    active: true,
+    detach: true,
+    completed: [],
+    currentRuns: [
+      { item: "First item", runId: "1234567890" },
+      { item: "Second item", runId: "abcdefghij" },
+    ],
+  } as unknown as AutopilotStatus;
+  const daemon: TeamDaemonStatusView = {
+    running: true,
+    stopping: false,
+    pid: 4242,
+    startedAt: null,
+    heartbeatAgeMs: 100,
+    runs: ["r1"],
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(AutopilotCard, {
+      status,
+      daemon,
+      startDisabled: false,
+      pending: false,
+      start: () => {},
+      stop: () => {},
+    }),
+  );
+  assert.match(html, /Items at a time/);
+  for (const value of [1, 2, 3, 4])
+    assert.match(html, new RegExp(`option value="${value}"`));
+  assert.match(html, /Keep running when Cobble is closed/);
+  assert.match(html, /Background daemon: running \(pid 4242\), 1 runs/);
+  assert.match(html, /Working on/);
+  assert.match(html, /First item 12345678/);
+  assert.match(html, /Second item abcdefgh/);
+});
+
+test("Retry notice shows the scheduled time only for paused runs", () => {
+  const run = {
+    state: "paused",
+    retryAt: "2026-11-13T15:00:00.000Z",
+  } as RunSnapshot["run"];
+  const render = (run: RunSnapshot["run"]) =>
+    renderToStaticMarkup(
+      React.createElement(RetryNotice, {
+        run,
+        pending: false,
+        retryNow: () => {},
+      }),
+    );
+  const html = render(run);
+  assert.match(html, /dateTime="2026-11-13T15:00:00.000Z"/);
+  assert.match(html, /Retry now/);
+  assert.equal(render({ ...run, state: "running" }), "");
+  assert.equal(render({ ...run, retryAt: undefined }), "");
+});
+
+test("Retry field shows the supported minute range", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RetryAfterField, { value: "", onChange: () => {} }),
+  );
+  assert.match(html, /Minutes before retry/);
+  assert.match(html, /min="5"/);
+  assert.match(html, /max="720"/);
+});
