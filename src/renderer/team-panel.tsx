@@ -9,6 +9,7 @@ import type {
   UserAnswer,
   DesktopApi,
   RunSnapshot,
+  RoadmapProposal,
   TeamAgentId,
   TeamRole,
   TeamTask,
@@ -691,6 +692,57 @@ function AutopilotCard({
   const [backlogPath, setBacklogPath] = useState(
     status?.backlogPath ?? "docs/BACKLOG.md",
   );
+  const roadmapApi = window.cobble;
+  const [roadmapGoal, setRoadmapGoal] = useState("");
+  const [roadmapCount, setRoadmapCount] = useState("8");
+  const [proposal, setProposal] = useState<RoadmapProposal>();
+  const [roadmapPending, setRoadmapPending] = useState(false);
+  const [roadmapError, setRoadmapError] = useState("");
+  const [roadmapResult, setRoadmapResult] = useState("");
+  const roadmapDisabled = pending || !!status?.active || roadmapPending;
+  const clearRoadmap = () => {
+    setProposal(undefined);
+    setRoadmapError("");
+    setRoadmapResult("");
+  };
+  const planRoadmap = async () => {
+    if (roadmapDisabled || !roadmapApi?.planRoadmap) return;
+    clearRoadmap();
+    setRoadmapPending(true);
+    try {
+      setProposal(
+        await roadmapApi.planRoadmap({
+          goal: roadmapGoal.trim(),
+          items: Number(roadmapCount),
+          backlogPath: backlogPath.trim(),
+        }),
+      );
+    } catch (error) {
+      setRoadmapError(describeError(error));
+    } finally {
+      setRoadmapPending(false);
+    }
+  };
+  const addRoadmap = async () => {
+    if (roadmapDisabled || !proposal || !roadmapApi?.addRoadmap) return;
+    setRoadmapError("");
+    setRoadmapPending(true);
+    try {
+      const result = await roadmapApi.addRoadmap({
+        goal: proposal.goal,
+        items: proposal.items,
+        backlogPath: backlogPath.trim(),
+      });
+      setProposal(undefined);
+      setRoadmapResult(
+        `Added ${result.added.length} items (commit ${result.commit.slice(0, 8)})`,
+      );
+    } catch (error) {
+      setRoadmapError(describeError(error));
+    } finally {
+      setRoadmapPending(false);
+    }
+  };
   const [maxRuns, setMaxRuns] = useState("3");
   const [checkCommand, setCheckCommand] = useState("");
   const [shareDependencies, setShareDependencies] = useState(false);
@@ -701,7 +753,7 @@ function AutopilotCard({
       aria-labelledby="agent-team-autopilot-heading"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!startDisabled)
+        if (!startDisabled && !roadmapPending)
           start({
             backlogPath: backlogPath.trim(),
             maxRuns: Number(maxRuns),
@@ -715,14 +767,17 @@ function AutopilotCard({
         Work lands on branch <code>cobble/autopilot</code>. Nothing is pushed or
         merged into main.
       </p>
-      <fieldset disabled={pending || status?.active}>
+      <fieldset disabled={pending || status?.active || roadmapPending}>
         <legend>Session options</legend>
         <div className="agent-team-budget">
           <label className="agent-team-field">
             Backlog path
             <input
               value={status?.active ? status.backlogPath : backlogPath}
-              onChange={(event) => setBacklogPath(event.target.value)}
+              onChange={(event) => {
+                setBacklogPath(event.target.value);
+                clearRoadmap();
+              }}
               required
               maxLength={500}
             />
@@ -758,8 +813,86 @@ function AutopilotCard({
           Share node_modules
         </label>
       </fieldset>
+      {roadmapApi?.planRoadmap && roadmapApi.addRoadmap && (
+        <section aria-labelledby="agent-team-roadmap-heading">
+          <h4 id="agent-team-roadmap-heading">Big goal</h4>
+          <fieldset disabled={roadmapDisabled}>
+            <legend>Plan backlog items</legend>
+            <label className="agent-team-field">
+              Big goal
+              <textarea
+                value={roadmapGoal}
+                maxLength={2000}
+                onChange={(event) => {
+                  setRoadmapGoal(event.target.value);
+                  clearRoadmap();
+                }}
+              />
+            </label>
+            <label className="agent-team-field">
+              Items
+              <input
+                type="number"
+                min={1}
+                max={15}
+                step={1}
+                value={roadmapCount}
+                onChange={(event) => {
+                  setRoadmapCount(event.target.value);
+                  clearRoadmap();
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              disabled={
+                roadmapDisabled ||
+                !roadmapGoal.trim() ||
+                !backlogPath.trim() ||
+                !Number.isInteger(Number(roadmapCount)) ||
+                Number(roadmapCount) < 1 ||
+                Number(roadmapCount) > 15
+              }
+              onClick={() => void planRoadmap()}
+            >
+              Plan items
+            </button>
+            {proposal && (
+              <>
+                <ol>
+                  {proposal.items.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ol>
+                {proposal.rejected.map(({ line, reason }, index) => (
+                  <p key={index}>
+                    Skipped: {line} ({reason})
+                  </p>
+                ))}
+                <button
+                  type="button"
+                  disabled={roadmapDisabled || !proposal.items.length}
+                  onClick={() => void addRoadmap()}
+                >
+                  Add to backlog
+                </button>
+              </>
+            )}
+          </fieldset>
+          {roadmapPending && <p role="status">Working on roadmap?</p>}
+          {roadmapResult && <p role="status">{roadmapResult}</p>}
+          {roadmapError && (
+            <p role="alert" className="error">
+              {roadmapError}
+            </p>
+          )}
+        </section>
+      )}
       <div className="agent-team-actions">
-        <button type="submit" disabled={startDisabled || !backlogPath.trim()}>
+        <button
+          type="submit"
+          disabled={startDisabled || roadmapPending || !backlogPath.trim()}
+        >
           Start Autopilot
         </button>
         <button
