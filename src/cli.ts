@@ -1,3 +1,10 @@
+import {
+  buildDigest,
+  shortDigest,
+  collectDigestInput,
+  validDigestHours,
+} from "./core/team/digest";
+import { PhoneNotifier } from "./core/team/notify";
 import { parseArgs } from "node:util";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -24,6 +31,9 @@ async function main() {
     args,
     allowPositionals: true,
     options: {
+      since: { type: "string" },
+      phone: { type: "boolean" },
+      "digest-every": { type: "string" },
       data: { type: "string" },
       name: { type: "string" },
       "display-name": { type: "string" },
@@ -64,10 +74,11 @@ async function main() {
   cobble team run "GOAL" [--detach] [--max-tasks N] [--max-turns N] [--check "npm test"] [--retry-after MINUTES] [--max-cost USD]
   cobble team resume [RUN_ID] [--max-turns N] [--retry-after MINUTES] [--max-cost USD] [--detach]
   --detach: hand run/resume to the background daemon and return
-  cobble team daemon [status|stop]    run, inspect or stop the daemon for --data
+  cobble team daemon [status|stop] [--digest-every HOURS]    run, inspect or stop the daemon for --data
   --retry-after MINUTES (5-720, default 60): after a usage limit, resume automatically, at most 6 times (each retry uses a planner turn)
   cobble team say [RUN_ID] "message"  send a Team Chat message to the planner
   cobble team answer [RUN_ID] [TASK_ID] done|skip|deny ["note"]
+  cobble team digest [--since HOURS] [--phone]
   cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
   cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--parallel 1-4] [--check CMD] [--share-deps] [--max-cost USD]
       works through "- [ ] item" lines up to N runs at a time on branch cobble/autopilot
@@ -262,9 +273,42 @@ async function teamCommand(
 ) {
   const [sub, ...rest] = args;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  if (sub === "digest") {
+    const team = service.activeTeam();
+    if (!team) throw new Error("Choose a team first");
+    const hours = validDigestHours(values.since, 1, 720, "--since", 24);
+    const input = collectDigestInput(
+      service.teamStore,
+      team,
+      Date.now(),
+      hours,
+    );
+    console.log(buildDigest(input));
+    if (values.phone) {
+      const phone = new PhoneNotifier(service.store, fetch, Date.now, (m) => {
+        console.error(m);
+        process.exitCode = 1;
+      });
+      if (!phone.settings().enabled)
+        console.log(
+          "Phone alerts are off. Turn them on with: cobble team notify on",
+        );
+      else {
+        await phone.notify({
+          runId: "digest",
+          kind: "info",
+          message: shortDigest(input),
+        });
+        if (!process.exitCode) console.log("Digest sent to phone.");
+      }
+    }
+    return;
+  }
   if (sub === "daemon") {
     if (rest.length > 1 || (rest[0] && !["status", "stop"].includes(rest[0])))
-      throw new Error("Usage: cobble team daemon [status|stop]");
+      throw new Error(
+        "Usage: cobble team daemon [status|stop] [--digest-every HOURS]",
+      );
     if (rest[0] === "status") {
       const status = daemonStatus(service.teamStore);
       return print({
@@ -297,7 +341,30 @@ async function teamCommand(
           : "Cobble daemon has not stopped yet. Stop requested; check cobble team daemon status.",
       );
     }
+    let digest: { everyMs: number; send: () => Promise<void> } | undefined;
+    if (values["digest-every"] !== undefined) {
+      const h = validDigestHours(
+        values["digest-every"],
+        1,
+        48,
+        "--digest-every",
+      );
+      const team = service.activeTeam();
+      if (!team) throw new Error("Choose a team first");
+      digest = {
+        everyMs: h * 3_600_000,
+        send: () =>
+          service.phone.notify({
+            runId: "digest",
+            kind: "info",
+            message: shortDigest(
+              collectDigestInput(service.teamStore, team, Date.now(), h),
+            ),
+          }),
+      };
+    }
     const daemon = new TeamDaemon({
+      digest,
       orchestrator: service.agentTeam,
       teamStore: service.teamStore,
       log: console.log,
@@ -578,7 +645,8 @@ async function teamCommand(
           break;
         case "flagged_twice":
           message = "Two items in a row needed attention. Autopilot stopped.";
-          notification = "Autopilot stopped: two items in a row needed attention.";
+          notification =
+            "Autopilot stopped: two items in a row needed attention.";
           break;
         case "max_runs":
           message = `Reached --max-runs ${maxRuns}. Autopilot stopped.`;
@@ -666,7 +734,7 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|daemon|say|answer|stop|access|backup|decisions|autopilot|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|daemon|digest|say|answer|stop|access|backup|decisions|autopilot|notify|status",
   );
 }
 
