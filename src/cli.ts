@@ -11,14 +11,18 @@ import {
   waitUntil,
 } from "./core/team/daemon-launch";
 import { validRetryAfter } from "./core/team/orchestrator";
+import { validRoadmapCount } from "./core/team/roadmap";
 import { parseTeamSayArgs, parseTeamAnswerArgs } from "./core/team/bridge-args";
 
 async function main() {
   const args = process.argv.slice(2);
-  // Let the dollar-amount validator report negative values consistently.
+  // Let the option validators report negative values consistently.
   for (let index = 0; index < args.length - 1; index++) {
-    if (args[index] === "--max-cost" && /^-\d/.test(args[index + 1]))
-      args.splice(index, 2, `--max-cost=${args[index + 1]}`);
+    if (
+      ["--max-cost", "--items"].includes(args[index]) &&
+      /^-\d/.test(args[index + 1])
+    )
+      args.splice(index, 2, `${args[index]}=${args[index + 1]}`);
   }
   const { values, positionals } = parseArgs({
     args,
@@ -41,6 +45,8 @@ async function main() {
       check: { type: "string" },
       base: { type: "string" },
       backlog: { type: "string" },
+      items: { type: "string" },
+      "dry-run": { type: "boolean" },
       "max-runs": { type: "string" },
       parallel: { type: "string" },
       "share-deps": { type: "boolean" },
@@ -71,6 +77,7 @@ async function main() {
   cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
   cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--parallel 1-4] [--check CMD] [--share-deps] [--max-cost USD]
       works through "- [ ] item" lines up to N runs at a time on branch cobble/autopilot
+  cobble team roadmap "BIG GOAL" [--items 1-15] [--dry-run] [--backlog docs/BACKLOG.md]
   run/autopilot options: --base BRANCH (start from it), --share-deps (link node_modules)
   cobble team stop [RUN_ID]
   cobble team access [ROLE...|none]   roles with FULL ACCESS (no agent sandbox), e.g. access deployer
@@ -125,6 +132,8 @@ Agent hook installation is not yet automatic.`);
     const value = values["retry-after"];
     validRetryAfter(/^\d+$/.test(value) ? Number(value) : NaN);
   }
+  if (command === "team" && positionals[1] === "roadmap")
+    validRoadmapCount(values.items);
   const data = resolve(
     values.data ??
       join(
@@ -518,6 +527,30 @@ async function teamCommand(
     await followRun(service, run.id);
     return;
   }
+  if (sub === "roadmap") {
+    const goal = rest.join(" ");
+    if (!goal.trim())
+      throw new Error(
+        'Usage: cobble team roadmap "BIG GOAL" [--items 1-15] [--dry-run] [--backlog docs/BACKLOG.md]',
+      );
+    const backlog =
+      typeof values.backlog === "string" ? values.backlog : "docs/BACKLOG.md";
+    const proposal = await service.planRoadmap(goal, {
+      backlogPath: backlog,
+      items: validRoadmapCount(values.items),
+    });
+    for (const [index, item] of proposal.items.entries())
+      console.log(`${index + 1}. ${item}`);
+    for (const { line, reason } of proposal.rejected)
+      console.log(`Skipped: ${line} (${reason})`);
+    if (values["dry-run"])
+      return console.log("Dry run: nothing was written.");
+    const result = await service.addRoadmap(goal, proposal.items, backlog);
+    console.log(
+      `Added ${result.added.length} items to ${backlog} on cobble/autopilot (commit ${result.commit.slice(0, 8)}).`,
+    );
+    return;
+  }
   if (sub === "autopilot") {
     const number = (v: unknown) =>
       typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
@@ -666,7 +699,7 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|daemon|say|answer|stop|access|backup|decisions|autopilot|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|daemon|say|answer|stop|access|backup|decisions|autopilot|roadmap|notify|status",
   );
 }
 
