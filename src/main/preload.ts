@@ -37,6 +37,7 @@ const api: DesktopApi = {
   startAutopilot: (options) =>
     ipcRenderer.invoke("cobble:team-start-autopilot", options),
   stopAutopilot: () => ipcRenderer.invoke("cobble:team-stop-autopilot"),
+  teamDaemonStatus: () => ipcRenderer.invoke("cobble:team-daemon-status"),
   autopilotStatus: () => ipcRenderer.invoke("cobble:team-autopilot-status"),
   teamRuns: () => ipcRenderer.invoke("cobble:team-runs"),
   teamRun: (runId) => ipcRenderer.invoke("cobble:team-run", runId),
