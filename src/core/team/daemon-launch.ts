@@ -8,6 +8,7 @@ export interface DaemonLaunchDeps {
     options: SpawnOptions,
   ) => { pid?: number; unref(): void };
   execPath?: string;
+  args?: string[];
   execArgv?: string[];
   script?: string;
   env?: NodeJS.ProcessEnv;
@@ -26,7 +27,7 @@ export function daemonCommand(
 ): { command: string; args: string[] } {
   return {
     command: deps.execPath ?? process.execPath,
-    args: [
+    args: deps.args ?? [
       ...(deps.execArgv ?? process.execArgv),
       deps.script ?? process.argv[1],
       "team",

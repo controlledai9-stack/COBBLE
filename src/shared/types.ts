@@ -47,7 +47,18 @@ export type Availability = "available" | "focused" | "away";
 export type CompanionMode = "normal" | "idle" | "dragging";
 export type Classification = "covered" | "required" | "uncertain" | "extra";
 export type Tab = "Agents" | "Home" | "Chats" | "Teams" | "Invites" | "Profile";
+export interface TeamDaemonStatusView {
+  running: boolean;
+  stopping: boolean;
+  pid: number | null;
+  startedAt: number | null;
+  heartbeatAgeMs: number | null;
+  runs: string[];
+}
+
 export interface AutopilotOptions {
+  parallel?: number;
+  detach?: boolean;
   backlogPath?: string;
   maxRuns?: number;
   checkCommand?: string;
@@ -56,6 +67,9 @@ export interface AutopilotOptions {
 }
 
 export interface AutopilotStatus {
+  parallel?: number;
+  detach?: boolean;
+  currentRuns?: { item: string; runId: string }[];
   active: boolean;
   branch: string;
   worktree: string;
@@ -602,6 +616,7 @@ export interface DesktopApi {
     output: string;
     durationMs: number;
   }>;
+  teamDaemonStatus?(): Promise<TeamDaemonStatusView>;
   startTeamRun?(
     goal: string,
     budget?: Partial<TeamBudget>,
@@ -615,6 +630,7 @@ export interface DesktopApi {
       checkCommand?: string;
       shareDependencies?: boolean;
       baseRef?: string;
+      retryAfterMinutes?: number;
     },
   ): Promise<TeamRun>;
   startAutopilot?(options?: AutopilotOptions): Promise<AutopilotStatus>;
