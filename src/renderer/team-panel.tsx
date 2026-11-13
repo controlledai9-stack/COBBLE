@@ -696,10 +696,12 @@ function AutopilotCard({
   const [roadmapGoal, setRoadmapGoal] = useState("");
   const [roadmapCount, setRoadmapCount] = useState("8");
   const [proposal, setProposal] = useState<RoadmapProposal>();
-  const [roadmapPending, setRoadmapPending] = useState(false);
+  const [roadmapPending, setRoadmapPending] = useState<
+    false | "planning" | "adding"
+  >(false);
   const [roadmapError, setRoadmapError] = useState("");
   const [roadmapResult, setRoadmapResult] = useState("");
-  const roadmapDisabled = pending || !!status?.active || roadmapPending;
+  const roadmapDisabled = pending || !!status?.active || !!roadmapPending;
   const clearRoadmap = () => {
     setProposal(undefined);
     setRoadmapError("");
@@ -708,7 +710,7 @@ function AutopilotCard({
   const planRoadmap = async () => {
     if (roadmapDisabled || !roadmapApi?.planRoadmap) return;
     clearRoadmap();
-    setRoadmapPending(true);
+    setRoadmapPending("planning");
     try {
       setProposal(
         await roadmapApi.planRoadmap({
@@ -726,7 +728,7 @@ function AutopilotCard({
   const addRoadmap = async () => {
     if (roadmapDisabled || !proposal || !roadmapApi?.addRoadmap) return;
     setRoadmapError("");
-    setRoadmapPending(true);
+    setRoadmapPending("adding");
     try {
       const result = await roadmapApi.addRoadmap({
         goal: proposal.goal,
@@ -767,7 +769,7 @@ function AutopilotCard({
         Work lands on branch <code>cobble/autopilot</code>. Nothing is pushed or
         merged into main.
       </p>
-      <fieldset disabled={pending || status?.active || roadmapPending}>
+      <fieldset disabled={pending || status?.active || !!roadmapPending}>
         <legend>Session options</legend>
         <div className="agent-team-budget">
           <label className="agent-team-field">
@@ -814,7 +816,16 @@ function AutopilotCard({
         </label>
       </fieldset>
       {roadmapApi?.planRoadmap && roadmapApi.addRoadmap && (
-        <section aria-labelledby="agent-team-roadmap-heading">
+        <section
+          aria-labelledby="agent-team-roadmap-heading"
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              event.target instanceof HTMLInputElement
+            )
+              event.preventDefault();
+          }}
+        >
           <h4 id="agent-team-roadmap-heading">Big goal</h4>
           <fieldset disabled={roadmapDisabled}>
             <legend>Plan backlog items</legend>
@@ -879,7 +890,13 @@ function AutopilotCard({
               </>
             )}
           </fieldset>
-          {roadmapPending && <p role="status">Working on roadmap?</p>}
+          {roadmapPending && (
+            <p role="status">
+              {roadmapPending === "planning"
+                ? "Planning items…"
+                : "Adding to backlog…"}
+            </p>
+          )}
           {roadmapResult && <p role="status">{roadmapResult}</p>}
           {roadmapError && (
             <p role="alert" className="error">
@@ -891,7 +908,7 @@ function AutopilotCard({
       <div className="agent-team-actions">
         <button
           type="submit"
-          disabled={startDisabled || roadmapPending || !backlogPath.trim()}
+          disabled={startDisabled || !!roadmapPending || !backlogPath.trim()}
         >
           Start Autopilot
         </button>

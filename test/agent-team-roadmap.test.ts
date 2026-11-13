@@ -11,6 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CobbleService } from "../src/core/service";
+import { DEFAULT_BUDGET, DEFAULT_POLICY } from "../src/core/team/types";
 import { Autopilot } from "../src/core/team/autopilot";
 import {
   appendBacklogItems,
@@ -137,6 +139,7 @@ test("roadmap units: append preserves BOM, bytes, newline style and indexes; pro
   assert.match(prompt, /No tools, no edits/);
   assert.match(prompt, /test\/<name>.test.ts/);
   assert.ok(prompt.length < 7000);
+  assert.doesNotMatch(roadmapPrompt("goal", 8, []), /Existing open items/);
 });
 
 test("roadmap fake planner: dry-run writes nothing, append commits once, invalid items and merge refused", async () => {
@@ -186,6 +189,16 @@ test("roadmap fake planner: dry-run writes nothing, append commits once, invalid
       /Refusing item without "done when"/,
     );
     assert.ok(!existsSync(pilot.path("team")));
+    for (const invalid of [[], Array(16).fill(item())])
+      await assert.rejects(
+        pilot.addRoadmap("team", "docs/BACKLOG.md", "goal", invalid),
+        /Add 1 to 15 items/,
+      );
+    await assert.rejects(
+      pilot.addRoadmap("team", "../outside.md", "goal", [item()]),
+    );
+    assert.equal(git(repo, "branch", "--list", "cobble/autopilot"), "");
+    assert.ok(!existsSync(pilot.path("team")));
     const proposal = await pilot.planRoadmap(
       "team",
       "docs/BACKLOG.md",
@@ -207,7 +220,7 @@ test("roadmap fake planner: dry-run writes nothing, append commits once, invalid
       "team",
       "docs/BACKLOG.md",
       proposal.goal,
-      proposal.items,
+      [proposal.items[0], item("BUILD   FEATURE"), proposal.items[0]],
     );
     assert.deepEqual(added.added, [item()]);
     assert.equal(
@@ -223,6 +236,85 @@ test("roadmap fake planner: dry-run writes nothing, append commits once, invalid
       original + item() + "\n",
     );
     assert.equal(git(repo, "rev-parse", "main"), head);
+    const lock = git(
+      repo,
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "refs/heads/cobble/autopilot.lock",
+    );
+    writeFileSync(lock, "locked for commit failure test");
+    try {
+      await assert.rejects(
+        pilot.addRoadmap("team", "docs/BACKLOG.md", "goal", [item("Rollback")]),
+        /cannot lock ref/,
+      );
+      assert.equal(git(pilot.path("team"), "status", "--porcelain"), "");
+      assert.equal(git(pilot.path("team"), "rev-parse", "HEAD"), added.commit);
+      assert.equal(
+        readFileSync(join(pilot.path("team"), "docs/BACKLOG.md"), "utf8"),
+        original + item() + "\n",
+      );
+    } finally {
+      rmSync(lock);
+    }
+    const serviceRepo = join(root, "service-repo");
+    git(root, "clone", "-q", "--no-hardlinks", repo, serviceRepo);
+    const service = new CobbleService(":memory:", undefined, {
+      teamAdapters: { codex: adapter },
+      teamWorktreeRoot: join(root, "service-trees"),
+    });
+    let release: (() => void) | undefined;
+    try {
+      service.store.saveProfile("Owner", "");
+      const team = service.store.createTeam("T", "goal", serviceRepo);
+      const stamp = new Date().toISOString();
+      const run = {
+        id: "running-run",
+        teamId: team.id,
+        goal: "goal",
+        state: "running" as const,
+        plannerTurns: 0,
+        planVersion: 0,
+        budget: { ...DEFAULT_BUDGET },
+        policy: { ...DEFAULT_POLICY },
+        baseBranch: "main",
+        runBranch: "run",
+        approvals: [],
+        invalidPlannerReplies: 0,
+        pendingNotes: [],
+        wakeRequested: false,
+        workspace: serviceRepo,
+        ownerId: service.agentTeam.ownerId,
+        ownerSeen: stamp,
+        briefVersion: 0,
+        createdAt: stamp,
+        updatedAt: stamp,
+      };
+      service.teamStore.saveRun(run);
+      assert.throws(
+        () => service.addRoadmap("goal", [item()]),
+        /Stop Autopilot before changing the backlog/,
+      );
+      service.teamStore.saveRun({ ...run, state: "done" });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      service.autopilot.next = async () => {
+        await held;
+        return null;
+      };
+      await service.startAutopilot();
+      assert.equal(service.autopilotStatus().active, true);
+      assert.throws(
+        () => service.addRoadmap("goal", [item()]),
+        /Stop Autopilot before changing the backlog/,
+      );
+    } finally {
+      release?.();
+      await service.close();
+    }
+
     await assert.rejects(
       pilot.addRoadmap("team", "docs/BACKLOG.md", "goal", [item()]),
       /already in the backlog/,
