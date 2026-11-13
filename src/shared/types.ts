@@ -617,6 +617,16 @@ export interface DesktopApi {
       baseRef?: string;
     },
   ): Promise<TeamRun>;
+  planRoadmap?(o: {
+    goal: string;
+    backlogPath?: string;
+    items?: number;
+  }): Promise<RoadmapProposal>;
+  addRoadmap?(o: {
+    goal: string;
+    items: string[];
+    backlogPath?: string;
+  }): Promise<{ commit: string; added: string[] }>;
   startAutopilot?(options?: AutopilotOptions): Promise<AutopilotStatus>;
   stopAutopilot?(): Promise<AutopilotStatus>;
   autopilotStatus?(): Promise<AutopilotStatus>;
@@ -705,3 +715,9 @@ export interface DesktopApi {
   onCompanion(callback: (mode: CompanionMode) => void): () => void;
   onNavigate(callback: (tab: Tab, startVoice: boolean) => void): () => void;
 }
+
+export type RoadmapProposal = {
+  goal: string;
+  items: string[];
+  rejected: { line: string; reason: string }[];
+};

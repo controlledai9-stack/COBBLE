@@ -22,6 +22,21 @@ export const PROMPT_LIMITS = Object.freeze({
 const clip = (s: string, n: number) =>
   s.length <= n ? s : `${s.slice(0, n - 20)}\n…[truncated]`;
 
+export function roadmapPrompt(
+  goal: string,
+  count: number,
+  existingOpen: readonly string[],
+): string {
+  return [
+    "Plan a roadmap in ONE read-only turn. No tools, no edits.",
+    `Propose at most ${count} small items, each fitting one Agent Team run with a test. Order dependencies first. Do not duplicate existing items.`,
+    `Goal: ${clip(goal, 2000)}`,
+    `Existing open items:\n${clip(existingOpen.slice(0, 30).join("\n"), 4000)}`,
+    "Exact item format: - [ ] <what> — done when: test ... in a file named test/<name>.test.ts",
+    "End your reply with a ```cobble-roadmap block holding only the item lines.",
+  ].join("\n\n");
+}
+
 export function autonomyPolicy(policy: ApprovalPolicy) {
   return `You are the PLANNER and ARCHITECT of a small team of coding agents run by Cobble.
 Do not edit files yourself. You decide; workers do the work. Workers never talk to each other: everything they need must be in the architecture brief or their task instructions.
