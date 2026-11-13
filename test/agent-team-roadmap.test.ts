@@ -258,63 +258,6 @@ test("roadmap fake planner: dry-run writes nothing, append commits once, invalid
     } finally {
       rmSync(lock);
     }
-    const serviceRepo = join(root, "service-repo");
-    git(root, "clone", "-q", "--no-hardlinks", repo, serviceRepo);
-    const service = new CobbleService(":memory:", undefined, {
-      teamAdapters: { codex: adapter },
-      teamWorktreeRoot: join(root, "service-trees"),
-    });
-    let release: (() => void) | undefined;
-    try {
-      service.store.saveProfile("Owner", "");
-      const team = service.store.createTeam("T", "goal", serviceRepo);
-      const stamp = new Date().toISOString();
-      const run = {
-        id: "running-run",
-        teamId: team.id,
-        goal: "goal",
-        state: "running" as const,
-        plannerTurns: 0,
-        planVersion: 0,
-        budget: { ...DEFAULT_BUDGET },
-        policy: { ...DEFAULT_POLICY },
-        baseBranch: "main",
-        runBranch: "run",
-        approvals: [],
-        invalidPlannerReplies: 0,
-        pendingNotes: [],
-        wakeRequested: false,
-        workspace: serviceRepo,
-        ownerId: service.agentTeam.ownerId,
-        ownerSeen: stamp,
-        briefVersion: 0,
-        createdAt: stamp,
-        updatedAt: stamp,
-      };
-      service.teamStore.saveRun(run);
-      assert.throws(
-        () => service.addRoadmap("goal", [item()]),
-        /Stop Autopilot before changing the backlog/,
-      );
-      service.teamStore.saveRun({ ...run, state: "done" });
-      const held = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      service.autopilot.next = async () => {
-        await held;
-        return null;
-      };
-      await service.startAutopilot();
-      assert.equal(service.autopilotStatus().active, true);
-      assert.throws(
-        () => service.addRoadmap("goal", [item()]),
-        /Stop Autopilot before changing the backlog/,
-      );
-    } finally {
-      release?.();
-      await service.close();
-    }
-
     await assert.rejects(
       pilot.addRoadmap("team", "docs/BACKLOG.md", "goal", [item()]),
       /already in the backlog/,
@@ -366,6 +309,77 @@ test("roadmap fake planner: dry-run writes nothing, append commits once, invalid
       unassigned.planRoadmap("team", "docs/BACKLOG.md", "goal"),
       /Assign a planner first/,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("roadmap service guard refuses a running run and an active autopilot session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cobble-roadmap-guard-"));
+  try {
+    const service = new CobbleService(":memory:", undefined, {
+      teamWorktreeRoot: join(root, "service-trees"),
+    });
+    let release: (() => void) | undefined;
+    try {
+      service.store.saveProfile("Owner", "");
+      const team = service.store.createTeam("T", "goal", root);
+      const stamp = new Date().toISOString();
+      const run = {
+        id: "running-run",
+        teamId: team.id,
+        goal: "goal",
+        state: "running" as const,
+        plannerTurns: 0,
+        planVersion: 0,
+        budget: { ...DEFAULT_BUDGET },
+        policy: { ...DEFAULT_POLICY },
+        baseBranch: "main",
+        runBranch: "run",
+        approvals: [],
+        invalidPlannerReplies: 0,
+        pendingNotes: [],
+        wakeRequested: false,
+        workspace: root,
+        ownerId: service.agentTeam.ownerId,
+        ownerSeen: stamp,
+        briefVersion: 0,
+        createdAt: stamp,
+        updatedAt: stamp,
+      };
+      service.teamStore.saveRun(run);
+      assert.throws(
+        () => service.addRoadmap("goal", [item()]),
+        /Stop Autopilot before changing the backlog/,
+      );
+      service.teamStore.saveRun({ ...run, state: "done" });
+      // This guard needs an active session, not another git worktree.
+      service.autopilot.prepare = async () => ({
+        branch: "cobble/autopilot",
+        path: root,
+        created: false,
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      service.autopilot.next = async () => {
+        await held;
+        return null;
+      };
+      await service.startAutopilot();
+      assert.equal(service.autopilotStatus().active, true);
+      assert.throws(
+        () => service.addRoadmap("goal", [item()]),
+        /Stop Autopilot before changing the backlog/,
+      );
+    } finally {
+      release?.();
+      try {
+        await service.stopAutopilot();
+      } finally {
+        await service.close();
+      }
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
