@@ -274,6 +274,7 @@ export class CobbleService extends EventEmitter {
       },
     });
     this.autopilot = new Autopilot({
+      teamStore: this.teamStore,
       orchestrator: this.agentTeam,
       team: teamById,
       worktreeRoot,

@@ -1,3 +1,4 @@
+import { DigestSchedule } from "./digest";
 import {
   DAEMON_HANDOFF_REASON,
   LEASE_MS,
@@ -36,6 +37,7 @@ export class TeamDaemon {
   readonly done: Promise<void>;
   private resolveDone!: () => void;
   private interval?: ReturnType<typeof setInterval>;
+  private schedule?: DigestSchedule;
   private replacedId?: string;
   private started = false;
   private stopped = false;
@@ -47,6 +49,7 @@ export class TeamDaemon {
       pid?: number;
       now?: () => number;
       tickMs?: number;
+      digest?: { everyMs: number; send: () => Promise<void> | void };
       log?: (line: string) => void;
     },
   ) {
@@ -94,6 +97,12 @@ export class TeamDaemon {
       this.o.orchestrator.recover();
       this.o.orchestrator.armRetries();
       this.o.orchestrator.drainOrphans();
+      if (this.o.digest)
+        this.schedule = new DigestSchedule({
+          ...this.o.digest,
+          now: () => this.now(),
+          onError: (m) => this.o.log?.(m),
+        });
       this.tick();
       if (!this.stopped)
         this.interval = setInterval(
@@ -120,6 +129,11 @@ export class TeamDaemon {
       this.o.orchestrator.keepLeases();
       this.o.orchestrator.drainOwned();
       this.o.orchestrator.armRetries({ ownedOnly: true });
+      try {
+        this.schedule?.tick();
+      } catch {
+        /* Digest failures cannot stop the daemon. */
+      }
     } catch (error) {
       try {
         this.o.log?.(`Cobble daemon tick failed: ${String(error)}`);
@@ -133,6 +147,7 @@ export class TeamDaemon {
     if (this.stopped) return;
     this.stopped = true;
     clearInterval(this.interval);
+    this.schedule?.stop();
     try {
       if (this.started) this.o.teamStore.releaseDaemonLock(this.id);
       if (reason) this.o.log?.(reason);

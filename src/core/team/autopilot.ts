@@ -20,6 +20,7 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, isAbsolute } from "node:path";
 import type { Team } from "../../shared/types";
+import type { TeamStore } from "./team-store";
 import type { TeamOrchestrator } from "./orchestrator";
 import type { ApprovalPolicy, TeamBudget, TeamRun } from "./types";
 import { isInside } from "./worktrees";
@@ -117,6 +118,7 @@ export class Autopilot {
   constructor(
     private readonly deps: {
       orchestrator: TeamOrchestrator;
+      teamStore?: TeamStore;
       team(teamId: string): Team | null;
       worktreeRoot: string;
       gitBinary?: () => string;
@@ -393,7 +395,23 @@ export class Autopilot {
     item: BacklogItem,
     backlogPath: string,
   ): Promise<ItemOutcome> {
-    return this.serial(() => this.completeItem(teamId, run, item, backlogPath));
+    return this.serial(() =>
+      this.completeItem(teamId, run, item, backlogPath),
+    ).then((outcome) => {
+      if (outcome.status !== "not_done") {
+        try {
+          const merged = outcome.status === "merged";
+          this.deps.teamStore?.event(
+            run.id,
+            merged ? "backlog_ticked" : "backlog_flagged",
+            merged ? item.text : `${item.text} \u2014 ${outcome.message}`,
+          );
+        } catch {
+          /* Recording must not change the completion outcome. */
+        }
+      }
+      return outcome;
+    });
   }
 
   private async completeItem(
