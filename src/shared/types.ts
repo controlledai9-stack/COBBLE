@@ -42,6 +42,8 @@ export type {
   TeamEvent,
   UserAnswer,
   UserQuestion,
+  SessionBrief,
+  SessionBriefInput,
 } from "../core/team/types";
 export type Availability = "available" | "focused" | "away";
 export type CompanionMode = "normal" | "idle" | "dragging";

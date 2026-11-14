@@ -1,8 +1,10 @@
 /** Prompt builders for the planner and workers. All output is bounded. */
 import type { Team } from "../../shared/types";
+import { sessionBriefText } from "./session-brief";
 import { REPORT_FILE } from "./worktrees";
 import type {
   ApprovalPolicy,
+  SessionBrief,
   TeamAgentId,
   TeamDecision,
   TeamRole,
@@ -113,6 +115,7 @@ export function plannerStartPrompt(
   run: TeamRun,
   roles: Partial<Record<TeamRole, TeamAgentId>>,
   answers: readonly UserAnswer[] = [],
+  sessionBrief: SessionBrief | null = null,
 ) {
   return `${autonomyPolicy(run.policy)}
 
@@ -121,6 +124,9 @@ ${planText(team)}
 
 ## Project decisions from the user (saved from earlier interviews; do not ask again)
 ${userDecisionsText(answers)}
+
+## Session brief from the user (asked once this session; do not ask again)
+${sessionBriefText(sessionBrief)}
 
 ## Available worker roles
 ${roleList(roles, run.fullAccessRoles)}
@@ -175,6 +181,7 @@ export function plannerWakePrompt(
   decisions: TeamDecision[],
   note?: string,
   answers: readonly UserAnswer[] = [],
+  sessionBrief: SessionBrief | null = null,
 ) {
   const remainingTasks = run.budget.maxTasks - tasks.length;
   const remainingTurns = run.budget.maxPlannerTurns - run.plannerTurns;
@@ -188,6 +195,9 @@ ${clip(run.goal, 1_500)}
 
 ## Project decisions from the user
 ${userDecisionsText(answers)}
+
+## Session brief from the user (asked once this session; do not ask again)
+${sessionBriefText(sessionBrief)}
 
 ## Architecture brief
 ${run.brief ? `Version ${run.briefVersion} is published (you wrote it; workers receive it).` : "NOT PUBLISHED YET — publish it with set_brief before delegating coding work."}

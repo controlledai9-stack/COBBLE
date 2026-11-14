@@ -15,6 +15,26 @@ export const TEAM_AGENTS: readonly TeamAgentId[] = [
   "free",
   "teammate",
 ];
+export interface SessionBrief {
+  days?: number;
+  endDate?: string;
+  hoursPerDay?: number;
+  agents: TeamAgentId[];
+  apiSpendLimitUsd?: number;
+  priority: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface SessionBriefInput {
+  time?: string;
+  days?: number | string;
+  endDate?: string;
+  hoursPerDay?: number | string;
+  agents?: string[] | string;
+  apiSpendLimitUsd?: number | string;
+  priority?: string;
+}
+
 /** Tokens and cost used by API-model workers (CLI agents report none). */
 export interface TeamUsage {
   calls: number;
