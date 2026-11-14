@@ -525,7 +525,7 @@ function TeamPanelContent({
         )}
       </section>
 
-      <SessionBriefCard />
+      <SessionBriefCard teamId={teamId} />
       <ProjectDecisions />
 
       <PhoneAlerts />
@@ -1042,11 +1042,11 @@ export function AutopilotCard({
 }
 
 /** Session constraints, asked once per app session. */
-function SessionBriefCard() {
+function SessionBriefCard({ teamId }: { teamId: string }) {
   const api = window.cobble;
   const [brief, setBrief] = useState<SessionBrief | null>(null);
   const [open, setOpen] = useState(false);
-  const initialized = useRef(false);
+  const initialized = useRef(new Set<string>());
   const [time, setTime] = useState("");
   const [hours, setHours] = useState("");
   const [selected, setSelected] = useState<TeamAgentId[]>([]);
@@ -1075,14 +1075,14 @@ function SessionBriefCard() {
       const state = await api?.teamSessionBrief?.();
       if (!state) return;
       setBrief(state.brief);
-      if (!initialized.current) {
-        initialized.current = true;
+      if (!initialized.current.has(teamId)) {
+        initialized.current.add(teamId);
         if (state.askNow) await edit(state.brief);
       }
     } catch (e) {
       setError(describeError(e));
     }
-  }, [api, edit]);
+  }, [api, edit, teamId]);
   useEffect(() => {
     void load();
     return api?.onTeam?.(() => void load());

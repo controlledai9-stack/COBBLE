@@ -35,6 +35,8 @@ export function parseSessionBrief(
   previous: SessionBrief | null,
   now = new Date(),
 ): SessionBrief {
+  if (input.endDate !== undefined && typeof input.endDate !== "string")
+    throw new Error("endDate is invalid");
   if ([input.time, input.days, input.endDate].filter(nonblank).length > 1)
     throw new Error("time/days/endDate: choose one");
   let days = numberField(input.days, "days", 1, 365, true);

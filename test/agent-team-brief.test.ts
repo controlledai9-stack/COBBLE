@@ -29,7 +29,12 @@ import type {
   AdapterRunInput,
   AdapterResult,
 } from "../src/core/team/adapters";
-import type { TeamAgentId, TeamRole } from "../src/core/team/types";
+import type {
+  SessionBriefInput,
+  TeamAgentId,
+  TeamRole,
+} from "../src/core/team/types";
+import { plannerWakePrompt } from "../src/core/team/prompts";
 
 import {
   parseSessionBrief,
@@ -194,6 +199,20 @@ test("session brief validates dates, exclusivity, agents and priority", () => {
     [],
   );
 });
+test("session brief rejects a non-string endDate", () => {
+  for (const endDate of [123, null, true, {}, []]) {
+    assert.throws(
+      () =>
+        parseSessionBrief(
+          { priority: "demo", endDate } as unknown as SessionBriefInput,
+          null,
+          now,
+        ),
+      { message: "endDate is invalid" },
+    );
+  }
+});
+
 test("session brief store round trip retains creation on edit and ignores malformed settings", () => {
   const store = new Store(":memory:");
   const teamStore = new TeamStore(store);
@@ -249,6 +268,22 @@ test("saved session brief reaches a new run's first planner prompt", async () =>
     );
     const run = await f.orchestrator.startRun(f.team.id, "Build demo");
     await f.orchestrator.idle(run.id);
+    const wakePrompt = plannerWakePrompt(
+      f.team,
+      run,
+      [],
+      [],
+      [],
+      undefined,
+      [],
+      f.teamStore.sessionBrief(f.team.id),
+    );
+    const projectDecisionsIndex = wakePrompt.indexOf("## Project decisions");
+    const sessionBriefIndex = wakePrompt.indexOf("## Session brief from the user");
+    const architectureBriefIndex = wakePrompt.indexOf("## Architecture brief");
+    assert.ok(projectDecisionsIndex >= 0);
+    assert.ok(sessionBriefIndex > projectDecisionsIndex);
+    assert.ok(sessionBriefIndex < architectureBriefIndex);
     assert.match(
       f.plannerCalls[0].prompt,
       /Top priority: hackathon demo that works end to end/,
