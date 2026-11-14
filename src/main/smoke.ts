@@ -25,6 +25,24 @@ export async function runSmoke(
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   };
+  // A failing page script names itself instead of Electron's generic message.
+  const runScript = main.webContents.executeJavaScript.bind(main.webContents);
+  main.webContents.executeJavaScript = ((code: string, gesture?: boolean) =>
+    runScript(code, gesture).catch((error: unknown) => {
+      throw new Error(
+        `Page script failed: ${code.slice(0, 300)} (${error instanceof Error ? error.message : error})`,
+      );
+    })) as typeof main.webContents.executeJavaScript;
+  /** Clicks a sidebar entry by its label; reports the entries it saw if it is missing. */
+  const clickNav = async (label: string) => {
+    const missing = await main.webContents.executeJavaScript(
+      `(() => { const all = [...document.querySelectorAll("aside button")]; const b = all.find((x) => x.textContent.trim().endsWith(${JSON.stringify(label)})); if (!b) return all.map((x) => x.textContent.trim()); b.click(); return null; })()`,
+    );
+    if (missing)
+      throw new Error(
+        `No sidebar entry "${label}". Found: ${missing.join(" | ")}`,
+      );
+  };
   await wait('!!document.querySelector(".welcome-card")');
   assert.equal(
     await main.webContents.executeJavaScript(
@@ -108,9 +126,7 @@ export async function runSmoke(
       item.text.includes("legacy/"),
     ),
   );
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[3].click()`,
-  );
+  await clickNav("Workspace & Plan");
   await wait('document.body.innerText.includes("The core plan")');
   // The Agent Team is its own page now (the app opens on it).
   assert.equal(
@@ -119,9 +135,7 @@ export async function runSmoke(
     ),
     false,
   );
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[0].click()`,
-  );
+  await clickNav("Agent Team");
   await wait('!!document.querySelector("#agent-team-chat-heading")');
   await wait('!!document.querySelector("#agent-team-autopilot-heading")');
   assert.deepEqual(
@@ -151,9 +165,7 @@ export async function runSmoke(
     /Share node_modules must be a boolean/,
   );
   // Back to Workspace & Plan for the plan and work-area checks.
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[3].click()`,
-  );
+  await clickNav("Workspace & Plan");
   await wait('document.body.innerText.includes("The core plan")');
   assert.equal(
     await main.webContents.executeJavaScript(
@@ -163,9 +175,9 @@ export async function runSmoke(
   );
   assert.equal(
     await main.webContents.executeJavaScript(
-      'document.querySelectorAll("nav button").length',
+      `["Agent Team", "Plan Guard", "Discussions", "Workspace & Plan", "Join Requests"].every((label) => [...document.querySelectorAll("aside button")].some((b) => b.textContent.trim().endsWith(label)))`,
     ),
-    5,
+    true,
   );
   const fill = async (selector: string, value: string) =>
     main.webContents.executeJavaScript(
@@ -193,9 +205,7 @@ export async function runSmoke(
     moduleId: service.activeTeam()!.graph!.modules[0].id,
   });
   assert.equal(service.activeTeam()!.graph!.contracts.length, 1);
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[3].click()`,
-  );
+  await clickNav("Workspace & Plan");
   await wait(
     "!!document.querySelector('form[aria-label=\"Mark completed work\"]')",
   );
@@ -238,9 +248,7 @@ export async function runSmoke(
   await main.webContents.executeJavaScript(
     `window.cobble.action({type:'send',recipientId:null,content:'Starting with the shared task board.',sentVia:'text'})`,
   );
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[2].click()`,
-  );
+  await clickNav("Discussions");
   await wait('!!document.querySelector(".bubble")');
   assert.equal(
     await main.webContents.executeJavaScript(
@@ -312,9 +320,7 @@ export async function runSmoke(
   }
   assert.equal(service.state().analysis!.semanticReview, false);
   assert.equal(service.state().activities[0].alert, true);
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[1].click()`,
-  );
+  await clickNav("Plan Guard");
   await wait('!!document.querySelector(".needs-review")');
   await main.webContents.executeJavaScript(
     `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('Review revert')).click()`,
@@ -350,9 +356,7 @@ export async function runSmoke(
   });
   assert.equal(paired.status, 200);
   await wait("/IDE (linked|connected)/.test(document.body.innerText)");
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[3].click()`,
-  );
+  await clickNav("Workspace & Plan");
   const second = await fetch(`http://127.0.0.1:${service.bridge.port}/ide`, {
     method: "POST",
     headers: {
@@ -372,9 +376,7 @@ export async function runSmoke(
   );
   assert.equal(service.bridge.current.connections?.length, 2);
   await screenshot(main, "smoke-ides.png");
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[1].click()`,
-  );
+  await clickNav("Plan Guard");
   await companion.webContents.executeJavaScript(
     `window.cobble.companion('drag-start')`,
   );
@@ -396,9 +398,7 @@ export async function runSmoke(
   );
   await new Promise((resolve) => setTimeout(resolve, 300));
   await screenshot(main, "smoke-home.png");
-  await main.webContents.executeJavaScript(
-    `document.querySelectorAll('nav button')[3].click()`,
-  );
+  await clickNav("Workspace & Plan");
   await wait('!!document.querySelector(".plan-items")');
   await new Promise((resolve) => setTimeout(resolve, 300));
   await screenshot(main, "smoke-plan.png");
@@ -432,7 +432,7 @@ export async function runSmoke(
   );
   await wait('!document.querySelector("[role=dialog]")');
   await main.webContents.executeJavaScript(
-    `document.querySelector('.sidebar-action-btn').focus(); document.querySelector('.sidebar-action-btn').click()`,
+    `document.querySelector('.project-new').focus(); document.querySelector('.project-new').click()`,
   );
   await wait('!!document.querySelector(".workspace-setup-modal")');
   assert.equal(
@@ -447,7 +447,7 @@ export async function runSmoke(
   await wait('!document.querySelector("[role=dialog]")');
   assert.equal(
     await main.webContents.executeJavaScript(
-      `document.activeElement.matches('.sidebar-action-btn')`,
+      `document.activeElement.matches('.project-new')`,
     ),
     true,
   );
