@@ -313,25 +313,23 @@ test("pilot reuses open text without appending and accounts for planner spend", 
       costUsd: 1,
     },
   });
-  h.deps.runItems = async (texts) => {
-    assert.deepEqual(texts, [
-      "Add tests — done when: test passes in test/pilot.test.ts",
-    ]);
-    return { stoppedReason: "empty" };
-  };
+  h.deps.runItems = async () =>
+    assert.fail("exhausted spend must not start runs");
   const result = await runPilot(h.deps);
-  assert.equal(result.cycles, 1);
+  assert.equal(result.cycles, 0);
   assert.equal(result.stoppedReason, "spend_limit");
   assert.deepEqual(h.added, []);
   assert.deepEqual(h.digests, ["spend_limit"]);
 });
 
-
 test("pilot labels preserve leading digits and strip list markers", () => {
   for (const label of ["3D viewer", "2FA settings"])
     assert.equal(pilotLabel(label, "coder", ""), label);
   for (const marker of ["-", "*", "\u2022", "1.", "2)"])
-    assert.equal(pilotLabel(`  ${marker}  3D viewer`, "coder", ""), "3D viewer");
+    assert.equal(
+      pilotLabel(`  ${marker}  3D viewer`, "coder", ""),
+      "3D viewer",
+    );
 });
 
 test("planner done reply stops without running items and sends one digest", async () => {
