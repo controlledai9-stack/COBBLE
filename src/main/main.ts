@@ -762,6 +762,15 @@ else {
         service.setTeamFullAccess(roles),
       );
       handle("team-user-decisions", () => service.teamUserDecisions());
+      handle("team-session-brief", () => service.teamSessionBrief());
+      handle("save-team-session-brief", (_, input: unknown) =>
+        service.saveTeamSessionBrief(input),
+      );
+      handle("skip-team-session-brief", () => service.skipTeamSessionBrief());
+      handle("clear-team-session-brief", () => service.clearTeamSessionBrief());
+      handle("team-session-brief-defaults", () =>
+        service.sessionBriefDefaults(),
+      );
       handle("team-forget-user-decisions", () =>
         service.forgetTeamUserDecisions(),
       );

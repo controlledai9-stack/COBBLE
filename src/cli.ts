@@ -94,6 +94,9 @@ async function main() {
   cobble team access [ROLE...|none]   roles with FULL ACCESS (no agent sandbox), e.g. access deployer
   cobble team backup [ROLE AGENT|none] backup agent used when a role's agent hits a usage limit
   cobble team decisions [forget]      project decisions saved from intake interviews
+  cobble team brief                   answer five session brief questions
+  cobble team brief show              show the saved session brief
+  cobble team brief clear             clear the saved session brief
   cobble team model                  API-model workers: settings and free providers
   cobble team model claude MODEL [EFFORT]   agent "claude-api" (needs ANTHROPIC_API_KEY)
   cobble team model free PROVIDER [MODEL] [URL]   agent "free": ollama, lmstudio,
@@ -282,6 +285,80 @@ async function teamCommand(
 ) {
   const [sub, ...rest] = args;
   const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+  if (sub === "brief") {
+    if (rest.length > 1 || (rest[0] && !["show", "clear"].includes(rest[0])))
+      throw new Error("Usage: cobble team brief [show|clear]");
+    if (rest[0] === "show") return print(service.teamSessionBrief().brief);
+    if (rest[0] === "clear") return print(service.clearTeamSessionBrief());
+    const previous = service.teamSessionBrief().brief;
+    const agents = previous?.agents.length
+      ? previous.agents
+      : process.stdin.isTTY
+        ? (await service.sessionBriefDefaults()).agents
+        : [...new Set(Object.values(service.teamRoles()))];
+    const prompt = process.stdin.isTTY
+      ? createInterface({ input: process.stdin, output: process.stdout })
+      : undefined;
+    try {
+      const lines: string[] = [];
+      if (!prompt) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin)
+          chunks.push(Buffer.from(chunk));
+        lines.push(...Buffer.concat(chunks).toString("utf8").split(/\r?\n/));
+      }
+      let index = 0;
+      const ask = async (label: string, current: string) => {
+        const answer = (
+          prompt
+            ? await prompt.question(
+                `${label}${current ? ` [${current}]` : ""}: `,
+              )
+            : (lines[index++] ?? "")
+        ).trim();
+        return answer || current;
+      };
+      const clearable = (value: string) =>
+        value.toLowerCase() === "none" ? "" : value;
+      const time = clearable(
+        await ask(
+          "Time available (days, or an end date YYYY-MM-DD)",
+          String(previous?.days ?? previous?.endDate ?? ""),
+        ),
+      );
+      const hoursPerDay = clearable(
+        await ask(
+          "Hours per day agents may work",
+          String(previous?.hoursPerDay ?? ""),
+        ),
+      );
+      const selectedAgents = await ask(
+        "AI agents to use, comma-separated",
+        agents.join(", "),
+      );
+      const apiSpendLimitUsd = clearable(
+        await ask(
+          "API spending limit in USD (or none)",
+          String(previous?.apiSpendLimitUsd ?? ""),
+        ),
+      );
+      const priority = await ask(
+        "Top priority, in one line",
+        previous?.priority ?? "",
+      );
+      return print(
+        service.saveTeamSessionBrief({
+          time,
+          hoursPerDay,
+          agents: selectedAgents,
+          apiSpendLimitUsd,
+          priority,
+        }),
+      );
+    } finally {
+      prompt?.close();
+    }
+  }
   if (sub === "digest") {
     const team = service.activeTeam();
     if (!team) throw new Error("Choose a team first");
@@ -610,8 +687,7 @@ async function teamCommand(
       console.log(`${index + 1}. ${item}`);
     for (const { line, reason } of proposal.rejected)
       console.log(`Skipped: ${line} (${reason})`);
-    if (values["dry-run"])
-      return console.log("Dry run: nothing was written.");
+    if (values["dry-run"]) return console.log("Dry run: nothing was written.");
     const result = await service.addRoadmap(goal, proposal.items, backlog);
     console.log(
       `Added ${result.added.length} items to ${backlog} on cobble/autopilot (commit ${result.commit.slice(0, 8)}).`,
