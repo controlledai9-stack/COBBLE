@@ -586,6 +586,7 @@ else {
           return input as Record<string, unknown>;
         };
         const options = record(value === undefined ? {} : value, [
+          "pilot",
           "parallel",
           "detach",
           "backlogPath",
@@ -595,6 +596,7 @@ else {
           "budget",
         ]);
         const {
+          pilot,
           parallel,
           detach,
           backlogPath,
@@ -611,6 +613,8 @@ else {
             parallel > 4)
         )
           throw new Error("Items at a time must be a whole number from 1 to 4");
+        if (pilot !== undefined && typeof pilot !== "boolean")
+          throw new Error("Pilot must be a boolean");
         if (detach !== undefined && typeof detach !== "boolean")
           throw new Error(
             "Keep running when Cobble is closed must be a boolean",
@@ -660,6 +664,7 @@ else {
                 ]),
               );
         return service.startAutopilot({
+          pilot: pilot as boolean | undefined,
           parallel: parallel as number | undefined,
           detach: detach as boolean | undefined,
           backlogPath:
