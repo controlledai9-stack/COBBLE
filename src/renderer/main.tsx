@@ -47,6 +47,7 @@ import { Pebble, PebbleMotionSettings } from "./cinematic-pebble";
 import { HostingPanel } from "./hosting-panel";
 import { MonitoringStatusPanel } from "./monitoring-status";
 import { ModalShell } from "./modal-shell";
+import { ProjectsSidebar } from "./projects-sidebar";
 import "./styles.css";
 import "./hosting-panel.css";
 declare global {
@@ -268,44 +269,42 @@ function App() {
         <div className="wordmark">
           cobble<span>●</span>
         </div>
-        <div className="sidebar-workspace-group">
-          <div className="project-label">WORKSPACE</div>
-          <button
-            type="button"
-            className="sidebar-action-btn"
-            onClick={() => {
-              setWorkspaceModalMode("create");
-              setWorkspaceModalOpen(true);
-            }}
-            title="Create a new workspace or join an existing team"
-          >
-            <IconPlus />
-            <span>Create New / Join a Workspace</span>
-          </button>
-
-          <div className="project-label workspace-sublabel">YOUR WORKSPACE</div>
-          <div className="workspace-select-wrapper">
-            <select
-              aria-label="Active team"
-              value={state.activeTeamId ?? ""}
-              onChange={(e) => {
-                const teamId = e.target.value;
-                if (teamId) {
-                  void act({ type: "selectTeam", teamId });
-                  setTab("Teams");
-                }
-              }}
-            >
-              <option value="" disabled>
-                Choose a workspace
-              </option>
-              {state.teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-            {team && (
+        <ProjectsSidebar
+          projects={
+            state.projects ??
+            state.teams.map((t) => ({
+              teamId: t.id,
+              name: t.name,
+              status: "idle" as const,
+            }))
+          }
+          activeTeamId={state.activeTeamId}
+          onSelect={(id) => {
+            void act({ type: "selectTeam", teamId: id });
+            setTab("Agents");
+            setError("");
+          }}
+          onNewProject={() => {
+            setWorkspaceModalMode("create");
+            setWorkspaceModalOpen(true);
+          }}
+          secondary={navTabs
+            .filter(
+              ({ tab: item }) =>
+                item === "Home" || item === "Chats" || item === "Teams",
+            )
+            .map(({ tab: item, label, icon }) => ({
+              key: item,
+              label,
+              icon,
+              selected: tab === item,
+              onClick: () => {
+                setTab(item);
+                setError("");
+              },
+            }))}
+          activeFooter={
+            team && (
               <button
                 type="button"
                 className="workspace-delete-icon-btn"
@@ -323,27 +322,29 @@ function App() {
               >
                 <IconTrash />
               </button>
-            )}
-          </div>
-        </div>
+            )
+          }
+        />
         <nav>
-          {navTabs.map(({ tab: item, label, icon }) => (
-            <button
-              className={tab === item ? "nav-button selected" : "nav-button"}
-              key={item}
-              onClick={() => {
-                setTab(item);
-                setError("");
-              }}
-            >
-              {icon}
-              <span>{label}</span>
-              {item === "Invites" &&
-                state.invites.some((i) => i.state === "pending") && (
-                  <b className="dot" />
-                )}
-            </button>
-          ))}
+          {navTabs
+            .filter(({ tab: item }) => item === "Agents" || item === "Invites")
+            .map(({ tab: item, label, icon }) => (
+              <button
+                className={tab === item ? "nav-button selected" : "nav-button"}
+                key={item}
+                onClick={() => {
+                  setTab(item);
+                  setError("");
+                }}
+              >
+                {icon}
+                <span>{label}</span>
+                {item === "Invites" &&
+                  state.invites.some((i) => i.state === "pending") && (
+                    <b className="dot" />
+                  )}
+              </button>
+            ))}
         </nav>
         <div className="sidebar-bottom">
           <button
