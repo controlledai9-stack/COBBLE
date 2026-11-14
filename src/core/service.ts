@@ -31,6 +31,7 @@ import { buildReviewPacket } from "./review/packet";
 import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { TeamStore } from "./team/team-store";
+import { parseSessionBrief } from "./team/session-brief";
 import { planGuardEntries } from "./team/plan-guard";
 import {
   AUTOPILOT_BRANCH,
@@ -81,6 +82,8 @@ import {
   type BridgeAnswer,
   type AgentDetection,
   type ApprovalPolicy,
+  type SessionBrief,
+  type SessionBriefInput,
   type TeamAgentId,
   type TeamBudget,
   type TeamChatMessage,
@@ -142,6 +145,7 @@ export class CobbleService extends EventEmitter {
   private phonePolling = false;
   /** How often to check for taps on phone answer buttons. */
   static PHONE_REPLY_POLL_MS = 10_000;
+  private sessionBriefAsked = new Set<string>();
   private readonly startingTeamRuns = new Set<string>();
   private readonly teamAdapters: Record<TeamAgentId, AgentAdapter>;
   private agentTask?: Promise<void>;
@@ -2606,6 +2610,47 @@ export class CobbleService extends EventEmitter {
     const clean = this.teamStore.setFullAccessRoles(this.teamId(), roles);
     this.emit("team", null);
     return clean;
+  }
+  teamSessionBrief(): { brief: SessionBrief | null; askNow: boolean } {
+    const teamId = this.teamId();
+    return {
+      brief: this.teamStore.sessionBrief(teamId),
+      askNow: !this.sessionBriefAsked.has(teamId),
+    };
+  }
+  saveTeamSessionBrief(input: unknown): SessionBrief {
+    if (!input || typeof input !== "object" || Array.isArray(input))
+      throw new Error("Session brief must be an object");
+    const teamId = this.teamId();
+    const brief = parseSessionBrief(
+      input as SessionBriefInput,
+      this.teamStore.sessionBrief(teamId),
+    );
+    this.teamStore.setSessionBrief(teamId, brief);
+    this.sessionBriefAsked.add(teamId);
+    this.emit("team", null);
+    return brief;
+  }
+  skipTeamSessionBrief(): { brief: SessionBrief | null; askNow: false } {
+    const teamId = this.teamId();
+    this.sessionBriefAsked.add(teamId);
+    this.emit("team", null);
+    return { brief: this.teamStore.sessionBrief(teamId), askNow: false };
+  }
+  clearTeamSessionBrief(): null {
+    this.teamStore.clearSessionBrief(this.teamId());
+    this.emit("team", null);
+    return null;
+  }
+  async sessionBriefDefaults(): Promise<{ agents: TeamAgentId[] }> {
+    const installed = (await this.detectTeamAgents())
+      .filter((agent) => agent.installed)
+      .map((agent) => agent.agent);
+    return {
+      agents: installed.length
+        ? installed
+        : [...new Set(Object.values(this.teamRoles()))],
+    };
   }
   /** Saved answers from intake interviews (project decisions). */
   teamUserDecisions() {

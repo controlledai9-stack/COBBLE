@@ -7,6 +7,7 @@ import type { TeamChatMessage } from "./types";
 import type { Store } from "../store";
 import type {
   DaemonLock,
+  SessionBrief,
   QueuedInboxItem,
   TeamInboxItem,
   RunSnapshot,
@@ -47,6 +48,35 @@ export class TeamStore {
       CREATE TABLE IF NOT EXISTS team_inbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES team_runs(id) ON DELETE CASCADE, created_at TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS team_inbox_run ON team_inbox(run_id,seq);
       INSERT OR IGNORE INTO migrations VALUES(6);`);
+  }
+
+  sessionBrief(teamId: string): SessionBrief | null {
+    try {
+      const value = this.store.setting<SessionBrief | null>(
+        `teamSessionBrief:${teamId}`,
+        null,
+      );
+      if (
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        typeof value.priority !== "string" ||
+        !Array.isArray(value.agents) ||
+        value.agents.some((agent) => !TEAM_AGENTS.includes(agent)) ||
+        typeof value.createdAt !== "string" ||
+        typeof value.updatedAt !== "string"
+      )
+        return null;
+      return value;
+    } catch {
+      return null;
+    }
+  }
+  setSessionBrief(teamId: string, brief: SessionBrief): void {
+    this.store.set(`teamSessionBrief:${teamId}`, brief);
+  }
+  clearSessionBrief(teamId: string): void {
+    this.store.set(`teamSessionBrief:${teamId}`, null);
   }
 
   daemonLock(): DaemonLock | null {

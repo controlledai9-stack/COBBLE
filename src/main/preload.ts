@@ -77,6 +77,15 @@ const api: DesktopApi = {
   setTeamFullAccess: (roles) =>
     ipcRenderer.invoke("cobble:team-set-full-access", roles),
   teamUserDecisions: () => ipcRenderer.invoke("cobble:team-user-decisions"),
+  teamSessionBrief: () => ipcRenderer.invoke("cobble:team-session-brief"),
+  saveTeamSessionBrief: (input) =>
+    ipcRenderer.invoke("cobble:save-team-session-brief", input),
+  skipTeamSessionBrief: () =>
+    ipcRenderer.invoke("cobble:skip-team-session-brief"),
+  clearTeamSessionBrief: () =>
+    ipcRenderer.invoke("cobble:clear-team-session-brief"),
+  sessionBriefDefaults: () =>
+    ipcRenderer.invoke("cobble:team-session-brief-defaults"),
   forgetTeamUserDecisions: () =>
     ipcRenderer.invoke("cobble:team-forget-user-decisions"),
   openTeamTerminal: (runId, taskId) =>
