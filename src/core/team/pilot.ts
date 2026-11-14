@@ -1,4 +1,4 @@
-﻿import type { AgentAdapter } from "./adapters";
+import type { AgentAdapter } from "./adapters";
 import type { SessionBrief, TeamRole } from "./types";
 import { sessionBriefText } from "./session-brief";
 import { normaliseRoadmapItem, roadmapWhat } from "./roadmap";
@@ -69,8 +69,8 @@ export function pilotLabel(
 ): string {
   const clean = (s: string) =>
     s
-      .replace(/[\x00-\x1f\x7f-\x9f•*]/g, " ")
-      .replace(/^\s*[-\d.)]+\s*/, "")
+      .replace(/^\s*(?:[-*\u2022]|\d+[.)])\s+/, "")
+      .replace(/[\x00-\x1f\x7f-\x9f\u2022*]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
   let words = clean(typeof label === "string" ? label : "")
@@ -284,7 +284,7 @@ export async function runPilot(
           ...context,
           ...summary,
           briefText: sessionBriefText(brief),
-          minutesLeft: Math.max(0, (end - deps.now()) / 60000),
+          minutesLeft: Math.max(0, Math.floor((end - deps.now()) / 60000)),
           roles: deps.roles,
           spendLeftUsd:
             brief.apiSpendLimitUsd === undefined
@@ -302,7 +302,7 @@ export async function runPilot(
       const reply = parsePilotReply(result.finalText, {
         open: summary.open,
         closed: [...summary.finished, ...summary.flagged],
-        minutesLeft: Math.max(0, (end - deps.now()) / 60000),
+        minutesLeft: Math.max(0, Math.floor((end - deps.now()) / 60000)),
         roles: deps.roles,
       });
       if (reply.done || !reply.items.length) {

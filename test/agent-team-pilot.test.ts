@@ -1,4 +1,4 @@
-﻿import test from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
   runPilot,
@@ -324,4 +324,65 @@ test("pilot reuses open text without appending and accounts for planner spend", 
   assert.equal(result.stoppedReason, "spend_limit");
   assert.deepEqual(h.added, []);
   assert.deepEqual(h.digests, ["spend_limit"]);
+});
+
+
+test("pilot labels preserve leading digits and strip list markers", () => {
+  for (const label of ["3D viewer", "2FA settings"])
+    assert.equal(pilotLabel(label, "coder", ""), label);
+  for (const marker of ["-", "*", "\u2022", "1.", "2)"])
+    assert.equal(pilotLabel(`  ${marker}  3D viewer`, "coder", ""), "3D viewer");
+});
+
+test("planner done reply stops without running items and sends one digest", async () => {
+  const h = harness();
+  h.deps.planner()!.run = async () => ({
+    exitCode: 0,
+    durationMs: 0,
+    finalText: block([proposal()], true),
+  });
+  h.deps.runItems = async () => assert.fail("done reply must not run items");
+  assert.deepEqual(await runPilot(h.deps), {
+    cycles: 0,
+    stoppedReason: "nothing_left",
+    items: [],
+  });
+  assert.deepEqual(h.added, []);
+  assert.deepEqual(h.messages, []);
+  assert.deepEqual(h.digests, ["nothing_left"]);
+});
+
+test("planner failures preserve their error and send one error digest", async () => {
+  for (const auth of [false, true]) {
+    const h = harness();
+    h.deps.planner()!.run = async () => ({
+      exitCode: 1,
+      durationMs: 0,
+      finalText: "planner failure",
+      ...(auth ? { authRequired: { service: "fake", hint: "sign in" } } : {}),
+    });
+    await assert.rejects(runPilot(h.deps), {
+      message: auth
+        ? "Planner authentication required: sign in"
+        : "Planner failed: planner failure",
+    });
+    assert.deepEqual(h.digests, ["error"]);
+    assert.deepEqual(h.messages, []);
+    assert.deepEqual(h.added, []);
+  }
+});
+
+test("pilot floors minutes left in the prompt and after the planner turn", async () => {
+  const h = harness();
+  let now = 86400000 - 119000;
+  h.deps.now = () => now;
+  h.deps.planner()!.run = async (input) => {
+    assert.ok(input.prompt.includes("Minutes left: 1;"));
+    now += 60000;
+    return { exitCode: 0, durationMs: 0, finalText: block([proposal()]) };
+  };
+  assert.equal((await runPilot(h.deps)).stoppedReason, "nothing_left");
+  assert.deepEqual(h.added, []);
+  assert.deepEqual(h.messages, []);
+  assert.deepEqual(h.digests, ["nothing_left"]);
 });
