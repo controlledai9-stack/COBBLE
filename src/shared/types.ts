@@ -18,6 +18,8 @@ export interface AgentRoomView {
   >;
 }
 import type {
+  SessionBrief,
+  SessionBriefInput,
   AgentDetection,
   ApprovalPolicy,
   RunSnapshot,
@@ -696,6 +698,14 @@ export interface DesktopApi {
   setTeamFullAccess?(roles: TeamRole[]): Promise<TeamRole[]>;
   /** Project decisions saved from intake interviews. */
   teamUserDecisions?(): Promise<UserAnswer[]>;
+  teamSessionBrief?(): Promise<{ brief: SessionBrief | null; askNow: boolean }>;
+  saveTeamSessionBrief?(input: SessionBriefInput): Promise<SessionBrief>;
+  skipTeamSessionBrief?(): Promise<{
+    brief: SessionBrief | null;
+    askNow: false;
+  }>;
+  clearTeamSessionBrief?(): Promise<null>;
+  sessionBriefDefaults?(): Promise<{ agents: TeamAgentId[] }>;
   forgetTeamUserDecisions?(): Promise<UserAnswer[]>;
   openTeamTerminal?(runId: string, taskId?: string): Promise<void>;
   /** Phone alerts through ntfy. */

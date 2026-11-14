@@ -8,6 +8,7 @@ import type {
   TeamDaemonStatusView,
   PhoneNotifyView,
   UserAnswer,
+  SessionBrief,
   DesktopApi,
   RunSnapshot,
   RoadmapProposal,
@@ -16,6 +17,8 @@ import type {
   TeamTask,
 } from "../shared/types";
 import { runCostUsd, formatUsd } from "../core/team/usage";
+import { TEAM_AGENTS } from "../core/team/types";
+import { sessionBriefText } from "../core/team/session-brief";
 import "./team-panel.css";
 
 const roles: TeamRole[] = [
@@ -522,6 +525,7 @@ function TeamPanelContent({
         )}
       </section>
 
+      <SessionBriefCard />
       <ProjectDecisions />
 
       <PhoneAlerts />
@@ -1034,6 +1038,175 @@ export function AutopilotCard({
         </ul>
       )}
     </form>
+  );
+}
+
+/** Session constraints, asked once per app session. */
+function SessionBriefCard() {
+  const api = window.cobble;
+  const [brief, setBrief] = useState<SessionBrief | null>(null);
+  const [open, setOpen] = useState(false);
+  const initialized = useRef(false);
+  const [time, setTime] = useState("");
+  const [hours, setHours] = useState("");
+  const [selected, setSelected] = useState<TeamAgentId[]>([]);
+  const [spend, setSpend] = useState("");
+  const [priority, setPriority] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const edit = useCallback(
+    async (saved: SessionBrief | null) => {
+      setTime(String(saved?.days ?? saved?.endDate ?? ""));
+      setHours(String(saved?.hoursPerDay ?? ""));
+      setSpend(String(saved?.apiSpendLimitUsd ?? ""));
+      setPriority(saved?.priority ?? "");
+      setSelected(
+        saved
+          ? saved.agents
+          : ((await api?.sessionBriefDefaults?.())?.agents ?? []),
+      );
+      setError("");
+      setOpen(true);
+    },
+    [api],
+  );
+  const load = useCallback(async () => {
+    try {
+      const state = await api?.teamSessionBrief?.();
+      if (!state) return;
+      setBrief(state.brief);
+      if (!initialized.current) {
+        initialized.current = true;
+        if (state.askNow) await edit(state.brief);
+      }
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }, [api, edit]);
+  useEffect(() => {
+    void load();
+    return api?.onTeam?.(() => void load());
+  }, [api, load]);
+  if (!api?.teamSessionBrief) return null;
+  const submit = async (skip: boolean) => {
+    setPending(true);
+    setError("");
+    try {
+      if (skip) await api.skipTeamSessionBrief!();
+      else
+        setBrief(
+          await api.saveTeamSessionBrief!({
+            time,
+            hoursPerDay: hours,
+            agents: selected,
+            apiSpendLimitUsd: spend,
+            priority,
+          }),
+        );
+      setOpen(false);
+      await load();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <section className="agent-team-card">
+      <div className="agent-team-heading">
+        <h3>Session brief</h3>
+        <button
+          type="button"
+          className="secondary"
+          disabled={pending}
+          onClick={() =>
+            void edit(brief).catch((e) => setError(describeError(e)))
+          }
+        >
+          Edit
+        </button>
+      </div>
+      <p className="agent-team-text">{sessionBriefText(brief)}</p>
+      {error && <p className="agent-team-warning">{error}</p>}
+      {open && (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit(false);
+          }}
+        >
+          <label className="agent-team-field">
+            Time available (days, or an end date YYYY-MM-DD)
+            <input
+              value={time}
+              onChange={(event) => setTime(event.target.value)}
+            />
+          </label>
+          <label className="agent-team-field">
+            Hours per day agents may work
+            <input
+              type="number"
+              min={0.5}
+              max={24}
+              step="any"
+              value={hours}
+              onChange={(event) => setHours(event.target.value)}
+            />
+          </label>
+          <fieldset disabled={pending}>
+            <legend>AI agents to use</legend>
+            {TEAM_AGENTS.map((agent) => (
+              <label key={agent}>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(agent)}
+                  onChange={(event) =>
+                    setSelected(
+                      event.target.checked
+                        ? [...selected, agent]
+                        : selected.filter((value) => value !== agent),
+                    )
+                  }
+                />
+                {names[agent]}
+              </label>
+            ))}
+          </fieldset>
+          <label className="agent-team-field">
+            API spending limit (USD, optional)
+            <input
+              type="number"
+              min={0}
+              step="any"
+              value={spend}
+              onChange={(event) => setSpend(event.target.value)}
+            />
+          </label>
+          <label className="agent-team-field">
+            Top priority, in one line
+            <input
+              required
+              maxLength={200}
+              value={priority}
+              onChange={(event) => setPriority(event.target.value)}
+            />
+          </label>
+          <div className="agent-team-actions">
+            <button type="submit" disabled={pending}>
+              Save
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={pending}
+              onClick={() => void submit(true)}
+            >
+              Not now
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 

@@ -261,3 +261,67 @@ test("saved session brief reaches a new run's first planner prompt", async () =>
     await f.cleanup();
   }
 });
+
+test("CLI session brief reads five piped answers, keeps blanks and clears fields", () => {
+  const root = mkdtempSync(join(tmpdir(), "cobble-cli-brief-"));
+  const data = join(root, "test.sqlite");
+  const store = new Store(data);
+  store.saveProfile("Tester", "");
+  const team = store.createTeam("Brief test", "Build a demo", root);
+  const teamStore = new TeamStore(store);
+  teamStore.setRole(team.id, "planner", "claude");
+  teamStore.setRole(team.id, "coder", "codex");
+  const assigned = [...new Set(Object.values(teamStore.roles(team.id)))];
+  store.db.close();
+  const cli = (args: string[], input = "") =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "src/cli.ts",
+          "--data",
+          data,
+          "team",
+          "brief",
+          ...args,
+        ],
+        {
+          input,
+          encoding: "utf8",
+          timeout: 30_000,
+          env: { ...process.env, NODE_NO_WARNINGS: "1", PATH: "" },
+        },
+      ),
+    );
+  try {
+    const saved = cli(
+      [],
+      "5\r\n6\r\ncodex, claude\r\n20\r\nhackathon demo that works end to end\r\n",
+    );
+    assert.equal(saved.days, 5);
+    assert.equal(saved.hoursPerDay, 6);
+    assert.deepEqual(saved.agents, ["codex", "claude"]);
+    assert.equal(saved.apiSpendLimitUsd, 20);
+    assert.equal(saved.priority, "hackathon demo that works end to end");
+    assert.deepEqual(cli(["show"]), saved);
+    const kept = cli([], "");
+    assert.equal(kept.days, 5);
+    assert.equal(kept.hoursPerDay, 6);
+    assert.equal(kept.apiSpendLimitUsd, 20);
+    assert.equal(kept.priority, saved.priority);
+    assert.equal(kept.createdAt, saved.createdAt);
+    assert.deepEqual(kept.agents, saved.agents);
+    const cleared = cli([], "none\nnone\n\nnone\n");
+    assert.equal(cleared.days, undefined);
+    assert.equal(cleared.hoursPerDay, undefined);
+    assert.equal(cleared.apiSpendLimitUsd, undefined);
+    assert.equal(cli(["clear"]), null);
+    assert.equal(cli(["show"]), null);
+    const defaults = cli([], "\n\n\n\nUse assigned agents\n");
+    assert.deepEqual(defaults.agents, assigned);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
