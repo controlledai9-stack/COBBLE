@@ -76,7 +76,13 @@ export async function plannerTurn(ctx: OrchestratorContext, runId: string) {
   const userAnswers = ctx.store.decisionsFromUser(run.teamId);
   let prompt =
     run.plannerTurns === 0
-      ? plannerStartPrompt(team, run, roles, userAnswers)
+      ? plannerStartPrompt(
+          team,
+          run,
+          roles,
+          userAnswers,
+          ctx.store.sessionBrief(run.teamId),
+        )
       : plannerWakePrompt(
           team,
           run,
@@ -85,6 +91,7 @@ export async function plannerTurn(ctx: OrchestratorContext, runId: string) {
           decisions,
           notes.join("\n"),
           userAnswers,
+          ctx.store.sessionBrief(run.teamId),
         );
   if (run.plannerTurns > 0 && !run.plannerSessionId)
     // No session to continue (a new or backup planner): give it the rules,
