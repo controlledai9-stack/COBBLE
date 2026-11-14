@@ -86,6 +86,8 @@ async function main() {
   cobble team answer [RUN_ID] [TASK_ID] done|skip|deny ["note"]
   cobble team digest [--since HOURS] [--phone]
   cobble team notify status|on|off|test|new-topic|server URL   phone alerts (ntfy)
+  cobble team pilot [--parallel 1-4] [--backlog docs/BACKLOG.md] [--check CMD] [--share-deps] [--max-cost USD]
+      keeps choosing and running work until the session brief ends
   cobble team autopilot [--backlog docs/BACKLOG.md] [--max-runs 3] [--parallel 1-4] [--check CMD] [--share-deps] [--max-cost USD]
       works through "- [ ] item" lines up to N runs at a time on branch cobble/autopilot
   cobble team roadmap "BIG GOAL" [--items 1-15] [--dry-run] [--backlog docs/BACKLOG.md]
@@ -114,7 +116,7 @@ Agent hook installation is not yet automatic.`);
   }
   if (
     command === "team" &&
-    ["run", "resume", "autopilot"].includes(positionals[1])
+    ["run", "resume", "autopilot", "pilot"].includes(positionals[1])
   ) {
     const maxCost = values["max-cost"];
     if (
@@ -694,6 +696,33 @@ async function teamCommand(
     );
     return;
   }
+  if (sub === "pilot") {
+    const result = await service.runPilot(
+      {
+        pilot: true,
+        parallel: values.parallel === undefined ? 1 : Number(values.parallel),
+        backlogPath:
+          typeof values.backlog === "string" ? values.backlog : undefined,
+        checkCommand:
+          typeof values.check === "string" ? values.check : undefined,
+        shareDependencies: values["share-deps"] === true,
+        budget:
+          values["max-cost"] === undefined
+            ? undefined
+            : { maxCostUsd: Number(values["max-cost"]) },
+      },
+      {
+        onCycle: ({ cycle, items }) => {
+          for (const item of items)
+            console.log(
+              `Cycle ${cycle}: [${item.role} ~${item.minutes}m] ${item.item}`,
+            );
+        },
+      },
+    );
+    console.log(`Pilot stopped: ${result.stoppedReason}.`);
+    return;
+  }
   if (sub === "autopilot") {
     const number = (v: unknown) =>
       typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
@@ -848,7 +877,7 @@ async function teamCommand(
     return;
   }
   throw new Error(
-    "Usage: cobble team detect|roles|role|test|run|resume|daemon|digest|say|answer|stop|access|backup|decisions|autopilot|roadmap|notify|status",
+    "Usage: cobble team detect|roles|role|test|run|resume|daemon|digest|say|answer|stop|access|backup|decisions|autopilot|pilot|roadmap|notify|status",
   );
 }
 
