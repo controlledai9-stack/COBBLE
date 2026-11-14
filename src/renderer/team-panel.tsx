@@ -723,7 +723,8 @@ export function AutopilotCard({
   const [backlogPath, setBacklogPath] = useState(
     status?.backlogPath ?? "docs/BACKLOG.md",
   );
-  const roadmapApi = window.cobble;
+  // Guarded: the card also renders without the desktop bridge (tests, previews).
+  const roadmapApi = typeof window === "undefined" ? undefined : window.cobble;
   const [roadmapGoal, setRoadmapGoal] = useState("");
   const [roadmapCount, setRoadmapCount] = useState("8");
   const [proposal, setProposal] = useState<RoadmapProposal>();
