@@ -471,6 +471,48 @@ else {
               : undefined,
           ),
       );
+      const roadmapOptions = (value: unknown) => {
+        if (
+          !value ||
+          typeof value !== "object" ||
+          Array.isArray(value) ||
+          Object.keys(value).some(
+            (key) => !["goal", "items", "backlogPath"].includes(key),
+          )
+        )
+          throw new Error("Invalid roadmap options");
+        const options = value as Record<string, unknown>;
+        const goal = text(options.goal, 2000);
+        if (!goal.trim())
+          throw new Error("The goal must be 1 to 2000 characters");
+        return {
+          goal,
+          items: options.items,
+          backlogPath:
+            options.backlogPath === undefined
+              ? undefined
+              : text(options.backlogPath, 500),
+        };
+      };
+      handle("team-plan-roadmap", (_, value: unknown) => {
+        const { goal, items, backlogPath } = roadmapOptions(value);
+        if (
+          items !== undefined &&
+          (typeof items !== "number" ||
+            !Number.isInteger(items) ||
+            items < 1 ||
+            items > 15)
+        )
+          throw new Error("--items must be a whole number from 1 to 15");
+        return service.planRoadmap(goal, { items, backlogPath });
+      });
+      handle("team-add-roadmap", (_, value: unknown) => {
+        const { goal, items, backlogPath } = roadmapOptions(value);
+        if (!Array.isArray(items) || items.length < 1 || items.length > 15)
+          throw new Error("Roadmap must contain 1 to 15 items");
+        const lines = items.map((item) => text(item, 600));
+        return service.addRoadmap(goal, lines, backlogPath);
+      });
       handle("team-start-autopilot", (_, value: unknown) => {
         const record = (input: unknown, allowed: readonly string[]) => {
           if (

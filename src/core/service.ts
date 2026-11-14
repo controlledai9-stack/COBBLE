@@ -275,6 +275,10 @@ export class CobbleService extends EventEmitter {
     });
     this.autopilot = new Autopilot({
       teamStore: this.teamStore,
+      plannerAdapter: (teamId) => {
+        const a = this.teamStore.roles(teamId).planner;
+        return a ? this.teamAdapters[a] : null;
+      },
       orchestrator: this.agentTeam,
       team: teamById,
       worktreeRoot,
@@ -2153,6 +2157,31 @@ export class CobbleService extends EventEmitter {
     return structuredClone(
       this.autopilotSessions.get(teamId)?.status ?? this.idleAutopilot(teamId),
     );
+  }
+
+  planRoadmap(
+    goal: unknown,
+    options: { backlogPath?: string; items?: number } = {},
+  ) {
+    return this.autopilot.planRoadmap(
+      this.teamId(),
+      options.backlogPath ?? DEFAULT_BACKLOG,
+      goal,
+      options.items,
+    );
+  }
+
+  addRoadmap(goal: unknown, items: unknown, backlogPath = DEFAULT_BACKLOG) {
+    const teamId = this.teamId();
+    if (
+      this.autopilotSessions.get(teamId)?.status.active ||
+      this.startingTeamRuns.has(teamId) ||
+      this.teamStore
+        .runsInState(["running", "needs_human", "paused"])
+        .some((run) => run.teamId === teamId)
+    )
+      throw new Error("Stop Autopilot before changing the backlog");
+    return this.autopilot.addRoadmap(teamId, backlogPath, goal, items);
   }
 
   async startAutopilot(
