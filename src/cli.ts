@@ -697,30 +697,43 @@ async function teamCommand(
     return;
   }
   if (sub === "pilot") {
-    const result = await service.runPilot(
-      {
-        pilot: true,
-        parallel: values.parallel === undefined ? 1 : Number(values.parallel),
-        backlogPath:
-          typeof values.backlog === "string" ? values.backlog : undefined,
-        checkCommand:
-          typeof values.check === "string" ? values.check : undefined,
-        shareDependencies: values["share-deps"] === true,
-        budget:
-          values["max-cost"] === undefined
-            ? undefined
-            : { maxCostUsd: Number(values["max-cost"]) },
-      },
-      {
-        onCycle: ({ cycle, items }) => {
-          for (const item of items)
-            console.log(
-              `Cycle ${cycle}: [${item.role} ~${item.minutes}m] ${item.item}`,
-            );
+    const teamId = service.activeTeam()?.id;
+    if (!teamId) throw new Error("Choose a team first");
+    const shutdown = new AbortController();
+    const abort = () => shutdown.abort();
+    process.on("SIGINT", abort);
+    process.on("SIGTERM", abort);
+    try {
+      const result = await service.runPilot(
+        {
+          pilot: true,
+          parallel: values.parallel === undefined ? 1 : Number(values.parallel),
+          backlogPath:
+            typeof values.backlog === "string" ? values.backlog : undefined,
+          checkCommand:
+            typeof values.check === "string" ? values.check : undefined,
+          shareDependencies: values["share-deps"] === true,
+          budget:
+            values["max-cost"] === undefined
+              ? undefined
+              : { maxCostUsd: Number(values["max-cost"]) },
         },
-      },
-    );
-    console.log(`Pilot stopped: ${result.stoppedReason}.`);
+        {
+          signal: shutdown.signal,
+          onCycle: ({ cycle, items }) => {
+            for (const item of items)
+              console.log(
+                `Cycle ${cycle}: [${item.role} ~${item.minutes}m] ${item.item}`,
+              );
+          },
+        },
+        teamId,
+      );
+      console.log(`Pilot stopped: ${result.stoppedReason}.`);
+    } finally {
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
+    }
     return;
   }
   if (sub === "autopilot") {

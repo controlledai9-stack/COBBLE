@@ -231,9 +231,7 @@ export interface PilotDeps {
   shouldStop(): boolean;
   onCycle?(e: { cycle: number; items: PilotItem[] }): void;
 }
-export async function runPilot(
-  deps: PilotDeps,
-): Promise<{
+export async function runPilot(deps: PilotDeps): Promise<{
   cycles: number;
   stoppedReason: PilotStopReason;
   items: PilotItem[][];
@@ -264,7 +262,7 @@ export async function runPilot(
       const spent = deps.spentUsd() + plannerSpend;
       if (
         brief.apiSpendLimitUsd !== undefined &&
-        spent >= brief.apiSpendLimitUsd
+        brief.apiSpendLimitUsd - spent < 0.01
       ) {
         reason = "spend_limit";
         break;
@@ -293,6 +291,17 @@ export async function runPilot(
         }),
       });
       plannerSpend += result.usage?.costUsd ?? 0;
+      if (deps.shouldStop()) {
+        reason = "stopped";
+        break;
+      }
+      if (
+        brief.apiSpendLimitUsd !== undefined &&
+        brief.apiSpendLimitUsd - deps.spentUsd() - plannerSpend < 0.01
+      ) {
+        reason = "spend_limit";
+        break;
+      }
       if (result.authRequired)
         throw new Error(
           `Planner authentication required: ${result.authRequired.hint}`,

@@ -131,7 +131,10 @@ test("startAutopilot pilot runs cycles and updates session status", async () => 
     for (let i = 0; i < 100 && service.autopilotStatus().active; i++)
       await new Promise((resolve) => setImmediate(resolve));
     assert.equal(service.autopilotStatus().pilot, true);
-    assert.equal(service.autopilotStatus().stoppedReason, "nothing_left");
+    assert.equal(
+      service.autopilotStatus().stoppedReason,
+      "Pilot stopped: the planner found nothing useful left.",
+    );
   });
 });
 
@@ -170,4 +173,90 @@ test("pilot CLI validates parallel before opening the database and documents usa
     readFileSync("src/cli.ts", "utf8"),
     /cobble team pilot \[--parallel 1-4\]/,
   );
+});
+
+test("expired and stale quiet records allow finished alerts", async () => {
+  for (const record of [
+    { until: Date.now() - 1, heartbeatAt: Date.now() },
+    { until: Date.now() + 86400000, heartbeatAt: Date.now() - 13 * 3600000 },
+  ])
+    await fixture(async (service, teamId, posts) => {
+      service.store.set(`teamPilotQuiet:${teamId}`, record);
+      service.agentTeam.emit("attention", {
+        runId: "finished",
+        kind: "finished",
+        message: "finished",
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(posts.includes("finished"), true);
+    });
+});
+
+test("abort releases in-flight waits, clears quiet mode and sends one digest", async () => {
+  await fixture(async (service, teamId, posts) => {
+    const controller = new AbortController();
+    service.autopilot.runParallel = async (_team, _path, opts) => {
+      const waiting = opts.waitForRun!("pending");
+      controller.abort();
+      assert.equal(opts.shouldStop?.(), true);
+      await waiting;
+      return { outcomes: [], stoppedReason: "stopped" };
+    };
+    const result = await service.runPilot({}, { signal: controller.signal });
+    assert.equal(result.stoppedReason, "stopped");
+    assert.equal(service.store.setting(`teamPilotQuiet:${teamId}`, null), null);
+    assert.equal(
+      posts.filter((post) => post.startsWith("Pilot stopped:")).length,
+      1,
+    );
+  });
+});
+
+test("pilot validates brief and planner before returning a session", async () => {
+  await fixture(async (service, teamId) => {
+    const brief = service.teamStore.sessionBrief(teamId)!;
+    service.teamStore.setSessionBrief(teamId, {
+      ...brief,
+      days: undefined,
+      endDate: undefined,
+    });
+    await assert.rejects(
+      service.startAutopilot({ pilot: true }),
+      /Save a session brief/,
+    );
+    service.teamStore.setSessionBrief(teamId, brief);
+    service.teamStore.setRole(teamId, "planner", null);
+    await assert.rejects(
+      service.startAutopilot({ pilot: true }),
+      /Assign a planner first/,
+    );
+  });
+});
+
+test("pilot caps each run at the spend left and starts nothing below one cent", async () => {
+  for (const limit of [0.005, 0.5]) {
+    await fixture(async (service, teamId, posts) => {
+      const brief = service.teamStore.sessionBrief(teamId)!;
+      service.teamStore.setSessionBrief(teamId, {
+        ...brief,
+        apiSpendLimitUsd: limit,
+      });
+      let starts = 0;
+      service.autopilot.runParallel = async (_team, _path, opts) => {
+        starts++;
+        assert.equal(opts.start?.budget?.maxCostUsd, limit);
+        return { outcomes: [], stoppedReason: "empty" };
+      };
+      const result = await service.runPilot({ budget: { maxCostUsd: 1 } });
+      assert.equal(starts, limit < 0.01 ? 0 : 1);
+      assert.equal(
+        result.stoppedReason,
+        limit < 0.01 ? "spend_limit" : "nothing_left",
+      );
+      assert.equal(
+        posts.filter((post) => post.startsWith("Pilot stopped:")).length,
+        1,
+      );
+    });
+  }
 });
