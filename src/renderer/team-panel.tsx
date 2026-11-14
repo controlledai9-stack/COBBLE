@@ -5,6 +5,7 @@ import type {
   AgentDetection,
   AutopilotOptions,
   AutopilotStatus,
+  TeamDaemonStatusView,
   PhoneNotifyView,
   UserAnswer,
   DesktopApi,
@@ -135,6 +136,7 @@ function TeamPanelContent({
   const roleRequest = useRef(0);
   const [goal, setGoal] = useState("");
   const [maxCost, setMaxCost] = useState("");
+  const [retryAfterMinutes, setRetryAfterMinutes] = useState("");
   const [budget, setBudget] = useState({
     maxTasks: "30",
     maxPlannerTurns: "12",
@@ -156,6 +158,14 @@ function TeamPanelContent({
     }
   }, [desktop]);
   const [autopilot, setAutopilot] = useState<AutopilotStatus>();
+  const [daemon, setDaemon] = useState<TeamDaemonStatusView>();
+  const refreshDaemon = useCallback(async () => {
+    try {
+      setDaemon(await window.cobble?.teamDaemonStatus?.());
+    } catch {
+      // Daemon status is optional on older desktop versions.
+    }
+  }, []);
 
   const refreshRuns = useCallback(async () => {
     const request = ++runRequest.current;
@@ -212,17 +222,28 @@ function TeamPanelContent({
         void refreshFullAccess();
       }
       void refreshRuns();
+      void refreshDaemon();
     });
     void refreshRoles();
     void refreshFullAccess();
     void refreshRuns();
     void detect();
+    void refreshDaemon();
+    const daemonTimer = setInterval(() => void refreshDaemon(), 10_000);
     return () => {
+      clearInterval(daemonTimer);
       off();
       ++runRequest.current;
       ++roleRequest.current;
     };
-  }, [api, detect, refreshFullAccess, refreshRoles, refreshRuns]);
+  }, [
+    api,
+    detect,
+    refreshDaemon,
+    refreshFullAccess,
+    refreshRoles,
+    refreshRuns,
+  ]);
 
   async function perform(action: () => Promise<void>) {
     if (busy.current) return;
@@ -253,6 +274,9 @@ function TeamPanelContent({
       {
         checkCommand: checkCommand.trim() || undefined,
         shareDependencies,
+        ...(retryAfterMinutes === ""
+          ? {}
+          : { retryAfterMinutes: Number(retryAfterMinutes) }),
       },
     );
     await refreshRuns();
@@ -530,6 +554,10 @@ function TeamPanelContent({
           <summary>Advanced</summary>
           <fieldset disabled={pending}>
             <legend>Run budget and checks</legend>
+            <RetryAfterField
+              value={retryAfterMinutes}
+              onChange={setRetryAfterMinutes}
+            />
             <div className="agent-team-budget">
               <label className="agent-team-field">
                 Maximum spend (USD)
@@ -602,6 +630,7 @@ function TeamPanelContent({
 
       <AutopilotCard
         status={autopilot}
+        daemon={daemon}
         currentRun={snapshot?.run.id}
         startDisabled={startDisabled}
         pending={pending}
@@ -674,8 +703,9 @@ function TeamPanelContent({
   );
 }
 
-function AutopilotCard({
+export function AutopilotCard({
   status,
+  daemon,
   currentRun,
   startDisabled,
   pending,
@@ -683,6 +713,7 @@ function AutopilotCard({
   stop,
 }: {
   status?: AutopilotStatus;
+  daemon?: TeamDaemonStatusView;
   currentRun?: string;
   startDisabled: boolean;
   pending: boolean;
@@ -746,6 +777,8 @@ function AutopilotCard({
     }
   };
   const [maxRuns, setMaxRuns] = useState("3");
+  const [parallel, setParallel] = useState("1");
+  const [detach, setDetach] = useState(false);
   const [checkCommand, setCheckCommand] = useState("");
   const [shareDependencies, setShareDependencies] = useState(false);
 
@@ -759,6 +792,8 @@ function AutopilotCard({
           start({
             backlogPath: backlogPath.trim(),
             maxRuns: Number(maxRuns),
+            parallel: Number(parallel),
+            detach,
             checkCommand: checkCommand.trim() || undefined,
             shareDependencies,
           });
@@ -771,6 +806,32 @@ function AutopilotCard({
       </p>
       <fieldset disabled={pending || status?.active || !!roadmapPending}>
         <legend>Session options</legend>
+        <label className="agent-team-field">
+          Items at a time
+          <select
+            value={parallel}
+            onChange={(event) => setParallel(event.target.value)}
+          >
+            {[1, 2, 3, 4].map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="agent-team-checkbox">
+          <input
+            type="checkbox"
+            checked={detach}
+            onChange={(event) => setDetach(event.target.checked)}
+          />
+          Keep running when Cobble is closed
+        </label>
+        <p className="small">
+          Runs already started keep going in the background daemon after you
+          close Cobble. Autopilot starts new items and merges finished ones only
+          while Cobble is open.
+        </p>
         <div className="agent-team-budget">
           <label className="agent-team-field">
             Backlog path
@@ -921,6 +982,28 @@ function AutopilotCard({
         </button>
       </div>
       <div role="status">
+        {(detach || status?.detach || daemon?.running) && (
+          <p>
+            Background daemon:{" "}
+            {daemon?.stopping
+              ? "stopping"
+              : daemon?.running
+                ? `running (pid ${daemon.pid})${daemon.runs.length ? `, ${daemon.runs.length} runs` : ""}`
+                : "not running"}
+          </p>
+        )}
+        {status?.currentRuns && status.currentRuns.length > 1 && (
+          <>
+            <p>Working on</p>
+            <ul>
+              {status.currentRuns.map(({ item, runId }) => (
+                <li key={runId}>
+                  {item} {runId.slice(0, 8)}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         <p>
           {status?.active ? "Autopilot is running." : "Autopilot is stopped."}
         </p>
@@ -1256,6 +1339,14 @@ function RunView({
           </p>
         )}
         {run.pausedReason && <p>{run.pausedReason}</p>}
+        <RetryNotice
+          run={run}
+          pending={pending}
+          retryNow={() => command("resume")}
+        />
+        {run.pausedReason === "Handed to the Cobble daemon" && (
+          <p>Running in the background daemon.</p>
+        )}
         {run.state === "paused" &&
           run.pausedReason?.startsWith("Spending cap reached") && (
             <form
@@ -1309,15 +1400,16 @@ function RunView({
               Pause
             </button>
           )}
-          {run.state === "paused" && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => command("resume")}
-            >
-              Resume
-            </button>
-          )}
+          {run.state === "paused" &&
+            run.pausedReason !== "Handed to the Cobble daemon" && (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => command("resume")}
+              >
+                Resume
+              </button>
+            )}
           {!isFinished(run.state) && (
             <button
               type="button"
@@ -1439,6 +1531,58 @@ function RunView({
         </aside>
       </div>
     </div>
+  );
+}
+
+export function RetryNotice({
+  run,
+  pending,
+  retryNow,
+}: {
+  run: RunSnapshot["run"];
+  pending: boolean;
+  retryNow: () => void;
+}) {
+  if (run.state !== "paused" || !run.retryAt) return null;
+  return (
+    <>
+      <p>
+        Next automatic retry at{" "}
+        <time dateTime={run.retryAt}>
+          {new Date(run.retryAt).toLocaleString()}
+        </time>
+      </p>
+      <button type="button" disabled={pending} onClick={retryNow}>
+        Retry now
+      </button>
+    </>
+  );
+}
+
+export function RetryAfterField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="agent-team-field">
+      Minutes before retry
+      <input
+        type="number"
+        min={5}
+        max={720}
+        step={1}
+        placeholder="60"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <span className="small">
+        After a usage limit, Cobble resumes the run automatically after this
+        many minutes (5-720).
+      </span>
+    </label>
   );
 }
 

@@ -676,6 +676,11 @@ async function teamCommand(
           notification = `Autopilot finished: no open items left in ${backlog}.`;
           kind = "finished";
           break;
+        case "stopped":
+          message = "Autopilot stopped by request.";
+          notification = message;
+          kind = "paused";
+          break;
         case "flagged_twice":
           message = "Two items in a row needed attention. Autopilot stopped.";
           notification =

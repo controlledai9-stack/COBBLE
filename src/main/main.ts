@@ -1,3 +1,6 @@
+import { TeamDaemon } from "../core/team/daemon";
+import { launchDaemon } from "../core/team/daemon-launch";
+import { validRetryAfter } from "../core/team/budgets";
 import {
   app,
   BrowserWindow,
@@ -12,7 +15,7 @@ import {
   clipboard,
   Notification,
 } from "electron";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CobbleService } from "../core/service";
 import {
@@ -69,6 +72,42 @@ if (process.argv.includes("--relay-server")) {
       console.error(error.message);
       app.exit(1);
     });
+} else if (process.argv.includes("--team-daemon")) {
+  void app
+    .whenReady()
+    .then(async () => {
+      const daemonService = new CobbleService(
+        join(app.getPath("userData"), "cobble.sqlite"),
+        {
+          protect: (value) => {
+            if (!safeStorage.isEncryptionAvailable())
+              throw new Error("OS credential encryption is unavailable");
+            return safeStorage.encryptString(value).toString("base64");
+          },
+          unprotect: (value) =>
+            safeStorage.decryptString(Buffer.from(value, "base64")),
+        },
+      );
+      try {
+        daemonService.gitBinary = app.isPackaged
+          ? join(process.resourcesPath, "git", "cmd", "git.exe")
+          : "git";
+        const daemon = new TeamDaemon({
+          orchestrator: daemonService.agentTeam,
+          teamStore: daemonService.teamStore,
+          log: console.log,
+        });
+        await daemon.start();
+        await daemon.done;
+      } finally {
+        await daemonService.close();
+      }
+      app.exit(0);
+    })
+    .catch((error) => {
+      console.error(error);
+      app.exit(1);
+    });
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
@@ -86,10 +125,23 @@ else {
       };
       const unprotect = (value: string) =>
         safeStorage.decryptString(Buffer.from(value, "base64"));
+      const dbPath = join(app.getPath("userData"), "cobble.sqlite");
       service = new CobbleService(
-        join(app.getPath("userData"), "cobble.sqlite"),
+        dbPath,
         { protect, unprotect },
         {
+          launchTeamDaemon: () => {
+            const env = { ...process.env };
+            delete env.ELECTRON_RUN_AS_NODE;
+            launchDaemon(dbPath, {
+              execPath: process.execPath,
+              args: app.isPackaged
+                ? ["--team-daemon"]
+                : [app.getAppPath(), "--team-daemon"],
+              cwd: dirname(dbPath),
+              env,
+            });
+          },
           reviewWorker: {
             file: app.isPackaged
               ? join(process.resourcesPath, "review", "review-worker.cjs")
@@ -447,6 +499,15 @@ else {
               : undefined,
             options && typeof options === "object"
               ? {
+                  ...((options as { retryAfterMinutes?: unknown })
+                    .retryAfterMinutes === undefined
+                    ? {}
+                    : {
+                        retryAfterMinutes: validRetryAfter(
+                          (options as { retryAfterMinutes?: unknown })
+                            .retryAfterMinutes,
+                        ),
+                      }),
                   checkCommand:
                     (options as { checkCommand?: unknown }).checkCommand ===
                     undefined
@@ -525,6 +586,8 @@ else {
           return input as Record<string, unknown>;
         };
         const options = record(value === undefined ? {} : value, [
+          "parallel",
+          "detach",
           "backlogPath",
           "maxRuns",
           "checkCommand",
@@ -532,12 +595,26 @@ else {
           "budget",
         ]);
         const {
+          parallel,
+          detach,
           backlogPath,
           maxRuns,
           checkCommand,
           shareDependencies,
           budget,
         } = options;
+        if (
+          parallel !== undefined &&
+          (typeof parallel !== "number" ||
+            !Number.isInteger(parallel) ||
+            parallel < 1 ||
+            parallel > 4)
+        )
+          throw new Error("Items at a time must be a whole number from 1 to 4");
+        if (detach !== undefined && typeof detach !== "boolean")
+          throw new Error(
+            "Keep running when Cobble is closed must be a boolean",
+          );
         const positiveInteger = (input: unknown) => {
           if (
             typeof input !== "number" ||
@@ -583,6 +660,8 @@ else {
                 ]),
               );
         return service.startAutopilot({
+          parallel: parallel as number | undefined,
+          detach: detach as boolean | undefined,
           backlogPath:
             backlogPath === undefined ? undefined : text(backlogPath, 500),
           maxRuns: maxRuns === undefined ? undefined : positiveInteger(maxRuns),
@@ -593,6 +672,7 @@ else {
         });
       });
       handle("team-stop-autopilot", () => service.stopAutopilot());
+      handle("team-daemon-status", () => service.teamDaemonStatus());
       handle("team-autopilot-status", () => service.autopilotStatus());
       handle("team-runs", () => service.teamRuns());
       handle("team-run", (_, runId: unknown) =>

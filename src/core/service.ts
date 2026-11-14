@@ -1,3 +1,4 @@
+import type { TeamDaemonStatusView } from "../shared/types";
 import { EventEmitter } from "node:events";
 import { COVERAGE_NO_WORKSPACE_NOTE } from "../shared/monitoring";
 import { randomUUID } from "node:crypto";
@@ -44,10 +45,11 @@ import {
 } from "./team/notify";
 import {
   APPROVE_REFUSED,
+  DAEMON_HANDOFF_REASON,
   TeamOrchestrator,
   type GateAnswer,
 } from "./team/orchestrator";
-import { DAEMON_STALE_MS } from "./team/daemon";
+import { daemonStatus, DAEMON_STALE_MS } from "./team/daemon";
 import {
   defaultAdapters,
   withUnavailable,
@@ -172,6 +174,7 @@ export class CobbleService extends EventEmitter {
       unprotect: (s: string) => string;
     } = { protect: (s) => s, unprotect: (s) => s },
     options: {
+      launchTeamDaemon?: () => void;
       measureCapacity?: typeof capacity;
       reviewWorker?: { file: string; executable?: string; guard?: string };
       /** Agent Team CLI adapters; tests inject scripted fakes. */
@@ -183,6 +186,7 @@ export class CobbleService extends EventEmitter {
     } = {},
   ) {
     super();
+    this.launchTeamDaemon = options.launchTeamDaemon;
     this.store = new Store(file);
     this.analysis = new AnalysisLedger(this.store);
     if (options.reviewWorker)
@@ -2142,6 +2146,39 @@ export class CobbleService extends EventEmitter {
     );
   }
 
+  private readonly launchTeamDaemon?: () => void;
+
+  teamDaemonStatus(): TeamDaemonStatusView {
+    const status = daemonStatus(this.teamStore);
+    return {
+      running: status.running,
+      stopping: status.stopping,
+      pid: status.lock?.pid ?? null,
+      startedAt: status.lock?.startedAt ?? null,
+      heartbeatAgeMs: status.heartbeatAgeMs ?? null,
+      runs: status.lock
+        ? this.teamStore
+            .runsInState(["running", "needs_human", "paused"])
+            .filter((run) => run.ownerId === status.lock!.id)
+            .map((run) => run.id)
+        : [],
+    };
+  }
+
+  private ensureTeamDaemon() {
+    const status = this.teamDaemonStatus();
+    if (status.running) return;
+    if (status.stopping)
+      throw new Error(
+        "The background daemon is stopping. Try again in a moment.",
+      );
+    if (!this.launchTeamDaemon)
+      throw new Error(
+        "Keep running when Cobble is closed is not available here",
+      );
+    this.launchTeamDaemon();
+  }
+
   private idleAutopilot(teamId: string): AutopilotStatus {
     return {
       active: false,
@@ -2206,13 +2243,27 @@ export class CobbleService extends EventEmitter {
     const maxRuns = options.maxRuns ?? 3;
     if (!Number.isSafeInteger(maxRuns) || maxRuns < 1 || maxRuns > 20)
       throw new Error("Maximum runs must be an integer from 1 to 20");
+    const parallel = options.parallel === undefined ? 1 : options.parallel;
+    if (!Number.isInteger(parallel) || parallel < 1 || parallel > 4)
+      throw new Error("Items at a time must be a whole number from 1 to 4");
+    if (options.detach !== undefined && typeof options.detach !== "boolean")
+      throw new Error("Keep running when Cobble is closed must be a boolean");
     const runOptions = {
+      detach: options.detach === true,
       checkCommand: validCheckCommand(options.checkCommand),
       shareDependencies: options.shareDependencies === true,
       budget: sanitizeBudget(options.budget),
     };
-    const status = { ...this.idleAutopilot(teamId), active: true, backlogPath };
+    const status: AutopilotStatus = {
+      ...this.idleAutopilot(teamId),
+      active: true,
+      backlogPath,
+      parallel,
+      detach: options.detach === true,
+      currentRuns: [],
+    };
     const shutdown = new AbortController();
+    if (options.detach) this.ensureTeamDaemon();
     const prepared = this.autopilot.prepare(teamId);
     const work = prepared
       .then(() =>
@@ -2253,6 +2304,67 @@ export class CobbleService extends EventEmitter {
     options: AutopilotOptions,
     signal: AbortSignal,
   ): Promise<string> {
+    if ((status.parallel ?? 1) > 1) {
+      const result = await this.autopilot.runParallel(
+        teamId,
+        status.backlogPath,
+        {
+          parallel: status.parallel!,
+          maxRuns,
+          start: options,
+          shouldStop: () => signal.aborted || !!status.stoppedReason,
+          waitForRun: (id) =>
+            this.waitForAutopilotRun(id, signal).then(
+              (run) => run ?? Promise.reject(new Error("Cobble closed.")),
+            ),
+          onEvent: async (event) => {
+            if (event.kind === "started") {
+              status.currentRuns!.push({
+                item: event.item.text,
+                runId: event.run.id,
+              });
+              status.runId = event.run.id;
+            } else {
+              status.currentRuns = status.currentRuns!.filter(
+                (run) => run.runId !== event.run.id,
+              );
+              if (event.outcome.status !== "not_done")
+                status.completed.push({
+                  item: event.item.text,
+                  runId: event.run.id,
+                  status:
+                    event.outcome.status === "merged" ? "merged" : "flagged",
+                });
+              await this.phone.notify({
+                runId: event.run.id,
+                kind:
+                  event.outcome.status === "merged" ? "finished" : "needs_you",
+                message: `Autopilot: ${event.outcome.message}`,
+              });
+            }
+            this.emit("team", event.run.id);
+          },
+        },
+      );
+      const reason =
+        result.stoppedReason === "empty"
+          ? "Backlog is empty."
+          : result.stoppedReason === "stopped"
+            ? "Stopped by request."
+            : result.stoppedReason === "flagged_twice"
+              ? "Two items in a row needed attention."
+              : result.stoppedReason === "not_done"
+                ? (result.outcomes.find(
+                    (entry) => entry.outcome.status === "not_done",
+                  )?.outcome.message ?? "Run needs attention.")
+                : `Reached the maximum of ${maxRuns} runs.`;
+      await this.phone.notify({
+        runId: "autopilot",
+        kind: result.stoppedReason === "empty" ? "finished" : "paused",
+        message: `Autopilot stopped: ${reason}`,
+      });
+      return reason;
+    }
     let flagged = 0;
     const shouldStop = () => signal.aborted || !!status.stoppedReason;
     while (!shouldStop() && status.completed.length < maxRuns) {
@@ -2277,6 +2389,7 @@ export class CobbleService extends EventEmitter {
         options,
       );
       status.runId = started.id;
+      status.currentRuns = [{ item: item.text, runId: started.id }];
       this.emit("team", started.id);
       const run = await this.waitForAutopilotRun(started.id, signal);
       if (!run || signal.aborted) break;
@@ -2286,6 +2399,7 @@ export class CobbleService extends EventEmitter {
         item,
         status.backlogPath,
       );
+      status.currentRuns = [];
       const merged = outcome.status === "merged";
       if (outcome.status !== "not_done") {
         status.completed.push({
@@ -2322,7 +2436,9 @@ export class CobbleService extends EventEmitter {
 
   private waitForAutopilotRun(runId: string, signal: AbortSignal) {
     return new Promise<TeamRun | undefined>((resolve) => {
+      let timer: ReturnType<typeof setInterval> | undefined;
       const finish = (run?: TeamRun) => {
+        clearInterval(timer);
         this.agentTeam.off("update", update);
         signal.removeEventListener("abort", abort);
         resolve(run);
@@ -2331,12 +2447,20 @@ export class CobbleService extends EventEmitter {
       const update = (updatedId: string) => {
         if (updatedId !== runId) return;
         const run = this.teamStore.run(runId);
-        if (run && ["done", "failed", "stopped", "paused"].includes(run.state))
+        if (
+          run &&
+          (["done", "failed", "stopped"].includes(run.state) ||
+            (run.state === "paused" &&
+              run.pausedReason !== DAEMON_HANDOFF_REASON &&
+              !run.daemonHandoff &&
+              !run.retryAt))
+        )
           finish(run);
       };
       if (signal.aborted) return abort();
       this.agentTeam.on("update", update);
       signal.addEventListener("abort", abort, { once: true });
+      timer = setInterval(() => update(runId), 2000);
       update(runId);
     });
   }
@@ -2423,9 +2547,16 @@ export class CobbleService extends EventEmitter {
       case "pause":
         this.agentTeam.pause(runId);
         break;
-      case "resume":
-        this.agentTeam.resume(runId);
+      case "resume": {
+        const run = this.teamStore.run(runId)!;
+        const daemon = daemonStatus(this.teamStore);
+        if (daemon.running && run.ownerId === daemon.lock?.id) {
+          run.retryAt = undefined;
+          this.teamStore.saveRun(run);
+          this.agentTeam.handOff(runId, daemon.lock!.id);
+        } else this.agentTeam.resume(runId);
         break;
+      }
       case "stop":
         this.agentTeam.stop(runId);
         break;

@@ -355,6 +355,7 @@ export class Autopilot {
     backlogPath: string,
     options: {
       maxActiveRuns?: number;
+      detach?: boolean;
       budget?: Partial<TeamBudget>;
       policy?: Partial<ApprovalPolicy>;
       checkCommand?: string;
@@ -369,6 +370,7 @@ export class Autopilot {
       options.policy,
       {
         maxActiveRuns: options.maxActiveRuns,
+        detach: options.detach,
         checkCommand: options.checkCommand,
         shareDependencies: options.shareDependencies,
         baseRef: AUTOPILOT_BRANCH,
@@ -402,6 +404,7 @@ export class Autopilot {
     backlogPath: string,
     opts: {
       parallel: number;
+      shouldStop?: () => boolean;
       maxRuns: number;
       start?: Omit<
         NonNullable<Parameters<Autopilot["start"]>[3]>,
@@ -412,7 +415,8 @@ export class Autopilot {
     },
   ): Promise<{
     outcomes: { item: BacklogItem; runId: string; outcome: ItemOutcome }[];
-    stoppedReason: "empty" | "max_runs" | "not_done" | "flagged_twice";
+    stoppedReason:
+      "empty" | "max_runs" | "not_done" | "flagged_twice" | "stopped";
   }> {
     if (
       !Number.isInteger(opts.parallel) ||
@@ -432,7 +436,12 @@ export class Autopilot {
       outcome: ItemOutcome;
     }[] = [];
     let stoppedReason:
-      "empty" | "max_runs" | "not_done" | "flagged_twice" | undefined;
+      | "empty"
+      | "max_runs"
+      | "not_done"
+      | "flagged_twice"
+      | "stopped"
+      | undefined;
     let started = 0;
     let flagged = 0;
     let firstError: unknown;
@@ -453,6 +462,10 @@ export class Autopilot {
     for (;;) {
       while (!failed && !stoppedReason && inFlight.size < opts.parallel) {
         try {
+          if (opts.shouldStop?.()) {
+            stoppedReason = "stopped";
+            break;
+          }
           const open = await this.serial(() => this.open(teamId, backlogPath));
           const item = open.find(
             (item) => !inFlight.has(item.line) && !attempted.has(item.line),
@@ -463,6 +476,10 @@ export class Autopilot {
           }
           if (started >= opts.maxRuns) {
             stoppedReason = "max_runs";
+            break;
+          }
+          if (opts.shouldStop?.()) {
+            stoppedReason = "stopped";
             break;
           }
           attempted.add(item.line);
