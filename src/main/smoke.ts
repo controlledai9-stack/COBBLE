@@ -128,7 +128,10 @@ export async function runSmoke(
     await main.webContents.executeJavaScript(`(() => {
       const card = document.querySelector("#agent-team-autopilot-heading").closest("form");
       return {
-        backlog: card.querySelector("input").value,
+        // By label: the card now starts with a "Keep running" checkbox.
+        backlog: [...card.querySelectorAll("label")]
+          .find((label) => label.textContent.trim().startsWith("Backlog path"))
+          .querySelector("input").value,
         maxRuns: card.querySelector("input[type=number]").value,
         sharingControls: [...document.querySelectorAll(".agent-team label")]
           .filter((label) => label.textContent.trim() === "Share node_modules").length,
