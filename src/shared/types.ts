@@ -61,6 +61,7 @@ export interface TeamDaemonStatusView {
 }
 
 export interface AutopilotOptions {
+  pilot?: boolean;
   parallel?: number;
   detach?: boolean;
   backlogPath?: string;
@@ -71,6 +72,9 @@ export interface AutopilotOptions {
 }
 
 export interface AutopilotStatus {
+  pilot?: boolean;
+  cycle?: number;
+  nextUp?: string[];
   parallel?: number;
   detach?: boolean;
   currentRuns?: { item: string; runId: string }[];

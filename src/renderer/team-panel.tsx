@@ -783,6 +783,7 @@ export function AutopilotCard({
   };
   const [maxRuns, setMaxRuns] = useState("3");
   const [parallel, setParallel] = useState("1");
+  const [pilot, setPilot] = useState(false);
   const [detach, setDetach] = useState(false);
   const [checkCommand, setCheckCommand] = useState("");
   const [shareDependencies, setShareDependencies] = useState(false);
@@ -798,6 +799,7 @@ export function AutopilotCard({
             backlogPath: backlogPath.trim(),
             maxRuns: Number(maxRuns),
             parallel: Number(parallel),
+            pilot,
             detach,
             checkCommand: checkCommand.trim() || undefined,
             shareDependencies,
@@ -823,6 +825,14 @@ export function AutopilotCard({
               </option>
             ))}
           </select>
+        </label>
+        <label className="agent-team-checkbox">
+          <input
+            type="checkbox"
+            checked={pilot}
+            onChange={(event) => setPilot(event.target.checked)}
+          />
+          Keep going on its own
         </label>
         <label className="agent-team-checkbox">
           <input
@@ -1012,6 +1022,17 @@ export function AutopilotCard({
         <p>
           {status?.active ? "Autopilot is running." : "Autopilot is stopped."}
         </p>
+        {status?.pilot && (
+          <>
+            <p>Pilot cycle {status.cycle ?? 0}</p>
+            <p>Next up</p>
+            <ul className="agent-team-autopilot-results" aria-label="Next up">
+              {status.nextUp?.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          </>
+        )}
         {status?.currentItem && <p>Current item: {status.currentItem}</p>}
         {status?.runId && status.runId === currentRun && (
           <a href="#agent-team-run-view">

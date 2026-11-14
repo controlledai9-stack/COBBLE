@@ -52,7 +52,7 @@ export function normaliseRoadmapItem(
   return item.length > 600 ? { reason: "too long" } : { item };
 }
 
-function what(line: string): string {
+export function roadmapWhat(line: string): string {
   return line
     .trim()
     .replace(/^(?:[-*] |\d+[.)] )/, "")
@@ -75,7 +75,7 @@ export function parseRoadmapReply(
     last < 0 ? text : text.slice(last + opener.length).split("```")[0];
   const items: string[] = [];
   const rejected: RoadmapProposal["rejected"] = [];
-  const backlog = new Set(existing.map(what));
+  const backlog = new Set(existing.map(roadmapWhat));
   const seen = new Set<string>();
   for (const line of source.split(/\r?\n/)) {
     if (items.length >= max) break;
@@ -83,13 +83,13 @@ export function parseRoadmapReply(
     if (!result) continue;
     if ("reason" in result)
       rejected.push({ line: line.slice(0, 300), reason: result.reason });
-    else if (backlog.has(what(result.item)))
+    else if (backlog.has(roadmapWhat(result.item)))
       rejected.push({
         line: line.slice(0, 300),
         reason: "already in the backlog",
       });
-    else if (!seen.has(what(result.item))) {
-      seen.add(what(result.item));
+    else if (!seen.has(roadmapWhat(result.item))) {
+      seen.add(roadmapWhat(result.item));
       items.push(result.item);
     }
   }

@@ -1,3 +1,13 @@
+import {
+  runPilot as executePilot,
+  pilotEndTime,
+  pilotDigestKind,
+  type PilotStopReason,
+  type PilotDeps,
+} from "./team/pilot";
+import { planText } from "./team/prompts";
+import { collectDigestInput, shortDigest } from "./team/digest";
+import { runCostUsd } from "./team/usage";
 import type { TeamDaemonStatusView } from "../shared/types";
 import { EventEmitter } from "node:events";
 import { COVERAGE_NO_WORKSPACE_NOTE } from "../shared/monitoring";
@@ -301,6 +311,22 @@ export class CobbleService extends EventEmitter {
     );
     this.agentTeam.on("attention", (event: AttentionEvent) => {
       this.emit("team-attention", event);
+      const teamId =
+        this.teamStore.run(event.runId)?.teamId ?? this.activeTeam()?.id;
+      const quiet = teamId
+        ? this.store.setting<{ until: number; heartbeatAt: number } | null>(
+            `teamPilotQuiet:${teamId}`,
+            null,
+          )
+        : null;
+      if (
+        quiet &&
+        quiet.until > Date.now() &&
+        quiet.heartbeatAt > Date.now() - 12 * 3600000 &&
+        !event.gate &&
+        event.kind !== "needs_you"
+      )
+        return;
       void this.phone.notify(event).then(() => this.watchPhoneReplies());
     });
     // A gate answered on the PC makes its phone buttons stale.
@@ -2225,6 +2251,189 @@ export class CobbleService extends EventEmitter {
     return this.autopilot.addRoadmap(teamId, backlogPath, goal, items);
   }
 
+  async runPilot(
+    options: AutopilotOptions,
+    hooks: {
+      signal?: AbortSignal;
+      status?: AutopilotStatus;
+      onCycle?: PilotDeps["onCycle"];
+    } = {},
+    teamId = this.teamId(),
+  ): Promise<{
+    cycles: number;
+    stoppedReason: import("./team/pilot").PilotStopReason;
+  }> {
+    const team = this.store.team(teamId);
+    const brief = this.teamStore.sessionBrief(teamId);
+    const end = pilotEndTime(brief);
+    if (!brief || end === undefined)
+      throw new Error(
+        "Save a session brief with the time available first (cobble team brief)",
+      );
+    const parallel = options.parallel ?? 1;
+    if (!Number.isInteger(parallel) || parallel < 1 || parallel > 4)
+      throw new Error("Items at a time must be a whole number from 1 to 4");
+    const backlog = validBacklogPath(options.backlogPath ?? DEFAULT_BACKLOG);
+    const signal = hooks.signal ?? new AbortController().signal;
+    const roles = this.teamStore.roles(teamId);
+    let plannerSpend = 0;
+    const planner = roles.planner ? this.teamAdapters[roles.planner] : null;
+    const spentUsd = () =>
+      this.teamStore
+        .runs(teamId, 100000)
+        .filter(
+          (run) => Date.parse(run.createdAt) >= Date.parse(brief.updatedAt),
+        )
+        .reduce(
+          (sum, run) =>
+            sum + runCostUsd(run.plannerUsage, this.teamStore.tasks(run.id)),
+          0,
+        );
+    const heartbeat = () =>
+      this.store.set(`teamPilotQuiet:${teamId}`, {
+        until: end,
+        heartbeatAt: Date.now(),
+      });
+    heartbeat();
+    const heartbeatTimer = setInterval(heartbeat, 5 * 60000);
+    heartbeatTimer.unref();
+    try {
+      await this.autopilot.prepare(teamId);
+      return await executePilot({
+        now: Date.now,
+        brief: () => brief,
+        planner: () =>
+          planner
+            ? {
+                id: planner.id,
+                detect: () => planner.detect(),
+                run: async (input) => {
+                  const result = await planner.run(input);
+                  plannerSpend += result.usage?.costUsd ?? 0;
+                  return result;
+                },
+              }
+            : null,
+        cwd: this.autopilot.path(teamId),
+        roles: TEAM_ROLES.filter((role) => role !== "planner" && !!roles[role]),
+        context: async () => ({
+          planText: planText(team),
+          digest: shortDigest(
+            collectDigestInput(this.teamStore, team, Date.now(), 24),
+          ),
+          questions: this.teamStore
+            .runsInState(["needs_human"])
+            .filter((run) => run.teamId === teamId)
+            .flatMap((run) => [
+              ...(run.gate ? [run.gate.message] : []),
+              ...this.teamStore
+                .tasks(run.id)
+                .filter((task) => task.state === "needs_human" && task.gate)
+                .map((task) => task.gate!.message),
+            ]),
+        }),
+        readBacklog: () => this.autopilot.readBacklog(teamId, backlog),
+        addItems: (goal, items) =>
+          this.autopilot.addRoadmap(teamId, backlog, goal, items),
+        runItems: async (texts, shouldStop) => {
+          const left =
+            brief.apiSpendLimitUsd === undefined
+              ? Infinity
+              : Math.max(0, brief.apiSpendLimitUsd - spentUsd() - plannerSpend);
+          if (left < 0.01) return { stoppedReason: "empty" };
+          const cap = Math.min(options.budget?.maxCostUsd ?? Infinity, left);
+          try {
+            return await this.autopilot.runParallel(teamId, backlog, {
+              parallel,
+              maxRuns: texts.length,
+              only: (item) => texts.includes(item.text),
+              shouldStop,
+              start: {
+                ...options,
+                budget: {
+                  ...options.budget,
+                  ...(Number.isFinite(cap) ? { maxCostUsd: cap } : {}),
+                },
+              },
+              waitForRun: async (id) => {
+                const run = await this.waitForAutopilotRun(id, signal);
+                if (!run) throw new Error("Cobble closed.");
+                return run;
+              },
+              onEvent: (event) => {
+                const status = hooks.status;
+                if (!status) return;
+                if (event.kind === "started") {
+                  (status.currentRuns ??= []).push({
+                    item: event.item.text,
+                    runId: event.run.id,
+                  });
+                  status.runId = event.run.id;
+                } else {
+                  status.currentRuns = (status.currentRuns ?? []).filter(
+                    (run) => run.runId !== event.run.id,
+                  );
+                  if (event.outcome.status !== "not_done")
+                    status.completed.push({
+                      item: event.item.text,
+                      runId: event.run.id,
+                      status:
+                        event.outcome.status === "merged"
+                          ? "merged"
+                          : "flagged",
+                    });
+                }
+                this.emit("team", event.run.id);
+              },
+            });
+          } catch (error) {
+            if (signal.aborted) return { stoppedReason: "stopped" };
+            throw error;
+          }
+        },
+        notify: async (message) => {
+          await this.phone.notify({
+            runId: "pilot",
+            kind: "next_up",
+            multiline: true,
+            message,
+          });
+        },
+        sendDigest: async (reason, startedAt) => {
+          await this.phone.notify({
+            runId: "pilot",
+            kind: pilotDigestKind(reason),
+            message:
+              `Pilot stopped: ${reason}. ` +
+              shortDigest(
+                collectDigestInput(
+                  this.teamStore,
+                  team,
+                  Date.now(),
+                  (Date.now() - startedAt) / 3600000,
+                ),
+              ),
+          });
+        },
+        spentUsd,
+        shouldStop: () => signal.aborted || !!hooks.status?.stoppedReason,
+        onCycle: (event) => {
+          heartbeat();
+          if (hooks.status) {
+            hooks.status.pilot = true;
+            hooks.status.cycle = event.cycle;
+            hooks.status.nextUp = event.items.map((item) => item.label);
+            this.emit("team", null);
+          }
+          hooks.onCycle?.(event);
+        },
+      });
+    } finally {
+      clearInterval(heartbeatTimer);
+      this.store.set(`teamPilotQuiet:${teamId}`, null);
+    }
+  }
+
   async startAutopilot(
     options: AutopilotOptions = {},
   ): Promise<AutopilotStatus> {
@@ -2252,6 +2461,17 @@ export class CobbleService extends EventEmitter {
       throw new Error("Items at a time must be a whole number from 1 to 4");
     if (options.detach !== undefined && typeof options.detach !== "boolean")
       throw new Error("Keep running when Cobble is closed must be a boolean");
+    if (options.pilot !== undefined && typeof options.pilot !== "boolean")
+      throw new Error("Pilot must be a boolean");
+    if (options.pilot) {
+      if (pilotEndTime(this.teamStore.sessionBrief(teamId)) === undefined)
+        throw new Error(
+          "Save a session brief with the time available first (cobble team brief)",
+        );
+      const planner = this.teamStore.roles(teamId).planner;
+      if (!planner || !this.teamAdapters[planner])
+        throw new Error("Assign a planner first");
+    }
     const runOptions = {
       detach: options.detach === true,
       checkCommand: validCheckCommand(options.checkCommand),
@@ -2265,23 +2485,40 @@ export class CobbleService extends EventEmitter {
       parallel,
       detach: options.detach === true,
       currentRuns: [],
+      pilot: options.pilot === true,
     };
     const shutdown = new AbortController();
     if (options.detach) this.ensureTeamDaemon();
     const prepared = this.autopilot.prepare(teamId);
     const work = prepared
       .then(() =>
-        this.runAutopilot(teamId, status, maxRuns, runOptions, shutdown.signal),
+        options.pilot
+          ? this.runPilot(
+              { ...options, ...runOptions },
+              { status, signal: shutdown.signal },
+              teamId,
+            ).then((result) => pilotStopText(result.stoppedReason))
+          : this.runAutopilot(
+              teamId,
+              status,
+              maxRuns,
+              runOptions,
+              shutdown.signal,
+            ),
       )
       .then((reason) => {
         status.stoppedReason = reason;
       })
       .catch((error: unknown) => {
         status.stoppedReason =
-          error instanceof Error ? error.message : String(error);
+          (options.pilot ? "Pilot stopped: " : "") +
+          (error instanceof Error ? error.message : String(error));
       })
       .finally(() => {
-        if (shutdown.signal.aborted) status.stoppedReason = "Cobble closed.";
+        if (shutdown.signal.aborted)
+          status.stoppedReason = options.pilot
+            ? pilotStopText("stopped")
+            : "Cobble closed.";
         status.active = false;
         this.emit("team", status.runId ?? null);
       });
@@ -2817,4 +3054,18 @@ function sanitizePolicy(
   if (typeof policy.requireApprovalForProduction === "boolean")
     out.requireApprovalForProduction = policy.requireApprovalForProduction;
   return out;
+}
+
+function pilotStopText(reason: PilotStopReason): string {
+  const messages: Record<PilotStopReason, string> = {
+    end_time: "the session brief's end time was reached.",
+    spend_limit: "spending limit reached.",
+    nothing_left: "the planner found nothing useful left.",
+    stopped: "stop requested.",
+    needs_human: "a run needs you.",
+    flagged: "consecutive runs were flagged for attention.",
+    max_cycles: "the maximum number of cycles was reached.",
+    error: "an error occurred.",
+  };
+  return `Pilot stopped: ${messages[reason]}`;
 }
