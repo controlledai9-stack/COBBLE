@@ -43,6 +43,7 @@ import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { TeamStore } from "./team/team-store";
 import { parseSessionBrief } from "./team/session-brief";
 import { planGuardEntries } from "./team/plan-guard";
+import { projectSummaries } from "./team/projects";
 import {
   AUTOPILOT_BRANCH,
   Autopilot,
@@ -725,6 +726,7 @@ export class CobbleService extends EventEmitter {
     return id ? (this.store.teams().find((t) => t.id === id) ?? null) : null;
   }
   state(): AppState {
+    const teams = this.store.teams();
     const profile = this.store.profile();
     const team = this.activeTeam();
     const paused = this.store.setting("paused", false);
@@ -752,7 +754,8 @@ export class CobbleService extends EventEmitter {
       },
       agentTracking: team ? this.agentEvents.summary(team.id) : undefined,
       profile,
-      teams: this.store.teams(),
+      teams,
+      projects: projectSummaries(teams, (id) => this.teamStore.runs(id, 20)),
       activeTeamId: team?.id ?? null,
       members: team ? this.store.members(team.id) : [],
       activities: team ? this.store.activities(team.id) : [],

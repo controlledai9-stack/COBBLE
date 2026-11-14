@@ -401,6 +401,7 @@ export interface TeamGuardEntry {
 }
 
 export interface AppState {
+  projects?: ProjectSummary[];
   teamGuard?: TeamGuardEntry[];
   review?: {
     mode: "not-configured" | "preflight-only";
@@ -456,6 +457,16 @@ export interface AppState {
   }[];
   completions: WorkCompletion[];
   proposals: MainProposal[];
+}
+
+export type ProjectStatus = "idle" | "running" | "needs_you";
+export interface ProjectSummary {
+  teamId: string;
+  name: string;
+  status: ProjectStatus;
+  latestGoal?: string;
+  latestRunId?: string;
+  latestRunState?: string;
 }
 export interface VoiceDraft {
   type: "dm" | "broadcast" | "unrecognized" | "ambiguous";
