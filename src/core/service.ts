@@ -31,6 +31,7 @@ import { buildReviewPacket } from "./review/packet";
 import { AgentEvents, type AgentEnvelope } from "./agent-events";
 import { createDatabaseBackup, restoreDatabaseCopy } from "./database-backup";
 import { TeamStore } from "./team/team-store";
+import { parseSessionBrief } from "./team/session-brief";
 import { planGuardEntries } from "./team/plan-guard";
 import {
   AUTOPILOT_BRANCH,
@@ -126,8 +127,6 @@ const AGENT_NAMES: Record<TeamAgentId, string> = {
   free: "free model",
   teammate: "agent",
 };
-
-import { parseSessionBrief } from "./team/session-brief";
 
 export class CobbleService extends EventEmitter {
   readonly store: Store;
@@ -2612,7 +2611,6 @@ export class CobbleService extends EventEmitter {
     this.emit("team", null);
     return clean;
   }
-  /** Saved answers from intake interviews (project decisions). */
   teamSessionBrief(): { brief: SessionBrief | null; askNow: boolean } {
     const teamId = this.teamId();
     return {
@@ -2654,6 +2652,7 @@ export class CobbleService extends EventEmitter {
         : [...new Set(Object.values(this.teamRoles()))],
     };
   }
+  /** Saved answers from intake interviews (project decisions). */
   teamUserDecisions() {
     return this.teamStore.decisionsFromUser(this.teamId());
   }
