@@ -13,12 +13,13 @@ import type { Store } from "../store";
 import type { HumanGateKind } from "./types";
 
 export type AttentionKind =
-  "needs_you" | "paused" | "finished" | "info" | "test";
+  "needs_you" | "paused" | "finished" | "info" | "test" | "next_up";
 export interface AttentionEvent {
   runId: string;
   taskId?: string;
   kind?: AttentionKind;
   message: string;
+  multiline?: boolean;
   /** The gate this alert is about, so the phone can offer answer buttons. */
   gate?: { kind: HumanGateKind; taskId?: string };
 }
@@ -76,6 +77,7 @@ export const NOTIFY_LIMITS = Object.freeze({
   timeoutMs: 10_000,
 });
 const TITLES: Record<AttentionKind, string> = {
+  next_up: "Cobble: next up",
   needs_you: "Cobble: needs you",
   paused: "Cobble: team paused",
   finished: "Cobble: team finished",
@@ -84,6 +86,7 @@ const TITLES: Record<AttentionKind, string> = {
 };
 // ntfy priorities: 5 urgent, 4 high, 3 default, 2 low.
 const PRIORITY: Record<AttentionKind, string> = {
+  next_up: "3",
   needs_you: "5",
   paused: "4",
   finished: "3",
@@ -91,6 +94,7 @@ const PRIORITY: Record<AttentionKind, string> = {
   test: "3",
 };
 const TAGS: Record<AttentionKind, string> = {
+  next_up: "arrow_forward",
   needs_you: "raising_hand",
   paused: "pause_button",
   finished: "white_check_mark",
@@ -276,16 +280,22 @@ export class PhoneNotifier {
 
   private async send(event: AttentionEvent, force: boolean) {
     const kind: AttentionKind = event.kind ?? "info";
-    const body = event.message
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, NOTIFY_LIMITS.body);
+    const body = (
+      event.multiline
+        ? event.message
+            .split(/\r?\n/)
+            .map((line) => line.replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+            .join("\n")
+        : event.message.replace(/\s+/g, " ").trim()
+    ).slice(0, NOTIFY_LIMITS.body);
     const now = this.now();
     this.sent = this.sent.filter((s) => now - s.at < 3_600_000);
     const key = `${kind}:${body}`;
     if (!force) {
       if (this.sent.length >= NOTIFY_LIMITS.perHour) return;
       if (
+        !event.multiline &&
         this.sent.some(
           (s) => s.key === key && now - s.at < NOTIFY_LIMITS.repeatWindowMs,
         )

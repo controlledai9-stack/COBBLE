@@ -83,7 +83,7 @@ Reply format: end every reply with exactly one fenced block:
 Task ids are short (T1, T2, …) and unique for the whole run. At most 8 delegates per reply.`;
 }
 
-function planText(team: Team) {
+export function planText(team: Team) {
   return clip(team.plan, PROMPT_LIMITS.plan);
 }
 function roleList(

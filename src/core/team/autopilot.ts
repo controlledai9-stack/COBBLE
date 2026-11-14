@@ -189,6 +189,12 @@ export class Autopilot {
     return { branch: AUTOPILOT_BRANCH, path, created: !exists };
   }
 
+  async readBacklog(teamId: string, backlogPath: string): Promise<string> {
+    return this.serial(async () =>
+      readFile(await this.backlogFile(teamId, backlogPath), "utf8"),
+    );
+  }
+
   async next(teamId: string, backlogPath: string): Promise<BacklogItem | null> {
     const file = await this.backlogFile(teamId, backlogPath);
     return nextBacklogItem(await readFile(file, "utf8"));
@@ -404,6 +410,7 @@ export class Autopilot {
     backlogPath: string,
     opts: {
       parallel: number;
+      only?: (item: BacklogItem) => boolean;
       shouldStop?: () => boolean;
       maxRuns: number;
       start?: Omit<
@@ -468,7 +475,10 @@ export class Autopilot {
           }
           const open = await this.serial(() => this.open(teamId, backlogPath));
           const item = open.find(
-            (item) => !inFlight.has(item.line) && !attempted.has(item.line),
+            (item) =>
+              !inFlight.has(item.line) &&
+              !attempted.has(item.line) &&
+              (!opts.only || opts.only(item)),
           );
           if (!item) {
             stoppedReason = "empty";
